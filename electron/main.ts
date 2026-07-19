@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalHostSession } from "./host/localHost.js";
+import { registerIpc } from "./ipc/register.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,10 +14,8 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null;
 
-/** Active execution host (Slice 1: Local only). */
+/** Active execution host (Slice 1–2: Local). */
 const host = new LocalHostSession();
-
-const APP_VERSION = app.getVersion();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -38,7 +37,6 @@ function createWindow() {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    // mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(path.join(process.env.DIST!, "index.html"));
   }
@@ -48,30 +46,12 @@ function createWindow() {
   });
 }
 
-function registerIpc() {
-  ipcMain.handle("shell:getVersion", async () => {
-    return {
-      app: APP_VERSION,
-      electron: process.versions.electron,
-      chrome: process.versions.chrome,
-      node: process.versions.node,
-      hostId: host.id,
-      hostKind: host.kind,
-    };
-  });
-
-  /** Placeholder host probe — real fs/run/pty in later slices. */
-  ipcMain.handle("host:getInfo", async () => {
-    return {
-      id: host.id,
-      kind: host.kind,
-      workspaceRoot: host.workspaceRoot,
-    };
-  });
-}
-
 app.whenReady().then(() => {
-  registerIpc();
+  registerIpc({
+    host,
+    getMainWindow: () => mainWindow,
+    appVersion: app.getVersion(),
+  });
   createWindow();
 
   app.on("activate", () => {

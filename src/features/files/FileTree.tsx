@@ -1,0 +1,174 @@
+import {
+  openFileFromTree,
+  openWorkspacePath,
+} from "@/features/shell/orchestrate";
+import {
+  useWorkspaceStore,
+  type TreeNode,
+} from "@/features/workspace/workspaceStore";
+
+export function FileTree() {
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const rootEntries = useWorkspaceStore((s) => s.rootEntries);
+  const status = useWorkspaceStore((s) => s.status);
+  const error = useWorkspaceStore((s) => s.error);
+  const selectedPath = useWorkspaceStore((s) => s.selectedPath);
+  const recent = useWorkspaceStore((s) => s.recent);
+  const toggleDir = useWorkspaceStore((s) => s.toggleDir);
+
+  if (!workspaceRoot) {
+    return (
+      <div className="files-pane">
+        <div className="files-pane__title">NO WORKSPACE</div>
+        <p className="pane-hint">
+          Use <strong>Open Workspace</strong> to choose a folder on this machine.
+          Non-git directories are fine for reading.
+        </p>
+        {recent.length > 0 ? (
+          <div className="recent-list">
+            <div className="files-pane__title">RECENT</div>
+            <ul className="file-tree">
+              {recent.map((r) => (
+                <li key={r.path}>
+                  <button
+                    type="button"
+                    className="file-tree__row"
+                    title={r.path}
+                    onClick={() => void openWorkspacePath(r.path)}
+                  >
+                    <span className="file-tree__icon" aria-hidden>
+                      📁
+                    </span>
+                    <span className="file-tree__name">
+                      {r.path.split(/[/\\]/).filter(Boolean).pop() ?? r.path}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (status === "loading") {
+    return (
+      <div className="files-pane">
+        <div className="files-pane__title">LOADING…</div>
+      </div>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="files-pane">
+        <div className="files-pane__title">ERROR</div>
+        <p className="pane-hint pane-hint--error">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="files-pane">
+      <div className="files-pane__title" title={workspaceRoot}>
+        {(workspaceName ?? "WORKSPACE").toUpperCase()} (WORKSPACE)
+      </div>
+      <ul className="file-tree" role="tree">
+        {rootEntries.map((node) => (
+          <TreeRow
+            key={node.path}
+            node={node}
+            depth={0}
+            selectedPath={selectedPath}
+            onToggle={(p) => void toggleDir(p)}
+            onOpenFile={(p) => void openFileFromTree(p)}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function TreeRow({
+  node,
+  depth,
+  selectedPath,
+  onToggle,
+  onOpenFile,
+}: {
+  node: TreeNode;
+  depth: number;
+  selectedPath: string | null;
+  onToggle: (path: string) => void;
+  onOpenFile: (path: string) => void;
+}) {
+  const selected = selectedPath === node.path;
+  const pad = 8 + depth * 12;
+
+  if (node.type === "dir") {
+    return (
+      <li role="treeitem" aria-expanded={node.expanded}>
+        <button
+          type="button"
+          className={`file-tree__row${selected ? " is-selected" : ""}`}
+          style={{ paddingLeft: pad }}
+          onClick={() => onToggle(node.path)}
+        >
+          <span className="file-tree__chevron" aria-hidden>
+            {node.expanded ? "▾" : "▸"}
+          </span>
+          <span className="file-tree__icon" aria-hidden>
+            📁
+          </span>
+          <span className="file-tree__name">{node.name}</span>
+        </button>
+        {node.error ? (
+          <div className="file-tree__error" style={{ paddingLeft: pad + 20 }}>
+            {node.error}
+          </div>
+        ) : null}
+        {node.expanded && node.children ? (
+          <ul className="file-tree file-tree--nested" role="group">
+            {node.children.map((child) => (
+              <TreeRow
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                selectedPath={selectedPath}
+                onToggle={onToggle}
+                onOpenFile={onOpenFile}
+              />
+            ))}
+          </ul>
+        ) : null}
+      </li>
+    );
+  }
+
+  return (
+    <li role="treeitem">
+      <button
+        type="button"
+        className={`file-tree__row${selected ? " is-selected" : ""}`}
+        style={{ paddingLeft: pad + 14 }}
+        onClick={() => onOpenFile(node.path)}
+      >
+        <span className="file-tree__icon" aria-hidden>
+          {fileIcon(node.name)}
+        </span>
+        <span className="file-tree__name">{node.name}</span>
+      </button>
+    </li>
+  );
+}
+
+function fileIcon(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".md")) return "MD";
+  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "TS";
+  if (lower.endsWith(".js") || lower.endsWith(".jsx")) return "JS";
+  if (lower.endsWith(".json")) return "{}";
+  return "📄";
+}

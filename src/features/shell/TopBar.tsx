@@ -1,3 +1,4 @@
+import { openWorkspaceFromPicker } from "./orchestrate";
 import { useShellStore } from "./shellStore";
 
 export function TopBar() {
@@ -9,7 +10,12 @@ export function TopBar() {
     <header className="topbar">
       <div className="topbar__drag" />
       <div className="topbar__left">
-        <button type="button" className="btn btn--ghost" disabled title="Slice 2">
+        <button
+          type="button"
+          className="btn btn--ghost"
+          title="Open a folder as workspace"
+          onClick={() => void openWorkspaceFromPicker()}
+        >
           <span className="btn__icon" aria-hidden>
             ▦
           </span>
@@ -18,7 +24,7 @@ export function TopBar() {
       </div>
 
       <div className="topbar__center">
-        <div className="search-field" title="Placeholder — Slice later">
+        <div className="search-field" title="Placeholder — later slice">
           <span className="search-field__icon" aria-hidden>
             ⌕
           </span>

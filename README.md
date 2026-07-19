@@ -6,7 +6,8 @@ Not a general-purpose IDE. Not an agent orchestration product. Read / dual-commi
 
 ## Status
 
-**Slice 1** — Electron shell + Local host / IPC skeleton. Later slices: workspace reading, History compare, annotations, real PTY, SSH/WSL.
+**Slice 2** — Open workspace, lazy file tree, read-only Monaco code + Markdown (Rendered/Raw).  
+Done: Slice 1 shell + Local host IPC. Next: History dual-commit compare (Slice 3).
 
 Product docs: [`docs/anchor-code/`](docs/anchor-code/) (`HANDOFF.md`, `DESIGN.md`, `PROPOSAL.md`, `ui-reference.png`).
 
@@ -25,11 +26,10 @@ npm run dev
 
 This starts Vite and opens the Electron window. You should see:
 
-- Top bar: Open Workspace (placeholder), search placeholder, **Toggle Terminal**
-- Left: FILES / COMMENTS / HISTORY (GIT) modes
-- Center: Welcome tab
-- Right: TERMINAL mock tabs (real PTY in Slice 5)
-- Version label in the top bar from `window.anchor.shell.getVersion()`
+- **Open Workspace** — pick a folder; left FILES tree loads (lazy expand)
+- Click a file — center opens read-only Monaco; `.md` defaults to Rendered (toggle Raw)
+- Top bar search is still a placeholder; **Toggle Terminal** works (PTY in Slice 5)
+- Version label from `window.anchor.shell.getVersion()`
 
 ```bash
 npm run typecheck

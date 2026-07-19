@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type {
   DirEntry,
   HostSession,
@@ -8,9 +11,24 @@ import type {
 } from "./types.js";
 import { HostError } from "./types.js";
 
+function mapFsError(err: unknown, fallback: string): HostError {
+  if (err instanceof HostError) return err;
+  const e = err as NodeJS.ErrnoException;
+  if (e?.code === "ENOENT") {
+    return new HostError("not_found", fallback, e.message);
+  }
+  if (e?.code === "EACCES" || e?.code === "EPERM") {
+    return new HostError("permission", fallback, e.message);
+  }
+  return new HostError(
+    "failed",
+    fallback,
+    e?.message ?? String(err),
+  );
+}
+
 /**
- * Local HostSession skeleton (Slice 1).
- * Full fs/run/pty land in later slices; openPty remains stub until terminal slice.
+ * Local HostSession — real fs (Slice 2); run/pty still deferred to later slices.
  */
 export class LocalHostSession implements HostSession {
   readonly id: string;
@@ -22,56 +40,119 @@ export class LocalHostSession implements HostSession {
   }
 
   async run(
-    _cwd: string,
-    _command: string,
-    _args: string[],
+    cwd: string,
+    command: string,
+    args: string[],
   ): Promise<RunResult> {
-    throw new HostError(
-      "not_implemented",
-      "host.run is not implemented in Slice 1 (history/git arrives in Slice 3)",
-    );
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd,
+        shell: false,
+        env: process.env,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", (err) => {
+        reject(
+          new HostError(
+            "failed",
+            `Failed to run ${command}`,
+            err.message,
+          ),
+        );
+      });
+      child.on("close", (code) => {
+        resolve({
+          stdout,
+          stderr,
+          code: code ?? 1,
+        });
+      });
+    });
   }
 
-  async readFile(_path: string): Promise<string> {
-    throw new HostError(
-      "not_implemented",
-      "host.readFile is not implemented in Slice 1 (workspace arrives in Slice 2)",
-    );
+  async readFile(filePath: string): Promise<string> {
+    try {
+      return await fs.readFile(filePath, "utf8");
+    } catch (err) {
+      throw mapFsError(err, `Cannot read file: ${filePath}`);
+    }
   }
 
-  async writeFile(_path: string, _data: string): Promise<void> {
-    throw new HostError(
-      "not_implemented",
-      "host.writeFile is not implemented in Slice 1",
-    );
+  async writeFile(filePath: string, data: string): Promise<void> {
+    try {
+      await fs.writeFile(filePath, data, "utf8");
+    } catch (err) {
+      throw mapFsError(err, `Cannot write file: ${filePath}`);
+    }
   }
 
-  async listDir(_path: string): Promise<DirEntry[]> {
-    throw new HostError(
-      "not_implemented",
-      "host.listDir is not implemented in Slice 1 (workspace arrives in Slice 2)",
-    );
+  async listDir(dirPath: string): Promise<DirEntry[]> {
+    try {
+      const names = await fs.readdir(dirPath, { withFileTypes: true });
+      const entries: DirEntry[] = [];
+      for (const d of names) {
+        let type: "file" | "dir" = "file";
+        if (d.isDirectory()) {
+          type = "dir";
+        } else if (d.isSymbolicLink()) {
+          try {
+            const st = await fs.stat(path.join(dirPath, d.name));
+            type = st.isDirectory() ? "dir" : "file";
+          } catch {
+            type = "file";
+          }
+        } else if (!d.isFile()) {
+          // skip sockets, devices, etc.
+          continue;
+        }
+        entries.push({ name: d.name, type });
+      }
+      entries.sort((a, b) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      });
+      return entries;
+    } catch (err) {
+      throw mapFsError(err, `Cannot list directory: ${dirPath}`);
+    }
   }
 
-  async stat(_path: string): Promise<StatResult> {
-    throw new HostError(
-      "not_implemented",
-      "host.stat is not implemented in Slice 1",
-    );
+  async stat(filePath: string): Promise<StatResult> {
+    try {
+      const st = await fs.stat(filePath);
+      return {
+        isFile: st.isFile(),
+        isDir: st.isDirectory(),
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+      };
+    } catch (err) {
+      throw mapFsError(err, `Cannot stat: ${filePath}`);
+    }
   }
 
-  async exists(_path: string): Promise<boolean> {
-    throw new HostError(
-      "not_implemented",
-      "host.exists is not implemented in Slice 1",
-    );
+  async exists(filePath: string): Promise<boolean> {
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async mkdirp(_path: string): Promise<void> {
-    throw new HostError(
-      "not_implemented",
-      "host.mkdirp is not implemented in Slice 1",
-    );
+  async mkdirp(dirPath: string): Promise<void> {
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+    } catch (err) {
+      throw mapFsError(err, `Cannot create directory: ${dirPath}`);
+    }
   }
 
   async openPty(
@@ -81,7 +162,7 @@ export class LocalHostSession implements HostSession {
   ): Promise<PtyHandle> {
     throw new HostError(
       "not_implemented",
-      "host.openPty is not implemented in Slice 1 (terminal arrives in Slice 5)",
+      "host.openPty is not implemented yet (terminal arrives in Slice 5)",
     );
   }
 

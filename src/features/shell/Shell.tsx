@@ -4,7 +4,8 @@ import {
   PanelGroup,
   PanelResizeHandle,
 } from "react-resizable-panels";
-import { DocumentArea } from "./DocumentArea";
+import { DocumentArea } from "@/features/document/DocumentArea";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { LeftNav } from "./LeftNav";
 import { TerminalPanel } from "./TerminalPanel";
 import { TopBar } from "./TopBar";
@@ -13,6 +14,7 @@ import { useShellStore } from "./shellStore";
 export function Shell() {
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
+  const loadRecent = useWorkspaceStore((s) => s.loadRecent);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,10 +35,11 @@ export function Shell() {
       }
     }
     void loadVersion();
+    void loadRecent();
     return () => {
       cancelled = true;
     };
-  }, [setVersionLabel]);
+  }, [setVersionLabel, loadRecent]);
 
   return (
     <div className="shell">

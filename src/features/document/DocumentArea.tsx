@@ -1,4 +1,5 @@
 import { CodeViewer } from "./CodeViewer";
+import { DiffViewer } from "./DiffViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { useDocumentStore, type OpenItem } from "./documentStore";
 
@@ -76,11 +77,7 @@ function ActiveView({
   }
 
   if (item.kind === "diff") {
-    return (
-      <div className="empty-center">
-        <p>Diff view arrives in Slice 3 (History compare).</p>
-      </div>
-    );
+    return <DiffViewer item={item} />;
   }
 
   if (item.error) {
@@ -100,6 +97,7 @@ function ActiveView({
         truncated={item.truncated}
         mode={item.mdViewMode}
         onModeChange={onMdMode}
+        revealLine={item.revealLine}
       />
     );
   }
@@ -110,6 +108,8 @@ function ActiveView({
       content={item.content}
       language={item.language}
       truncated={item.truncated}
+      revealLine={item.revealLine}
+      kind="source"
     />
   );
 }
@@ -126,25 +126,25 @@ function WelcomeView() {
 
       <ol className="welcome__steps">
         <li>
-          <strong>Open a workspace</strong> — top-left Open Workspace, then
-          browse the file tree (this slice).
+          <strong>Open a workspace</strong> and read code / Markdown.
         </li>
         <li>
-          <strong>Read</strong> — code is read-only Monaco; Markdown defaults to
-          Rendered (toggle Raw).
+          <strong>History</strong> — select two commits (or one vs worktree) and
+          Compare.
         </li>
         <li>
-          <strong>Compare</strong> — History dual-commit diff (Slice 3).
+          <strong>Annotate</strong> — select text, Add comment; YAML under{" "}
+          <code>.anchor-code/</code>.
         </li>
         <li>
-          <strong>Annotate & hand off</strong> — session YAML path to the AI CLI
-          (Slices 4–5).
+          <strong>Copy YAML path</strong> into the right terminal for your AI
+          CLI.
         </li>
       </ol>
 
       <p className="welcome__meta">
-        Central pane never shows a multi-repo switcher. Git multi-root lives only
-        in History.
+        Multi-repo only appears in History. Central pane never switches
+        repositories globally.
       </p>
     </article>
   );
@@ -155,9 +155,8 @@ function tabIcon(item: OpenItem): string {
   if (item.kind === "diff") return "±";
   if (item.kind === "file" && item.isMarkdown) return "MD";
   if (item.kind === "file") {
-    const lang = item.language;
-    if (lang === "typescript") return "TS";
-    if (lang === "javascript") return "JS";
+    if (item.language === "typescript") return "TS";
+    if (item.language === "javascript") return "JS";
     return "◇";
   }
   return "◇";

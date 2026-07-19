@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalHostSession } from "./host/localHost.js";
 import { registerIpc } from "./ipc/register.js";
+import { TerminalService } from "./services/terminalService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,8 +15,8 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null;
 
-/** Active execution host (Slice 1–2: Local). */
 const host = new LocalHostSession();
+const terminal = new TerminalService(() => mainWindow);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,6 +52,7 @@ app.whenReady().then(() => {
     host,
     getMainWindow: () => mainWindow,
     appVersion: app.getVersion(),
+    terminal,
   });
   createWindow();
 
@@ -62,6 +64,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  terminal.disposeAll();
   void host.dispose();
   if (process.platform !== "darwin") {
     app.quit();

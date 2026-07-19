@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 export interface AppVersionInfo {
   app: string;
@@ -39,10 +39,46 @@ export interface ReadTextResult {
   truncated: boolean;
 }
 
-/**
- * Preload bridge — Renderer talks only through window.anchor.
- * Domain IPC names follow modules (history.*, annotations.*); never git.*.
- */
+export interface RepoInfo {
+  root: string;
+  name: string;
+}
+
+export interface CommitRow {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  dateIso: string;
+}
+
+export interface DiffFile {
+  path: string;
+  status: string;
+}
+
+export interface DiffOpenPayload {
+  repoRoot: string;
+  base: string;
+  head: string | "worktree";
+  title: string;
+  files: DiffFile[];
+}
+
+export interface FileDiffContent {
+  path: string;
+  oldText: string;
+  newText: string;
+  status: string;
+}
+
+export interface TerminalTabInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  status: "running" | "exited";
+}
+
 const anchor = {
   shell: {
     getVersion: (): Promise<AppVersionInfo> =>
@@ -50,6 +86,10 @@ const anchor = {
   },
   host: {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),
+  },
+  clipboard: {
+    writeText: (text: string): Promise<boolean> =>
+      ipcRenderer.invoke("clipboard:writeText", text),
   },
   workspace: {
     pickFolder: (): Promise<string | null> =>
@@ -64,6 +104,87 @@ const anchor = {
       ipcRenderer.invoke("workspace:readText", path),
     stat: (path: string): Promise<StatResult> =>
       ipcRenderer.invoke("workspace:stat", path),
+  },
+  history: {
+    discover: (workspaceRoot: string): Promise<RepoInfo[]> =>
+      ipcRenderer.invoke("history:discover", workspaceRoot),
+    loadLog: (repoRoot: string): Promise<CommitRow[]> =>
+      ipcRenderer.invoke("history:loadLog", repoRoot),
+    compare: (args: {
+      repoRoot: string;
+      base: string;
+      head: string | "worktree";
+    }): Promise<DiffOpenPayload> => ipcRenderer.invoke("history:compare", args),
+    getFileDiff: (args: {
+      repoRoot: string;
+      base: string;
+      head: string | "worktree";
+      path: string;
+      status: string;
+    }): Promise<FileDiffContent> =>
+      ipcRenderer.invoke("history:getFileDiff", args),
+  },
+  annotations: {
+    locateGitRoot: (filePath: string): Promise<string | null> =>
+      ipcRenderer.invoke("annotations:locateGitRoot", filePath),
+    load: (
+      repoRoot: string,
+    ): Promise<{ sessions: unknown[]; error?: string }> =>
+      ipcRenderer.invoke("annotations:load", repoRoot),
+    ensureActive: (repoRoot: string): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:ensureActive", repoRoot),
+    addComment: (input: unknown): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:addComment", input),
+    setStatus: (args: {
+      repoRoot: string;
+      commentId: string;
+      status: string;
+    }): Promise<unknown> => ipcRenderer.invoke("annotations:setStatus", args),
+    reply: (args: {
+      repoRoot: string;
+      commentId: string;
+      body: string;
+    }): Promise<unknown> => ipcRenderer.invoke("annotations:reply", args),
+    endSession: (repoRoot: string): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:endSession", repoRoot),
+    newSession: (repoRoot: string): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:newSession", repoRoot),
+    copyYamlPath: (repoRoot: string): Promise<string> =>
+      ipcRenderer.invoke("annotations:copyYamlPath", repoRoot),
+  },
+  terminal: {
+    create: (args?: {
+      cwd?: string;
+      cols?: number;
+      rows?: number;
+    }): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("terminal:create", args ?? {}),
+    list: (): Promise<TerminalTabInfo[]> => ipcRenderer.invoke("terminal:list"),
+    write: (id: string, data: string): Promise<void> =>
+      ipcRenderer.invoke("terminal:write", { id, data }),
+    resize: (id: string, cols: number, rows: number): Promise<void> =>
+      ipcRenderer.invoke("terminal:resize", { id, cols, rows }),
+    kill: (id: string): Promise<void> =>
+      ipcRenderer.invoke("terminal:kill", id),
+    disposeAll: (): Promise<void> => ipcRenderer.invoke("terminal:disposeAll"),
+    onData: (cb: (payload: { id: string; data: string }) => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { id: string; data: string },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:data", listener);
+      return () => ipcRenderer.removeListener("terminal:data", listener);
+    },
+    onExit: (
+      cb: (payload: { id: string; exitCode: number }) => void,
+    ) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { id: string; exitCode: number },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:exit", listener);
+      return () => ipcRenderer.removeListener("terminal:exit", listener);
+    },
   },
 };
 

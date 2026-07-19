@@ -9,16 +9,21 @@ export function MarkdownViewer({
   truncated,
   mode,
   onModeChange,
+  revealLine,
 }: {
   path: string;
   content: string;
   truncated: boolean;
   mode: MdViewMode;
   onModeChange: (mode: MdViewMode) => void;
+  revealLine?: number;
 }) {
   return (
     <div className="md-viewer">
       <div className="md-viewer__toolbar">
+        <span className="muted toolbar-hint">
+          Annotate in Raw mode (Monaco selection)
+        </span>
         <div className="segmented" role="group" aria-label="Markdown view mode">
           <button
             type="button"
@@ -43,6 +48,8 @@ export function MarkdownViewer({
           content={content}
           language="markdown"
           truncated={truncated}
+          revealLine={revealLine}
+          kind="markdown"
         />
       ) : (
         <div className="md-viewer__rendered">

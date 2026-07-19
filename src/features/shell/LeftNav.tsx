@@ -1,4 +1,6 @@
+import { CommentsPane } from "@/features/annotations/CommentsPane";
 import { FileTree } from "@/features/files/FileTree";
+import { HistoryPane } from "@/features/history/HistoryPane";
 import type { LeftMode } from "./shellStore";
 import { useShellStore } from "./shellStore";
 
@@ -32,18 +34,8 @@ export function LeftNav() {
 
       <div className="left-nav__body">
         {leftMode === "files" && <FileTree />}
-        {leftMode === "comments" && (
-          <EmptyPane
-            title="Comments"
-            hint="Annotations land in Slice 4. YAML session + highlights."
-          />
-        )}
-        {leftMode === "history" && (
-          <EmptyPane
-            title="History (Git)"
-            hint="Discover repos, log, dual-commit compare — Slice 3."
-          />
-        )}
+        {leftMode === "comments" && <CommentsPane />}
+        {leftMode === "history" && <HistoryPane />}
       </div>
 
       <footer className="left-nav__footer">
@@ -55,14 +47,5 @@ export function LeftNav() {
         </span>
       </footer>
     </aside>
-  );
-}
-
-function EmptyPane({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="empty-pane">
-      <h2 className="empty-pane__title">{title}</h2>
-      <p className="empty-pane__hint">{hint}</p>
-    </div>
   );
 }

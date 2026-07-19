@@ -1,17 +1,42 @@
-import { BrowserWindow, dialog, ipcMain } from "electron";
+import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import path from "node:path";
 import type { LocalHostSession } from "../host/localHost.js";
 import { HostError } from "../host/types.js";
+import {
+  addComment,
+  copyYamlPath,
+  endSession,
+  ensureActiveSession,
+  loadSessions,
+  locateGitRoot,
+  newSession,
+  replyComment,
+  setCommentStatus,
+  type AddCommentInput,
+  type CommentStatus,
+} from "../services/annotationsService.js";
+import {
+  compareCommits,
+  compareToWorktree,
+  discoverRepos,
+  getFileDiff,
+  loadLog,
+} from "../services/historyService.js";
+import { TerminalService } from "../services/terminalService.js";
 import {
   loadSettings,
   pushRecentWorkspace,
   type RecentWorkspace,
 } from "../settings.js";
 
-/** Max bytes for readText in Slice 2 (1 MiB). */
+/** Max bytes for readText (1 MiB). */
 export const MAX_READ_BYTES = 1024 * 1024;
 
-function serializeError(err: unknown): { code: string; message: string; cause?: string } {
+function serializeError(err: unknown): {
+  code: string;
+  message: string;
+  cause?: string;
+} {
   if (err instanceof HostError) {
     return err.toJSON();
   }
@@ -36,9 +61,11 @@ export function registerIpc(opts: {
   host: LocalHostSession;
   getMainWindow: () => BrowserWindow | null;
   appVersion: string;
+  terminal: TerminalService;
 }): void {
-  const { host, getMainWindow, appVersion } = opts;
+  const { host, getMainWindow, appVersion, terminal } = opts;
 
+  // ── shell ──────────────────────────────────────────
   ipcMain.handle("shell:getVersion", async () => ({
     app: appVersion,
     electron: process.versions.electron,
@@ -54,10 +81,19 @@ export function registerIpc(opts: {
     workspaceRoot: host.workspaceRoot,
   }));
 
-  ipcMain.handle("workspace:getRecent", async (): Promise<RecentWorkspace[]> => {
-    const settings = await loadSettings();
-    return settings.recentWorkspaces;
+  ipcMain.handle("clipboard:writeText", async (_evt, text: string) => {
+    clipboard.writeText(text ?? "");
+    return true;
   });
+
+  // ── workspace ──────────────────────────────────────
+  ipcMain.handle(
+    "workspace:getRecent",
+    async (): Promise<RecentWorkspace[]> => {
+      const settings = await loadSettings();
+      return settings.recentWorkspaces;
+    },
+  );
 
   ipcMain.handle(
     "workspace:pickFolder",
@@ -97,6 +133,8 @@ export function registerIpc(opts: {
         }
         host.workspaceRoot = resolved;
         await pushRecentWorkspace(resolved);
+        // Reset terminals to new cwd
+        terminal.disposeAll();
         return {
           root: resolved,
           name: path.basename(resolved) || resolved,
@@ -107,16 +145,13 @@ export function registerIpc(opts: {
     },
   );
 
-  ipcMain.handle(
-    "workspace:listDir",
-    async (_evt, dirPath: string) => {
-      try {
-        return await host.listDir(dirPath);
-      } catch (err) {
-        rethrowIpc(err);
-      }
-    },
-  );
+  ipcMain.handle("workspace:listDir", async (_evt, dirPath: string) => {
+    try {
+      return await host.listDir(dirPath);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
 
   ipcMain.handle(
     "workspace:readText",
@@ -130,7 +165,6 @@ export function registerIpc(opts: {
           throw new HostError("failed", `Not a file: ${filePath}`);
         }
         if (st.size > MAX_READ_BYTES) {
-          // Read only the first MAX_READ_BYTES as utf8 (may cut mid-char; ok for guard).
           const fs = await import("node:fs/promises");
           const fh = await fs.open(filePath, "r");
           try {
@@ -150,14 +184,224 @@ export function registerIpc(opts: {
     },
   );
 
+  ipcMain.handle("workspace:stat", async (_evt, targetPath: string) => {
+    try {
+      return await host.stat(targetPath);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  // ── history ────────────────────────────────────────
+  ipcMain.handle("history:discover", async (_evt, workspaceRoot: string) => {
+    try {
+      return await discoverRepos(host, workspaceRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle("history:loadLog", async (_evt, repoRoot: string) => {
+    try {
+      return await loadLog(host, repoRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
   ipcMain.handle(
-    "workspace:stat",
-    async (_evt, targetPath: string) => {
+    "history:compare",
+    async (
+      _evt,
+      args: { repoRoot: string; base: string; head: string | "worktree" },
+    ) => {
       try {
-        return await host.stat(targetPath);
+        if (args.head === "worktree") {
+          return await compareToWorktree(host, args.repoRoot, args.base);
+        }
+        return await compareCommits(
+          host,
+          args.repoRoot,
+          args.base,
+          args.head,
+        );
       } catch (err) {
         rethrowIpc(err);
       }
     },
   );
+
+  ipcMain.handle(
+    "history:getFileDiff",
+    async (
+      _evt,
+      args: {
+        repoRoot: string;
+        base: string;
+        head: string | "worktree";
+        path: string;
+        status: string;
+      },
+    ) => {
+      try {
+        return await getFileDiff(
+          host,
+          args.repoRoot,
+          args.base,
+          args.head,
+          args.path,
+          args.status,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  // ── annotations ────────────────────────────────────
+  ipcMain.handle("annotations:locateGitRoot", async (_evt, filePath: string) => {
+    try {
+      return await locateGitRoot(host, filePath);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle("annotations:load", async (_evt, repoRoot: string) => {
+    try {
+      return await loadSessions(host, repoRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "annotations:ensureActive",
+    async (_evt, repoRoot: string) => {
+      try {
+        return await ensureActiveSession(host, repoRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:addComment",
+    async (_evt, input: AddCommentInput) => {
+      try {
+        return await addComment(host, input);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:setStatus",
+    async (
+      _evt,
+      args: { repoRoot: string; commentId: string; status: CommentStatus },
+    ) => {
+      try {
+        return await setCommentStatus(
+          host,
+          args.repoRoot,
+          args.commentId,
+          args.status,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:reply",
+    async (
+      _evt,
+      args: { repoRoot: string; commentId: string; body: string },
+    ) => {
+      try {
+        return await replyComment(
+          host,
+          args.repoRoot,
+          args.commentId,
+          args.body,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("annotations:endSession", async (_evt, repoRoot: string) => {
+    try {
+      return await endSession(host, repoRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle("annotations:newSession", async (_evt, repoRoot: string) => {
+    try {
+      return await newSession(host, repoRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "annotations:copyYamlPath",
+    async (_evt, repoRoot: string) => {
+      try {
+        const abs = await copyYamlPath(host, repoRoot);
+        clipboard.writeText(abs);
+        return abs;
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  // ── terminal ───────────────────────────────────────
+  ipcMain.handle(
+    "terminal:create",
+    async (
+      _evt,
+      args: { cwd?: string; cols?: number; rows?: number },
+    ) => {
+      try {
+        const cwd =
+          args.cwd ?? host.workspaceRoot ?? process.env.HOME ?? process.cwd();
+        return await terminal.create(cwd, args.cols ?? 80, args.rows ?? 24);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("terminal:list", async () => terminal.list());
+
+  ipcMain.handle(
+    "terminal:write",
+    async (_evt, args: { id: string; data: string }) => {
+      terminal.write(args.id, args.data);
+    },
+  );
+
+  ipcMain.handle(
+    "terminal:resize",
+    async (_evt, args: { id: string; cols: number; rows: number }) => {
+      terminal.resize(args.id, args.cols, args.rows);
+    },
+  );
+
+  ipcMain.handle("terminal:kill", async (_evt, id: string) => {
+    terminal.kill(id);
+  });
+
+  ipcMain.handle("terminal:disposeAll", async () => {
+    terminal.disposeAll();
+  });
 }

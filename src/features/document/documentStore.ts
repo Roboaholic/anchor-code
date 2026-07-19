@@ -5,6 +5,7 @@ import {
   languageFromPath,
   relativeToRoot,
 } from "@/core/workspace/paths";
+import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
 
 export type MdViewMode = "rendered" | "raw";
 
@@ -27,6 +28,7 @@ export type OpenItem =
       size: number;
       mdViewMode: MdViewMode;
       error?: string;
+      revealLine?: number;
     }
   | {
       id: string;
@@ -35,6 +37,8 @@ export type OpenItem =
       repoRoot: string;
       base: string;
       head: string | "worktree";
+      files: DiffFile[];
+      activeFilePath: string | null;
     };
 
 export interface DocumentState {
@@ -45,11 +49,16 @@ export interface DocumentState {
   openFile: (opts: {
     path: string;
     workspaceRoot: string | null;
+    revealLine?: number;
   }) => Promise<void>;
+  openDiff: (payload: DiffOpenPayload) => void;
+  setDiffActiveFile: (id: string, filePath: string) => void;
   closeItem: (id: string) => void;
   setActive: (id: string) => void;
   setMdViewMode: (id: string, mode: MdViewMode) => void;
+  revealInFile: (path: string, line: number) => void;
   closeAllFiles: () => void;
+  updateFileContent: (path: string, content: string) => void;
 }
 
 function welcomeItem(): OpenItem {
@@ -58,6 +67,10 @@ function welcomeItem(): OpenItem {
 
 function fileItemId(path: string): string {
   return `file:${path}`;
+}
+
+function diffItemId(payload: DiffOpenPayload): string {
+  return `diff:${payload.repoRoot}:${payload.base}:${payload.head}`;
 }
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
@@ -73,11 +86,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  openFile: async ({ path, workspaceRoot }) => {
+  openFile: async ({ path, workspaceRoot, revealLine }) => {
     const id = fileItemId(path);
     const existing = get().openItems.find((i) => i.id === id);
     if (existing && existing.kind === "file" && !existing.error) {
-      set({ activeId: id });
+      set((s) => ({
+        activeId: id,
+        openItems: s.openItems.map((item) =>
+          item.id === id && item.kind === "file"
+            ? { ...item, revealLine }
+            : item,
+        ),
+      }));
       return;
     }
 
@@ -88,7 +108,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const language = languageFromPath(path);
     const isMarkdown = isMarkdownPath(path);
 
-    // Placeholder tab while loading
     const loading: OpenItem = {
       id,
       kind: "file",
@@ -100,7 +119,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       content: "",
       truncated: false,
       size: 0,
-      mdViewMode: "rendered",
+      mdViewMode: isMarkdown ? "rendered" : "rendered",
+      revealLine,
     };
 
     set((s) => {
@@ -119,6 +139,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                 size: result.size,
                 truncated: result.truncated,
                 error: undefined,
+                // MD annotations: prefer raw when opening for comment workflow later
+                mdViewMode: item.isMarkdown ? "rendered" : item.mdViewMode,
               }
             : item,
         ),
@@ -133,6 +155,34 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         ),
       }));
     }
+  },
+
+  openDiff: (payload) => {
+    const id = diffItemId(payload);
+    const item: OpenItem = {
+      id,
+      kind: "diff",
+      title: payload.title,
+      repoRoot: payload.repoRoot,
+      base: payload.base,
+      head: payload.head,
+      files: payload.files,
+      activeFilePath: payload.files[0]?.path ?? null,
+    };
+    set((s) => {
+      const without = s.openItems.filter((i) => i.id !== id);
+      return { openItems: [...without, item], activeId: id };
+    });
+  },
+
+  setDiffActiveFile: (id, filePath) => {
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === id && item.kind === "diff"
+          ? { ...item, activeFilePath: filePath }
+          : item,
+      ),
+    }));
   },
 
   closeItem: (id) => {
@@ -162,7 +212,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }));
   },
 
+  revealInFile: (path, line) => {
+    const id = fileItemId(path);
+    set((s) => ({
+      activeId: id,
+      openItems: s.openItems.map((item) =>
+        item.id === id && item.kind === "file"
+          ? { ...item, revealLine: line }
+          : item,
+      ),
+    }));
+  },
+
   closeAllFiles: () => {
     set({ openItems: [welcomeItem()], activeId: "welcome" });
+  },
+
+  updateFileContent: (path, content) => {
+    const id = fileItemId(path);
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === id && item.kind === "file" ? { ...item, content } : item,
+      ),
+    }));
   },
 }));

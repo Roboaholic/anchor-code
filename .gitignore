@@ -8,3 +8,6 @@ dist-electron/
 .vite/
 *.local
 .obsidian/
+
+# Local HITL sessions created while using Anchor on this repo
+.anchor-code/

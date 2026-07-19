@@ -127,14 +127,17 @@ function WelcomeView() {
       <p className="welcome__cta">
         <button
           type="button"
-          className="btn btn--primary"
+          className="btn btn--ghost"
           onClick={() =>
             void import("@/features/shell/orchestrate").then((m) =>
               m.openWorkspaceFromPicker(),
             )
           }
         >
-          Open Workspace…
+          <span className="btn__icon" aria-hidden>
+            ▦
+          </span>
+          Open Workspace
         </button>
       </p>
 

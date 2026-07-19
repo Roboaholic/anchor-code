@@ -28,14 +28,17 @@ export function FileTree() {
         <div className="files-pane__actions">
           <button
             type="button"
-            className="btn btn--primary btn--small"
+            className="btn btn--ghost btn--small"
             onClick={() =>
               void import("@/features/shell/orchestrate").then((m) =>
                 m.openWorkspaceFromPicker(),
               )
             }
           >
-            Open Workspace…
+            <span className="btn__icon" aria-hidden>
+              ▦
+            </span>
+            Open Workspace
           </button>
         </div>
         {status === "error" && error ? (

@@ -1,0 +1,29 @@
+version: 1
+id: session_20260719T152703Z_byxl8j
+title: HITL review
+status: active
+created_at: 2026-07-19T15:27:03.498Z
+ended_at: null
+author: local-user
+notes: ""
+comments:
+  - id: comment_20260719T152703Z_ad09jl
+    status: discussing
+    target:
+      file_path: index.html
+      kind: source
+      start_line: 13
+      end_line: 13
+      start_column: 11
+      end_column: 23
+      selected_text: d="root"></d
+      before_context: "  <body>"
+      after_context: '    <script type="module" src="/src/main.tsx"></script>'
+    created_at: 2026-07-19T15:27:03.502Z
+    updated_at: 2026-07-19T15:27:03.502Z
+    author: local-user
+    messages:
+      - id: message_20260719T152703Z_d1jo76
+        author: local-user
+        created_at: 2026-07-19T15:27:03.502Z
+        body: 哈哈哈

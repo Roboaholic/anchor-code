@@ -204,7 +204,7 @@ export function CodeViewer({
             </button>
             <button
               type="button"
-              className="btn btn--primary btn--small"
+              className="btn btn--accent btn--small"
               disabled={!body.trim() || saving}
               onClick={() => void submit()}
             >

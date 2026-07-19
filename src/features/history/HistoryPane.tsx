@@ -111,7 +111,7 @@ export function HistoryPane() {
           </button>
           <button
             type="button"
-            className="btn btn--primary btn--small"
+            className="btn btn--accent btn--small"
             disabled={selectedHashes.length === 0 || comparing}
             onClick={() => void runHistoryCompare()}
           >

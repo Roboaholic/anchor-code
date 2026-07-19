@@ -95,16 +95,35 @@ function XtermHost({ id, active }: { id: string; active: boolean }) {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    // Light theme aligned with workbench chrome (not classic dark TTY).
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 12.5,
       fontFamily:
         "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
       theme: {
-        background: "#1e1f24",
-        foreground: "#d4d4d8",
-        cursor: "#f4f4f5",
-        selectionBackground: "#3f3f46",
+        background: "#fafafa",
+        foreground: "#1a1d23",
+        cursor: "#2563eb",
+        cursorAccent: "#ffffff",
+        selectionBackground: "#cfe0fc",
+        selectionForeground: "#1a1d23",
+        black: "#1a1d23",
+        red: "#b91c1c",
+        green: "#15803d",
+        yellow: "#a16207",
+        blue: "#2563eb",
+        magenta: "#7c3aed",
+        cyan: "#0e7490",
+        white: "#e5e7eb",
+        brightBlack: "#6b7280",
+        brightRed: "#dc2626",
+        brightGreen: "#16a34a",
+        brightYellow: "#ca8a04",
+        brightBlue: "#3b82f6",
+        brightMagenta: "#8b5cf6",
+        brightCyan: "#06b6d4",
+        brightWhite: "#111827",
       },
       allowProposedApi: true,
     });

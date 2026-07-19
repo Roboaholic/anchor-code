@@ -33,8 +33,18 @@ Product docs: [`docs/anchor-code/`](docs/anchor-code/).
 ```bash
 npm install
 npm run rebuild:native   # if terminal fails to start
+npm test                 # unit tests (vitest)
 npm run dev
 ```
+
+### Tests
+
+```bash
+npm test           # single run
+npm run test:watch # watch mode
+```
+
+Unit tests cover pure domain logic under `src/core/` (history dual-select, diff name-status parse, annotation anchor relocation, session YAML schema / single-active rules, workspace path helpers).
 
 ### HITL smoke path
 

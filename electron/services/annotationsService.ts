@@ -1,5 +1,11 @@
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+  parseSession,
+  selectActiveSession,
+  toRepoRelative,
+  type SessionParsed,
+} from "../../src/core/annotations/sessionSchema.js";
 import type { LocalHostSession } from "../host/localHost.js";
 import { HostError } from "../host/types.js";
 
@@ -87,12 +93,7 @@ function makeId(prefix: string): string {
 function asRelative(repoRoot: string, filePath: string): string {
   const r = path.resolve(repoRoot);
   const f = path.resolve(filePath);
-  if (f === r) return "";
-  if (f.startsWith(r + path.sep)) {
-    return f.slice(r.length + 1).split(path.sep).join("/");
-  }
-  // already relative-ish
-  return filePath.replace(/\\/g, "/");
+  return toRepoRelative(r, f);
 }
 
 export async function locateGitRoot(
@@ -117,29 +118,23 @@ export async function locateGitRoot(
 }
 
 function validateSession(raw: unknown): SessionRecord {
-  if (!raw || typeof raw !== "object") {
-    throw new HostError("failed", "Invalid session YAML");
+  try {
+    const parsed: SessionParsed = parseSession(raw);
+    return {
+      version: 1,
+      id: parsed.id,
+      title: parsed.title,
+      status: parsed.status,
+      created_at: parsed.created_at,
+      ended_at: parsed.ended_at,
+      author: parsed.author,
+      notes: parsed.notes,
+      comments: parsed.comments as CommentRecord[],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new HostError("failed", `Invalid session YAML: ${message}`);
   }
-  const o = raw as Record<string, unknown>;
-  if (o.version !== 1) {
-    throw new HostError("failed", "Unsupported session version");
-  }
-  if (typeof o.id !== "string" || typeof o.status !== "string") {
-    throw new HostError("failed", "Session missing id/status");
-  }
-  return {
-    version: 1,
-    id: o.id,
-    title: typeof o.title === "string" ? o.title : "HITL review",
-    status: o.status as SessionStatus,
-    created_at: String(o.created_at ?? nowIso()),
-    ended_at: (o.ended_at as string | null) ?? null,
-    author: typeof o.author === "string" ? o.author : "local-user",
-    notes: typeof o.notes === "string" ? o.notes : "",
-    comments: Array.isArray(o.comments)
-      ? (o.comments as CommentRecord[])
-      : [],
-  };
 }
 
 async function listSessionFiles(
@@ -195,15 +190,17 @@ export async function ensureActiveSession(
   if (error) {
     throw new HostError("failed", error);
   }
-  const actives = sessions.filter((s) => s.status === "active");
-  if (actives.length > 1) {
+  let active: SessionRecord | null;
+  try {
+    active = selectActiveSession(sessions);
+  } catch (err) {
     throw new HostError(
       "failed",
-      "Multiple active sessions found. Keep one active in .anchor-code/ YAML.",
+      err instanceof Error ? err.message : String(err),
     );
   }
-  if (actives.length === 1) {
-    return actives[0]!;
+  if (active) {
+    return active;
   }
   const id = makeId("session");
   const session: SessionRecord = {

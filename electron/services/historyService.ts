@@ -1,4 +1,9 @@
 import path from "node:path";
+import {
+  formatCompareTitle,
+  parseNameStatus,
+  type DiffFile,
+} from "../../src/core/history/diffParse.js";
 import type { LocalHostSession } from "../host/localHost.js";
 import { HostError } from "../host/types.js";
 
@@ -19,10 +24,7 @@ export interface CommitRow {
   dateIso: string;
 }
 
-export interface DiffFile {
-  path: string;
-  status: string;
-}
+export type { DiffFile };
 
 export interface DiffOpenPayload {
   repoRoot: string;
@@ -154,7 +156,7 @@ export async function compareCommits(
     repoRoot,
     base,
     head,
-    title: `${short(base)} → ${short(head)}`,
+    title: formatCompareTitle(short(base), head, short(head)),
     files,
   };
 }
@@ -181,26 +183,9 @@ export async function compareToWorktree(
     repoRoot,
     base,
     head: "worktree",
-    title: `${short(base)} → worktree`,
+    title: formatCompareTitle(short(base), "worktree"),
     files,
   };
-}
-
-function parseNameStatus(stdout: string): DiffFile[] {
-  return stdout
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split("\t");
-      const status = parts[0] ?? "?";
-      // renames: R100\told\tnew
-      if (status.startsWith("R") || status.startsWith("C")) {
-        const newPath = parts[2] ?? parts[1] ?? "";
-        return { path: newPath, status };
-      }
-      return { path: parts[1] ?? "", status };
-    })
-    .filter((f) => f.path);
 }
 
 async function gitShow(

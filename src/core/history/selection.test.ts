@@ -1,30 +1,64 @@
-/**
- * Lightweight self-check for dual-select rules (run with node --experimental-strip-types or tsx if available).
- * Kept as a plain module for typecheck; logic is covered by manual HITL acceptance too.
- */
+import { describe, expect, it } from "vitest";
 import {
   compareLabel,
   swapSelection,
   toggleCommitSelection,
 } from "./selection";
 
-function assert(cond: boolean, msg: string) {
-  if (!cond) throw new Error(msg);
-}
+describe("toggleCommitSelection", () => {
+  it("selects first commit as base", () => {
+    const r = toggleCommitSelection([], "aaa");
+    expect(r).toEqual({ ok: true, selectedHashes: ["aaa"] });
+  });
 
-const t1 = toggleCommitSelection([], "a");
-assert(t1.ok && t1.selectedHashes.join() === "a", "first select");
+  it("selects second commit as head (order preserved)", () => {
+    const r = toggleCommitSelection(["aaa"], "bbb");
+    expect(r).toEqual({ ok: true, selectedHashes: ["aaa", "bbb"] });
+  });
 
-const t2 = toggleCommitSelection(["a"], "b");
-assert(t2.ok && t2.selectedHashes.join() === "a,b", "second select");
+  it("rejects a third selection without mutating state", () => {
+    const r = toggleCommitSelection(["aaa", "bbb"], "ccc");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toMatch(/two/i);
+      expect(r.selectedHashes).toEqual(["aaa", "bbb"]);
+    }
+  });
 
-const t3 = toggleCommitSelection(["a", "b"], "c");
-assert(!t3.ok && t3.reason.includes("two"), "third rejected");
+  it("deselects an already selected hash and reorders remaining", () => {
+    const r = toggleCommitSelection(["aaa", "bbb"], "aaa");
+    expect(r).toEqual({ ok: true, selectedHashes: ["bbb"] });
+  });
 
-const t4 = toggleCommitSelection(["a", "b"], "a");
-assert(t4.ok && t4.selectedHashes.join() === "b", "deselect");
+  it("deselects head leaving base only", () => {
+    const r = toggleCommitSelection(["aaa", "bbb"], "bbb");
+    expect(r).toEqual({ ok: true, selectedHashes: ["aaa"] });
+  });
+});
 
-assert(swapSelection(["a", "b"]).join() === "b,a", "swap");
-assert(compareLabel(["aaa", "bbb"], (h) => h.slice(0, 3)) === "aaa → bbb", "label");
+describe("swapSelection", () => {
+  it("swaps base and head when two selected", () => {
+    expect(swapSelection(["base", "head"])).toEqual(["head", "base"]);
+  });
 
-console.log("selection.test.ts ok");
+  it("is a no-op for fewer than two", () => {
+    expect(swapSelection([])).toEqual([]);
+    expect(swapSelection(["only"])).toEqual(["only"]);
+  });
+});
+
+describe("compareLabel", () => {
+  const shortOf = (h: string) => h.slice(0, 3);
+
+  it("shows base → head for two commits", () => {
+    expect(compareLabel(["abcdef", "123456"], shortOf)).toBe("abc → 123");
+  });
+
+  it("shows base → worktree for one commit", () => {
+    expect(compareLabel(["abcdef"], shortOf)).toBe("abc → worktree");
+  });
+
+  it("returns null when empty", () => {
+    expect(compareLabel([], shortOf)).toBeNull();
+  });
+});

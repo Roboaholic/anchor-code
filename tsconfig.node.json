@@ -13,7 +13,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
-  "include": ["electron", "vite.config.ts"]
+  "include": ["electron", "vite.config.ts", "vitest.config.ts"]
 }

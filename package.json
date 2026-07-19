@@ -14,7 +14,9 @@
     "test:unit": "vitest run src",
     "test:integration": "vitest run electron",
     "test:watch": "vitest",
-    "rebuild:native": "electron-rebuild -f -w node-pty"
+    "rebuild:native": "electron-rebuild -f -w node-pty",
+    "ensure:pty": "node scripts/ensure-node-pty.js",
+    "postinstall": "node scripts/ensure-node-pty.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

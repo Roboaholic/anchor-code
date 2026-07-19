@@ -64,7 +64,7 @@ export function TerminalPanel() {
       <div className="terminal-panel__body">
         {error ? (
           <pre className="terminal-mock">
-            {`Terminal unavailable:\n${error}\n\nTip: rebuild native module:\nnpx electron-rebuild -f -w node-pty`}
+            {`Terminal unavailable:\n${error}\n\nTry:\n  npm run ensure:pty\n  npm run rebuild:native\n  npm run dev`}
           </pre>
         ) : !workspaceRoot ? (
           <pre className="terminal-mock">

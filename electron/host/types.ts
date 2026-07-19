@@ -1,0 +1,78 @@
+/**
+ * HostSession — execution-environment facade (PAL/HAL, not a business module).
+ * Business modules call only through this surface; Renderer never touches PTY/SSH/child_process.
+ */
+
+export type HostKind = "local" | "ssh";
+
+export type HostErrorCode =
+  | "not_found"
+  | "permission"
+  | "disconnected"
+  | "timeout"
+  | "failed"
+  | "not_git"
+  | "not_implemented";
+
+export class HostError extends Error {
+  readonly code: HostErrorCode;
+  readonly causeDetail?: string;
+
+  constructor(code: HostErrorCode, message: string, causeDetail?: string) {
+    super(message);
+    this.name = "HostError";
+    this.code = code;
+    this.causeDetail = causeDetail;
+  }
+
+  toJSON() {
+    return {
+      code: this.code,
+      message: this.message,
+      cause: this.causeDetail,
+    };
+  }
+}
+
+export interface RunResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+export interface DirEntry {
+  name: string;
+  type: "file" | "dir";
+}
+
+export interface StatResult {
+  isFile: boolean;
+  isDir: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface PtyHandle {
+  readonly id: string;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  onData(cb: (data: string) => void): void;
+  onExit(cb: (code: number) => void): void;
+  kill(): void;
+}
+
+export interface HostSession {
+  readonly id: string;
+  readonly kind: HostKind;
+  workspaceRoot: string | null;
+
+  run(cwd: string, command: string, args: string[]): Promise<RunResult>;
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, data: string): Promise<void>;
+  listDir(path: string): Promise<DirEntry[]>;
+  stat(path: string): Promise<StatResult>;
+  exists(path: string): Promise<boolean>;
+  mkdirp(path: string): Promise<void>;
+  openPty(cwd: string, cols: number, rows: number): Promise<PtyHandle>;
+  dispose(): Promise<void>;
+}

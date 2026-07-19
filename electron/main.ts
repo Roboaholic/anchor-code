@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalHostSession } from "./host/localHost.js";
@@ -47,6 +47,35 @@ function createWindow() {
   });
 }
 
+function buildMenu() {
+  const isMac = process.platform === "darwin";
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [{ role: "appMenu" as const }]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "Open Workspace…",
+          accelerator: "CmdOrCtrl+O",
+          click: () => {
+            mainWindow?.webContents.send("shell:command", {
+              type: "openWorkspace",
+            });
+          },
+        },
+        { type: "separator" },
+        isMac ? { role: "close" } : { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
   registerIpc({
     host,
@@ -54,6 +83,7 @@ app.whenReady().then(() => {
     appVersion: app.getVersion(),
     terminal,
   });
+  buildMenu();
   createWindow();
 
   app.on("activate", () => {

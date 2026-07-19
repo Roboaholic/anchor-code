@@ -83,6 +83,16 @@ const anchor = {
   shell: {
     getVersion: (): Promise<AppVersionInfo> =>
       ipcRenderer.invoke("shell:getVersion"),
+    onCommand: (
+      cb: (cmd: { type: string }) => void,
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        cmd: { type: string },
+      ) => cb(cmd);
+      ipcRenderer.on("shell:command", listener);
+      return () => ipcRenderer.removeListener("shell:command", listener);
+    },
   },
   host: {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),

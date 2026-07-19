@@ -68,20 +68,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   openPath: async (dirPath: string) => {
+    if (!window.anchor?.workspace?.open) {
+      const message =
+        "IPC bridge missing (window.anchor.workspace). Restart the Electron app, not a browser tab.";
+      set({ status: "error", error: message });
+      throw new Error(message);
+    }
     set({ status: "loading", error: null });
     try {
       const { root, name } = await window.anchor.workspace.open(dirPath);
-      const rootEntries = await loadChildren(root);
-      const recent = await window.anchor.workspace.getRecent();
+      // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
+      set({
+        workspaceRoot: root,
+        workspaceName: name || workspaceDisplayName(root),
+        selectedPath: null,
+        status: "loading",
+        error: null,
+      });
+
+      let rootEntries: TreeNode[] = [];
+      let treeError: string | null = null;
+      try {
+        rootEntries = await loadChildren(root);
+      } catch (err) {
+        treeError = err instanceof Error ? err.message : String(err);
+      }
+
+      let recent = get().recent;
+      try {
+        recent = await window.anchor.workspace.getRecent();
+      } catch {
+        // non-fatal
+      }
+
       set({
         workspaceRoot: root,
         workspaceName: name || workspaceDisplayName(root),
         rootEntries,
         recent,
-        status: "ready",
-        error: null,
+        status: treeError ? "error" : "ready",
+        error: treeError,
         selectedPath: null,
       });
+      if (treeError) {
+        // Root is open; tree failure is recoverable — do not throw away the open.
+        console.warn("[workspace] listDir failed:", treeError);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       set({ status: "error", error: message });
@@ -90,6 +122,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   pickAndOpen: async () => {
+    if (!window.anchor?.workspace?.pickFolder) {
+      const message =
+        "IPC bridge missing (window.anchor.workspace.pickFolder). Use the Electron window.";
+      set({ status: "error", error: message });
+      throw new Error(message);
+    }
     const picked = await window.anchor.workspace.pickFolder();
     if (!picked) return;
     await get().openPath(picked);

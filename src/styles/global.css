@@ -86,7 +86,8 @@ button:disabled {
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   flex-shrink: 0;
-  -webkit-app-region: drag;
+  /* Only non-interactive gaps drag; controls must stay no-drag or clicks die on macOS. */
+  -webkit-app-region: no-drag;
 }
 
 .topbar__drag {
@@ -99,6 +100,17 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 2;
+}
+
+/* Explicit: every interactive control in the chrome must not be a drag target. */
+.topbar button,
+.topbar .btn,
+.topbar .search-field,
+.topbar .avatar,
+.topbar kbd {
   -webkit-app-region: no-drag;
 }
 
@@ -691,6 +703,14 @@ button:disabled {
   font-size: 14.5px;
   line-height: 1.6;
   color: var(--text-secondary);
+}
+
+.welcome__cta {
+  margin: 0 0 24px;
+}
+
+.files-pane__actions {
+  padding: 0 12px 8px;
 }
 
 .welcome__steps {

@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { openWorkspaceFromPicker } from "./orchestrate";
 import { useShellStore } from "./shellStore";
 
@@ -13,8 +14,13 @@ export function TopBar() {
         <button
           type="button"
           className="btn btn--ghost"
-          title="Open a folder as workspace"
-          onClick={() => void openWorkspaceFromPicker()}
+          title="Open a folder as workspace (⌘O)"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void openWorkspaceFromPicker();
+          }}
         >
           <span className="btn__icon" aria-hidden>
             ▦

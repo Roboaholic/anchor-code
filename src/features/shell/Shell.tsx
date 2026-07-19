@@ -36,8 +36,17 @@ export function Shell() {
     }
     void loadVersion();
     void loadRecent();
+
+    const off =
+      window.anchor?.shell?.onCommand?.((cmd) => {
+        if (cmd.type === "openWorkspace") {
+          void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
+        }
+      }) ?? (() => undefined);
+
     return () => {
       cancelled = true;
+      off();
     };
   }, [setVersionLabel, loadRecent]);
 

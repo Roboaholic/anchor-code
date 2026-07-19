@@ -22,9 +22,25 @@ export function FileTree() {
       <div className="files-pane">
         <div className="files-pane__title">NO WORKSPACE</div>
         <p className="pane-hint">
-          Use <strong>Open Workspace</strong> to choose a folder on this machine.
-          Non-git directories are fine for reading.
+          Use <strong>Open Workspace</strong> (top bar or below) to choose a
+          folder. Non-git directories are fine for reading.
         </p>
+        <div className="files-pane__actions">
+          <button
+            type="button"
+            className="btn btn--primary btn--small"
+            onClick={() =>
+              void import("@/features/shell/orchestrate").then((m) =>
+                m.openWorkspaceFromPicker(),
+              )
+            }
+          >
+            Open Workspace…
+          </button>
+        </div>
+        {status === "error" && error ? (
+          <p className="pane-hint pane-hint--error">{error}</p>
+        ) : null}
         {recent.length > 0 ? (
           <div className="recent-list">
             <div className="files-pane__title">RECENT</div>
@@ -57,6 +73,9 @@ export function FileTree() {
     return (
       <div className="files-pane">
         <div className="files-pane__title">LOADING…</div>
+        <p className="pane-hint" title={workspaceRoot}>
+          {workspaceName ?? workspaceRoot}
+        </p>
       </div>
     );
   }
@@ -64,8 +83,37 @@ export function FileTree() {
   if (status === "error") {
     return (
       <div className="files-pane">
-        <div className="files-pane__title">ERROR</div>
+        <div className="files-pane__title" title={workspaceRoot}>
+          {(workspaceName ?? "WORKSPACE").toUpperCase()} (ERROR)
+        </div>
         <p className="pane-hint pane-hint--error">{error}</p>
+        {rootEntries.length > 0 ? (
+          <ul className="file-tree" role="tree">
+            {rootEntries.map((node) => (
+              <TreeRow
+                key={node.path}
+                node={node}
+                depth={0}
+                selectedPath={selectedPath}
+                onToggle={(p) => void toggleDir(p)}
+                onOpenFile={(p) => void openFileFromTree(p)}
+              />
+            ))}
+          </ul>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            style={{ margin: 12 }}
+            onClick={() =>
+              workspaceRoot
+                ? void openWorkspacePath(workspaceRoot)
+                : undefined
+            }
+          >
+            Retry
+          </button>
+        )}
       </div>
     );
   }

@@ -124,6 +124,20 @@ function WelcomeView() {
         feedback back to AI CLIs — not a general-purpose IDE.
       </p>
 
+      <p className="welcome__cta">
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() =>
+            void import("@/features/shell/orchestrate").then((m) =>
+              m.openWorkspaceFromPicker(),
+            )
+          }
+        >
+          Open Workspace…
+        </button>
+      </p>
+
       <ol className="welcome__steps">
         <li>
           <strong>Open a workspace</strong> and read code / Markdown.
@@ -144,7 +158,8 @@ function WelcomeView() {
 
       <p className="welcome__meta">
         Multi-repo only appears in History. Central pane never switches
-        repositories globally.
+        repositories globally. Run via <code>npm run dev</code> (Electron), not
+        a plain browser tab on localhost.
       </p>
     </article>
   );

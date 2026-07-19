@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import path from "node:path";
 import type { LocalHostSession } from "../host/localHost.js";
 import { HostError } from "../host/types.js";
@@ -98,20 +98,28 @@ export function registerIpc(opts: {
   ipcMain.handle(
     "workspace:pickFolder",
     async (): Promise<string | null> => {
-      const win = getMainWindow();
-      const options: Electron.OpenDialogOptions = {
-        properties: ["openDirectory", "createDirectory"],
-        title: "Open Workspace",
-        buttonLabel: "Open",
-        defaultPath: host.workspaceRoot ?? undefined,
-      };
-      const result = win
-        ? await dialog.showOpenDialog(win, options)
-        : await dialog.showOpenDialog(options);
-      if (result.canceled || result.filePaths.length === 0) {
-        return null;
+      try {
+        const win = getMainWindow();
+        const options: Electron.OpenDialogOptions = {
+          properties: ["openDirectory", "createDirectory"],
+          title: "Open Workspace",
+          buttonLabel: "Open",
+          message: "Choose a folder to open as the workspace",
+          defaultPath:
+            host.workspaceRoot ?? app.getPath("home") ?? undefined,
+        };
+        // Prefer parented dialog so it appears above the app on macOS.
+        const result = win
+          ? await dialog.showOpenDialog(win, options)
+          : await dialog.showOpenDialog(options);
+        if (result.canceled || result.filePaths.length === 0) {
+          return null;
+        }
+        return result.filePaths[0]!;
+      } catch (err) {
+        console.error("[ipc] workspace:pickFolder failed:", err);
+        rethrowIpc(err);
       }
-      return result.filePaths[0]!;
     },
   );
 
@@ -132,14 +140,24 @@ export function registerIpc(opts: {
           throw new HostError("failed", `Not a directory: ${resolved}`);
         }
         host.workspaceRoot = resolved;
-        await pushRecentWorkspace(resolved);
+        // Recent list is best-effort — never block opening.
+        try {
+          await pushRecentWorkspace(resolved);
+        } catch (err) {
+          console.warn("[ipc] pushRecentWorkspace failed:", err);
+        }
         // Reset terminals to new cwd
-        terminal.disposeAll();
+        try {
+          terminal.disposeAll();
+        } catch (err) {
+          console.warn("[ipc] terminal.disposeAll failed:", err);
+        }
         return {
           root: resolved,
           name: path.basename(resolved) || resolved,
         };
       } catch (err) {
+        console.error("[ipc] workspace:open failed:", err);
         rethrowIpc(err);
       }
     },

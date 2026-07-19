@@ -10,23 +10,50 @@ import { joinPath } from "@/core/workspace/paths";
 import type { CommentRecord } from "@/shared/anchor-api";
 
 export async function openWorkspaceFromPicker(): Promise<void> {
-  await useWorkspaceStore.getState().pickAndOpen();
-  await afterWorkspaceOpened();
+  try {
+    if (!window.anchor?.workspace?.pickFolder) {
+      throw new Error(
+        "IPC bridge missing. Run via Electron (`npm run dev`), not a browser tab.",
+      );
+    }
+    const picked = await window.anchor.workspace.pickFolder();
+    if (!picked) return; // user cancelled — leave UI as-is
+    await useWorkspaceStore.getState().openPath(picked);
+    const root = useWorkspaceStore.getState().workspaceRoot;
+    if (root) await afterWorkspaceOpened(root);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[shell] openWorkspaceFromPicker failed:", err);
+    useWorkspaceStore.setState({ status: "error", error: message });
+  }
 }
 
 export async function openWorkspacePath(path: string): Promise<void> {
-  await useWorkspaceStore.getState().openPath(path);
-  await afterWorkspaceOpened();
+  try {
+    await useWorkspaceStore.getState().openPath(path);
+    const root = useWorkspaceStore.getState().workspaceRoot;
+    if (root) await afterWorkspaceOpened(root);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[shell] openWorkspacePath failed:", err);
+    useWorkspaceStore.setState({ status: "error", error: message });
+  }
 }
 
-async function afterWorkspaceOpened(): Promise<void> {
-  const root = useWorkspaceStore.getState().workspaceRoot;
+async function afterWorkspaceOpened(root: string): Promise<void> {
   useDocumentStore.getState().closeAllFiles();
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
-  if (root) {
+  // History / terminal must not block a successful workspace open.
+  try {
     await useHistoryStore.getState().discover(root);
+  } catch (err) {
+    console.warn("[shell] history.discover failed:", err);
+  }
+  try {
     await useTerminalStore.getState().resetForWorkspace(root);
+  } catch (err) {
+    console.warn("[shell] terminal.resetForWorkspace failed:", err);
   }
 }
 

@@ -139,6 +139,7 @@ export interface AddCommentInput {
 export interface AnchorApi {
   shell: {
     getVersion: () => Promise<AppVersionInfo>;
+    onCommand: (cb: (cmd: { type: string }) => void) => () => void;
   };
   host: {
     getInfo: () => Promise<HostInfo>;

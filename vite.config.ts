@@ -24,12 +24,23 @@ export default defineConfig({
         },
       },
       preload: {
+        // Must be CJS (.cjs): package.json has "type":"module", and a .mjs
+        // file that still contains require() will fail to load — no window.anchor.
         input: "electron/preload.ts",
         vite: {
           build: {
             outDir: "dist-electron",
+            lib: {
+              entry: "electron/preload.ts",
+              formats: ["cjs"],
+            },
             rollupOptions: {
               external: ["electron"],
+              output: {
+                entryFileNames: "preload.cjs",
+                format: "cjs",
+                inlineDynamicImports: true,
+              },
             },
           },
         },

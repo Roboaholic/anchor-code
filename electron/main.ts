@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalHostSession } from "./host/localHost.js";
@@ -18,7 +19,27 @@ let mainWindow: BrowserWindow | null = null;
 const host = new LocalHostSession();
 const terminal = new TerminalService(() => mainWindow);
 
+/**
+ * Preload must load as CommonJS when package.json has "type":"module".
+ * A .mjs file that still uses require() fails silently → no window.anchor.
+ */
+function resolvePreloadPath(): string {
+  const candidates = [
+    path.join(__dirname, "preload.cjs"),
+    path.join(__dirname, "preload.js"),
+    path.join(__dirname, "preload.mjs"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  console.error("[main] preload not found, tried:", candidates.join(", "));
+  return candidates[0]!;
+}
+
 function createWindow() {
+  const preloadPath = resolvePreloadPath();
+  console.log("[main] using preload:", preloadPath);
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -29,17 +50,21 @@ function createWindow() {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
-      preload: path.join(__dirname, "preload.mjs"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
 
+  mainWindow.webContents.on("preload-error", (_event, failedPath, error) => {
+    console.error("[main] preload-error:", failedPath, error);
+  });
+
   if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(process.env.DIST!, "index.html"));
+    void mainWindow.loadFile(path.join(process.env.DIST!, "index.html"));
   }
 
   mainWindow.on("closed", () => {
@@ -50,9 +75,7 @@ function createWindow() {
 function buildMenu() {
   const isMac = process.platform === "darwin";
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? [{ role: "appMenu" as const }]
-      : []),
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
     {
       label: "File",
       submenu: [

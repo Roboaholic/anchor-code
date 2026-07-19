@@ -21,16 +21,21 @@ export function Shell() {
     async function loadVersion() {
       try {
         if (!window.anchor?.shell?.getVersion) {
-          setVersionLabel("no bridge");
+          // Visible signal when preload failed (e.g. .mjs + require mismatch).
+          setVersionLabel("no IPC bridge");
+          console.error(
+            "[shell] window.anchor is missing. Preload did not inject the bridge. Restart via `npm run dev` (Electron window, not a browser tab on :5173).",
+          );
           return;
         }
         const info = await window.anchor.shell.getVersion();
         if (!cancelled) {
           setVersionLabel(`v${info.app} · ${info.hostKind}`);
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setVersionLabel("ipc error");
+          console.error("[shell] getVersion failed:", err);
         }
       }
     }

@@ -543,7 +543,18 @@ button:disabled {
 
 .code-viewer__editor {
   flex: 1;
-  min-height: 0;
+  min-height: 200px;
+  height: 100%;
+  position: relative;
+}
+
+/* Monaco needs a definite box; absolute fill avoids zero-height flex quirks. */
+.code-viewer__editor > section,
+.code-viewer__editor .monaco-editor {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .viewer-loading {

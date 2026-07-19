@@ -4,6 +4,7 @@ import { languageFromPath } from "@/core/workspace/paths";
 import { openWorktreeFileFromDiff } from "@/features/shell/orchestrate";
 import type { OpenItem } from "./documentStore";
 import { useDocumentStore } from "./documentStore";
+import "./monacoSetup";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
 

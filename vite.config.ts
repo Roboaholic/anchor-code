@@ -52,6 +52,12 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  optimizeDeps: {
+    include: ["monaco-editor", "@monaco-editor/react"],
+  },
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: "dist",
   },

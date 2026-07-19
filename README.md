@@ -40,11 +40,14 @@ npm run dev
 ### Tests
 
 ```bash
-npm test           # single run
-npm run test:watch # watch mode
+npm test                 # all (unit + integration)
+npm run test:unit        # src/core pure logic
+npm run test:integration # electron host / history / annotations (needs git)
+npm run test:watch
 ```
 
-Unit tests cover pure domain logic under `src/core/` (history dual-select, diff name-status parse, annotation anchor relocation, session YAML schema / single-active rules, workspace path helpers).
+- **Unit** (`src/core/**`): history dual-select, diff name-status, anchor relocation, session YAML schema, path helpers, Monaco setup contract.
+- **Integration** (`electron/**`): LocalHost fs/run, history against a temp git repo, annotations YAML write/read/copy path.
 
 ### HITL smoke path
 

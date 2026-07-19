@@ -3,6 +3,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { useAnnotationsStore } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
+import "./monacoSetup";
 
 export function CodeViewer({
   path,

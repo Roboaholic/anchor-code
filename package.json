@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
+    "test:unit": "vitest run src",
+    "test:integration": "vitest run electron",
     "test:watch": "vitest",
     "rebuild:native": "electron-rebuild -f -w node-pty"
   },

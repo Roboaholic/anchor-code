@@ -24,6 +24,9 @@
   --terminal-selection: #cfe0fc;
   --terminal-cursor: #2563eb;
   --radius: 6px; /* shared by buttons, search, inputs — keep rectangular, not pill */
+  /* Elevation — soft, menu-like (not heavy drop shadows) */
+  --shadow-xs: 0 1px 2px rgba(26, 29, 35, 0.06);
+  --shadow-sm: 0 1px 2px rgba(26, 29, 35, 0.06), 0 4px 12px rgba(26, 29, 35, 0.08);
   --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
     system-ui, sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
@@ -89,12 +92,17 @@ button:disabled {
   align-items: center;
   gap: 12px;
   height: var(--topbar-h);
-  padding: 0 12px 0 78px; /* room for macOS traffic lights */
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   flex-shrink: 0;
   /* Only non-interactive gaps drag; controls must stay no-drag or clicks die on macOS. */
   -webkit-app-region: no-drag;
+}
+
+/* macOS hiddenInset traffic lights need left inset; Windows default titlebar does not. */
+:root[data-platform="darwin"] .topbar {
+  padding-left: 78px;
 }
 
 .topbar__drag {
@@ -116,13 +124,32 @@ button:disabled {
 .topbar button,
 .topbar .btn,
 .topbar .search-field,
-.topbar .avatar,
 .topbar kbd {
   -webkit-app-region: no-drag;
 }
 
 .topbar__left {
   flex-shrink: 0;
+  min-width: 0;
+}
+
+.topbar__brand {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 2px;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+  /* Claude Code–style wordmark: unified black old-style serif */
+  font-family: "EB Garamond", "Palatino Linotype", "Book Antiqua", Palatino,
+    "Times New Roman", Georgia, "Noto Serif", serif;
+  font-size: 20px;
+  font-weight: 500;
+  font-style: normal;
+  letter-spacing: -0.01em;
+  color: #111111;
 }
 
 .topbar__center {
@@ -158,6 +185,12 @@ button:disabled {
   white-space: nowrap;
 }
 
+.btn--icon {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
 .btn--ghost {
   background: transparent;
   border-color: var(--border);
@@ -167,16 +200,24 @@ button:disabled {
   background: var(--bg-hover);
   color: var(--text);
 }
-
 .btn--ghost.is-active {
-  background: var(--accent-soft);
-  border-color: #bfdbfe;
+  background: var(--bg-panel);
+  border-color: var(--border);
   color: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn__icon {
-  font-size: 12px;
-  opacity: 0.8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.btn__icon.codicon {
+  font-size: 14px;
 }
 
 .search-field {
@@ -191,8 +232,14 @@ button:disabled {
   background: var(--bg-muted);
   color: var(--text-muted);
 }
-
 .search-field__icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.search-field__icon.codicon {
   font-size: 14px;
 }
 
@@ -204,7 +251,6 @@ button:disabled {
   white-space: nowrap;
   font-size: 12.5px;
 }
-
 .search-field__kbd {
   font-family: var(--font);
   font-size: 11px;
@@ -213,18 +259,6 @@ button:disabled {
   border: 1px solid var(--border-strong);
   background: var(--bg-panel);
   color: var(--text-muted);
-}
-
-.avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #93c5fd, #6366f1);
-  color: white;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 /* ── Resize ────────────────────────────────────────── */
@@ -266,6 +300,7 @@ button:disabled {
   height: 32px;
   padding: 0 10px;
   border-radius: var(--radius);
+  border: 1px solid transparent;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -279,16 +314,21 @@ button:disabled {
 }
 
 .mode-btn.is-active {
-  background: var(--bg-active);
+  background: var(--bg-panel);
   color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border);
 }
 
 .mode-btn__icon {
   width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1;
 }
-
 .left-nav__body {
   flex: 1;
   min-height: 0;
@@ -307,10 +347,19 @@ button:disabled {
   font-size: 12px;
   flex-shrink: 0;
 }
-
 .branch-pill,
 .git-counts {
   font-variant-numeric: tabular-nums;
+}
+
+.branch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.branch-pill .codicon {
+  font-size: 12px;
 }
 
 .files-pane__title {
@@ -357,20 +406,35 @@ button:disabled {
 }
 
 .file-tree__chevron {
-  width: 12px;
-  font-size: 10px;
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
+.file-tree__chevron.codicon {
+  font-size: 12px;
+}
+
 .file-tree__icon {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
   opacity: 0.9;
   flex-shrink: 0;
-  min-width: 18px;
-  font-family: var(--font-mono);
-  font-weight: 600;
+  min-width: 16px;
   color: var(--text-muted);
+}
+
+.file-tree__icon.codicon {
+  font-family: codicon;
+  font-weight: normal;
 }
 
 .file-tree__name {
@@ -441,10 +505,20 @@ button:disabled {
   height: 34px;
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  /* Darker than panel so inactive tabs / labels stay readable */
+  background: var(--bg-muted);
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* Never show a native scrollbar under the strip (Windows classic arrows). */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tabs::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .tab {
@@ -454,12 +528,15 @@ button:disabled {
   height: 28px;
   padding: 0 8px 0 10px;
   border-radius: var(--radius) var(--radius) 0 0;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12.5px;
+  flex: 0 1 auto;
+  min-width: 72px;
   max-width: 180px;
   border: 1px solid transparent;
   border-bottom: none;
-  background: transparent;
+  /* Soft chip on muted strip — distinct from active white panel */
+  background: rgba(255, 255, 255, 0.45);
   position: relative;
   top: 1px; /* sit on the strip border */
   margin: 0;
@@ -468,6 +545,7 @@ button:disabled {
 .tab:hover:not(.is-active) {
   background: var(--bg-hover);
   color: var(--text);
+  box-shadow: var(--shadow-xs);
 }
 
 .tab.is-active {
@@ -476,12 +554,28 @@ button:disabled {
   border-color: var(--border);
   border-bottom: 1px solid var(--bg-panel);
   z-index: 1;
+  box-shadow: var(--shadow-sm);
 }
-
 .tab__label {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.tab__icon.codicon {
+  font-size: 14px;
 }
 
 .tab__close {
@@ -490,6 +584,11 @@ button:disabled {
   border-radius: 4px;
   line-height: 1;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .tab__close:hover {
@@ -816,6 +915,10 @@ button:disabled {
   width: 24px;
   height: 24px;
   border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
 }
 
 .icon-btn:hover {
@@ -857,6 +960,9 @@ button:disabled {
   width: 24px;
   padding: 0;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .terminal-panel__body {
@@ -904,6 +1010,9 @@ button:disabled {
   border-radius: 4px;
   font-size: 12px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .term-tab-close:hover {
@@ -1344,4 +1453,33 @@ button:disabled {
 
 .md-viewer__toolbar {
   justify-content: space-between;
+}
+
+/* ── Monaco overlay message (read-only tip) ────────── */
+/* Defaults use unset --vscode-* vars → neon info border. Match workbench. */
+
+.monaco-editor .monaco-editor-overlaymessage .message {
+  padding: 6px 10px;
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 2px rgba(26, 29, 35, 0.06),
+    0 6px 16px rgba(26, 29, 35, 0.1);
+}
+
+.monaco-editor .monaco-editor-overlaymessage .message p {
+  margin: 0;
+}
+
+.monaco-editor .monaco-editor-overlaymessage .anchor.top {
+  border-bottom-color: var(--border);
+}
+
+.monaco-editor .monaco-editor-overlaymessage .anchor.below {
+  border-top-color: var(--border);
 }

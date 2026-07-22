@@ -1,3 +1,4 @@
+import { Icon } from "@/shared/Icon";
 import { jumpToComment } from "@/features/shell/orchestrate";
 import { useAnnotationsStore } from "./annotationsStore";
 import { useDocumentStore } from "@/features/document/documentStore";
@@ -107,7 +108,7 @@ export function CommentsPane() {
         <div className="banner banner--ok history-toast" role="status">
           <span>{toast}</span>
           <button type="button" className="icon-btn" onClick={clearToast}>
-            ×
+            <Icon name="close" />
           </button>
         </div>
       ) : null}

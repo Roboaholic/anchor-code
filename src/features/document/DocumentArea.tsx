@@ -1,3 +1,5 @@
+import { Icon } from "@/shared/Icon";
+import type { CodiconName } from "@/shared/Icon";
 import { CodeViewer } from "./CodeViewer";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
@@ -30,9 +32,7 @@ export function DocumentArea() {
             }}
             tabIndex={0}
           >
-            <span className="tab__icon" aria-hidden>
-              {tabIcon(item)}
-            </span>
+            <Icon name={tabIcon(item)} className="tab__icon" />
             <span className="tab__label" title={itemTitle(item)}>
               {item.title}
             </span>
@@ -45,7 +45,7 @@ export function DocumentArea() {
                 closeItem(item.id);
               }}
             >
-              ×
+              <Icon name="close" />
             </button>
           </div>
         ))}
@@ -134,9 +134,7 @@ function WelcomeView() {
             )
           }
         >
-          <span className="btn__icon" aria-hidden>
-            ▦
-          </span>
+          <Icon name="folder-opened" className="btn__icon" />
           Open Workspace
         </button>
       </p>
@@ -168,16 +166,23 @@ function WelcomeView() {
   );
 }
 
-function tabIcon(item: OpenItem): string {
-  if (item.kind === "welcome") return "✦";
-  if (item.kind === "diff") return "±";
-  if (item.kind === "file" && item.isMarkdown) return "MD";
+function tabIcon(item: OpenItem): CodiconName {
+  if (item.kind === "welcome") return "home";
+  if (item.kind === "diff") return "diff";
+  if (item.kind === "file" && item.isMarkdown) return "markdown";
   if (item.kind === "file") {
-    if (item.language === "typescript") return "TS";
-    if (item.language === "javascript") return "JS";
-    return "◇";
+    if (
+      item.language === "typescript" ||
+      item.language === "javascript" ||
+      item.language === "json" ||
+      item.language === "css" ||
+      item.language === "html"
+    ) {
+      return "file-code";
+    }
+    return "file";
   }
-  return "◇";
+  return "file";
 }
 
 function itemTitle(item: OpenItem): string {

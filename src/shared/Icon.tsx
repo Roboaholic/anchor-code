@@ -1,0 +1,40 @@
+/**
+ * VS Code Codicons — use class "codicon codicon-<name>".
+ * @see https://microsoft.github.io/vscode-codicons/dist/codicon.html
+ */
+import type { HTMLAttributes } from "react";
+
+export type CodiconName =
+  | "add"
+  | "close"
+  | "comment"
+  | "comment-discussion"
+  | "diff"
+  | "error"
+  | "file"
+  | "file-code"
+  | "files"
+  | "folder"
+  | "folder-opened"
+  | "git-branch"
+  | "history"
+  | "home"
+  | "json"
+  | "markdown"
+  | "search"
+  | "symbol-file"
+  | "terminal"
+  | "chevron-down"
+  | "chevron-right";
+
+type IconProps = {
+  name: CodiconName | (string & {});
+  className?: string;
+} & Omit<HTMLAttributes<HTMLSpanElement>, "className" | "children">;
+
+export function Icon({ name, className, ...rest }: IconProps) {
+  const classes = ["codicon", `codicon-${name}`, className]
+    .filter(Boolean)
+    .join(" ");
+  return <span className={classes} aria-hidden {...rest} />;
+}

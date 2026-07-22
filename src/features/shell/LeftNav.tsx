@@ -1,13 +1,15 @@
 import { CommentsPane } from "@/features/annotations/CommentsPane";
 import { FileTree } from "@/features/files/FileTree";
 import { HistoryPane } from "@/features/history/HistoryPane";
+import { Icon } from "@/shared/Icon";
+import type { CodiconName } from "@/shared/Icon";
 import type { LeftMode } from "./shellStore";
 import { useShellStore } from "./shellStore";
 
-const MODES: { id: LeftMode; label: string; icon: string }[] = [
-  { id: "files", label: "FILES", icon: "▣" },
-  { id: "comments", label: "COMMENTS", icon: "💬" },
-  { id: "history", label: "HISTORY (GIT)", icon: "⑂" },
+const MODES: { id: LeftMode; label: string; icon: CodiconName }[] = [
+  { id: "files", label: "FILES", icon: "files" },
+  { id: "comments", label: "COMMENTS", icon: "comment-discussion" },
+  { id: "history", label: "HISTORY (GIT)", icon: "history" },
 ];
 
 export function LeftNav() {
@@ -24,9 +26,7 @@ export function LeftNav() {
             className={`mode-btn${leftMode === m.id ? " is-active" : ""}`}
             onClick={() => setLeftMode(m.id)}
           >
-            <span className="mode-btn__icon" aria-hidden>
-              {m.icon}
-            </span>
+            <Icon name={m.icon} className="mode-btn__icon" />
             {m.label}
           </button>
         ))}
@@ -40,7 +40,8 @@ export function LeftNav() {
 
       <footer className="left-nav__footer">
         <span className="branch-pill" title="Placeholder">
-          ⑂ main
+          <Icon name="git-branch" />
+          main
         </span>
         <span className="git-counts" title="Placeholder">
           +0 ~0

@@ -16,13 +16,18 @@
     "test:watch": "vitest",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "ensure:pty": "node scripts/ensure-node-pty.js",
-    "postinstall": "node scripts/ensure-node-pty.js"
+    "postinstall": "node scripts/ensure-node-pty.js",
+    "pack:win": "npm run build && electron-builder --win --x64 --publish never",
+    "pack:win:dir": "npm run build && electron-builder --win --x64 --dir --publish never"
   },
   "dependencies": {
+    "@fontsource/eb-garamond": "^5.3.0",
     "@monaco-editor/react": "^4.7.0",
+    "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "monaco-editor": "^0.55.1",
+    "node-pty": "^1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
@@ -38,12 +43,58 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "^37.2.0",
+    "electron-builder": "^26.15.3",
     "electron-rebuild": "^3.2.9",
-    "node-pty": "^1.1.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^4.1.10"
+  },
+  "build": {
+    "appId": "com.roboaholic.anchor-code",
+    "productName": "Anchor Code",
+    "copyright": "Copyright © Roboaholic",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Anchor Code"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
+    }
   }
 }

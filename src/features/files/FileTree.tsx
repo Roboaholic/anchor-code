@@ -6,6 +6,8 @@ import {
   useWorkspaceStore,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
+import { Icon } from "@/shared/Icon";
+import type { CodiconName } from "@/shared/Icon";
 
 export function FileTree() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
@@ -22,7 +24,7 @@ export function FileTree() {
       <div className="files-pane">
         <div className="files-pane__title">NO WORKSPACE</div>
         <p className="pane-hint">
-          Use <strong>Open Workspace</strong> (top bar or below) to choose a
+          Use <strong>Open Workspace</strong> below (or File menu) to choose a
           folder. Non-git directories are fine for reading.
         </p>
         <div className="files-pane__actions">
@@ -35,9 +37,7 @@ export function FileTree() {
               )
             }
           >
-            <span className="btn__icon" aria-hidden>
-              ▦
-            </span>
+            <Icon name="folder-opened" className="btn__icon" />
             Open Workspace
           </button>
         </div>
@@ -56,9 +56,7 @@ export function FileTree() {
                     title={r.path}
                     onClick={() => void openWorkspacePath(r.path)}
                   >
-                    <span className="file-tree__icon" aria-hidden>
-                      📁
-                    </span>
+                    <Icon name="folder" className="file-tree__icon" />
                     <span className="file-tree__name">
                       {r.path.split(/[/\\]/).filter(Boolean).pop() ?? r.path}
                     </span>
@@ -167,12 +165,14 @@ function TreeRow({
           style={{ paddingLeft: pad }}
           onClick={() => onToggle(node.path)}
         >
-          <span className="file-tree__chevron" aria-hidden>
-            {node.expanded ? "▾" : "▸"}
-          </span>
-          <span className="file-tree__icon" aria-hidden>
-            📁
-          </span>
+          <Icon
+            name={node.expanded ? "chevron-down" : "chevron-right"}
+            className="file-tree__chevron"
+          />
+          <Icon
+            name={node.expanded ? "folder-opened" : "folder"}
+            className="file-tree__icon"
+          />
           <span className="file-tree__name">{node.name}</span>
         </button>
         {node.error ? (
@@ -206,20 +206,32 @@ function TreeRow({
         style={{ paddingLeft: pad + 14 }}
         onClick={() => onOpenFile(node.path)}
       >
-        <span className="file-tree__icon" aria-hidden>
-          {fileIcon(node.name)}
-        </span>
+        <Icon name={fileIcon(node.name)} className="file-tree__icon" />
         <span className="file-tree__name">{node.name}</span>
       </button>
     </li>
   );
 }
 
-function fileIcon(name: string): string {
+function fileIcon(name: string): CodiconName {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".md")) return "MD";
-  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "TS";
-  if (lower.endsWith(".js") || lower.endsWith(".jsx")) return "JS";
-  if (lower.endsWith(".json")) return "{}";
-  return "📄";
+  if (lower.endsWith(".md") || lower.endsWith(".mdx")) return "markdown";
+  if (lower.endsWith(".json") || lower.endsWith(".jsonc")) return "json";
+  if (
+    lower.endsWith(".ts") ||
+    lower.endsWith(".tsx") ||
+    lower.endsWith(".js") ||
+    lower.endsWith(".jsx") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs") ||
+    lower.endsWith(".css") ||
+    lower.endsWith(".scss") ||
+    lower.endsWith(".html") ||
+    lower.endsWith(".py") ||
+    lower.endsWith(".rs") ||
+    lower.endsWith(".go")
+  ) {
+    return "file-code";
+  }
+  return "file";
 }

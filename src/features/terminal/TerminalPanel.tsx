@@ -1,3 +1,4 @@
+import { Icon } from "@/shared/Icon";
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -46,7 +47,7 @@ export function TerminalPanel() {
               aria-label={`Close ${t.title}`}
               onClick={() => void closeTab(t.id)}
             >
-              ×
+              <Icon name="close" />
             </button>
           </div>
         ))}
@@ -57,7 +58,7 @@ export function TerminalPanel() {
           onClick={() => void createTab()}
           disabled={!workspaceRoot}
         >
-          +
+          <Icon name="add" />
         </button>
       </div>
 

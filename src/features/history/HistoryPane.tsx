@@ -1,3 +1,4 @@
+import { Icon } from "@/shared/Icon";
 import { runHistoryCompare } from "@/features/shell/orchestrate";
 import {
   selectionLabel,
@@ -87,7 +88,7 @@ export function HistoryPane() {
         <div className="banner banner--warn history-toast" role="status">
           <span>{toast}</span>
           <button type="button" className="icon-btn" onClick={clearToast}>
-            ×
+            <Icon name="close" />
           </button>
         </div>
       ) : null}

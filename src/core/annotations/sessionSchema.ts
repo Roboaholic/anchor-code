@@ -27,6 +27,8 @@ export const targetSchema = z.object({
   selected_text: z.string(),
   before_context: z.string(),
   after_context: z.string(),
+  /** Optional full line snapshot (anch-review lineText); improves relocate. */
+  line_text: z.string().optional(),
 });
 
 export const commentSchema = z.object({

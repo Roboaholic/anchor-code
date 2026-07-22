@@ -29,7 +29,7 @@ export interface StatResult {
 
 export interface RecentWorkspace {
   path: string;
-  hostProfileId: string;
+  name: string;
   lastOpenedAt: string;
 }
 
@@ -96,6 +96,7 @@ export interface CommentTarget {
   selected_text: string;
   before_context: string;
   after_context: string;
+  line_text?: string;
 }
 
 export interface CommentRecord {
@@ -121,6 +122,16 @@ export interface SessionRecord {
   filePath?: string;
 }
 
+export interface SessionSummary {
+  id: string;
+  title: string;
+  status: "active" | "closed";
+  created_at: string;
+  ended_at: string | null;
+  commentCount: number;
+  filePath?: string;
+}
+
 export interface AddCommentInput {
   repoRoot: string;
   filePath: string;
@@ -132,8 +143,23 @@ export interface AddCommentInput {
   selectedText: string;
   beforeContext: string;
   afterContext: string;
+  lineText?: string;
   body: string;
   author?: string;
+}
+
+export interface AnchReviewExportPayload {
+  session: {
+    id: string;
+    title: string;
+    status: string;
+    actor: string;
+    authorId: string;
+    workspaceRoot: string;
+    createdAt: string;
+    stoppedAt: string | null;
+  };
+  entries: Array<Record<string, unknown>>;
 }
 
 export interface AnchorApi {
@@ -176,7 +202,12 @@ export interface AnchorApi {
     load: (
       repoRoot: string,
     ) => Promise<{ sessions: SessionRecord[]; error?: string }>;
-    ensureActive: (repoRoot: string) => Promise<SessionRecord>;
+    list: (
+      repoRoot: string,
+    ) => Promise<{ sessions: SessionSummary[]; error?: string }>;
+    ensureActive: (
+      args: string | { repoRoot: string; title?: string },
+    ) => Promise<SessionRecord>;
     addComment: (input: AddCommentInput) => Promise<SessionRecord>;
     setStatus: (args: {
       repoRoot: string;
@@ -188,9 +219,33 @@ export interface AnchorApi {
       commentId: string;
       body: string;
     }) => Promise<SessionRecord>;
-    endSession: (repoRoot: string) => Promise<SessionRecord | null>;
-    newSession: (repoRoot: string) => Promise<SessionRecord>;
-    copyYamlPath: (repoRoot: string) => Promise<string>;
+    editComment: (args: {
+      repoRoot: string;
+      commentId: string;
+      body: string;
+      messageId?: string;
+    }) => Promise<SessionRecord>;
+    deleteComment: (args: {
+      repoRoot: string;
+      commentId: string;
+    }) => Promise<SessionRecord>;
+    endSession: (
+      args: string | { repoRoot: string; sessionId?: string; export?: boolean },
+    ) => Promise<{ session: SessionRecord | null; exportPath?: string }>;
+    newSession: (
+      args: string | { repoRoot: string; title?: string },
+    ) => Promise<SessionRecord>;
+    restoreSession: (args: {
+      repoRoot: string;
+      sessionId: string;
+    }) => Promise<SessionRecord>;
+    exportSession: (args: {
+      repoRoot: string;
+      sessionId?: string;
+    }) => Promise<{ exportPath: string; payload: AnchReviewExportPayload }>;
+    copyYamlPath: (
+      args: string | { repoRoot: string; sessionId?: string },
+    ) => Promise<string>;
   };
   terminal: {
     create: (args?: {

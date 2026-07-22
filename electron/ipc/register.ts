@@ -5,12 +5,17 @@ import { HostError } from "../host/types.js";
 import {
   addComment,
   copyYamlPath,
+  deleteComment,
+  editComment,
   endSession,
   ensureActiveSession,
+  exportSession,
+  listSessionSummaries,
   loadSessions,
   locateGitRoot,
   newSession,
   replyComment,
+  restoreSession,
   setCommentStatus,
   type AddCommentInput,
   type CommentStatus,
@@ -293,11 +298,25 @@ export function registerIpc(opts: {
     }
   });
 
+  ipcMain.handle("annotations:list", async (_evt, repoRoot: string) => {
+    try {
+      return await listSessionSummaries(host, repoRoot);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
   ipcMain.handle(
     "annotations:ensureActive",
-    async (_evt, repoRoot: string) => {
+    async (
+      _evt,
+      args: string | { repoRoot: string; title?: string },
+    ) => {
       try {
-        return await ensureActiveSession(host, repoRoot);
+        if (typeof args === "string") {
+          return await ensureActiveSession(host, args);
+        }
+        return await ensureActiveSession(host, args.repoRoot, "local-user", args.title);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -353,27 +372,120 @@ export function registerIpc(opts: {
     },
   );
 
-  ipcMain.handle("annotations:endSession", async (_evt, repoRoot: string) => {
-    try {
-      return await endSession(host, repoRoot);
-    } catch (err) {
-      rethrowIpc(err);
-    }
-  });
+  ipcMain.handle(
+    "annotations:editComment",
+    async (
+      _evt,
+      args: {
+        repoRoot: string;
+        commentId: string;
+        body: string;
+        messageId?: string;
+      },
+    ) => {
+      try {
+        return await editComment(
+          host,
+          args.repoRoot,
+          args.commentId,
+          args.body,
+          args.messageId,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
-  ipcMain.handle("annotations:newSession", async (_evt, repoRoot: string) => {
-    try {
-      return await newSession(host, repoRoot);
-    } catch (err) {
-      rethrowIpc(err);
-    }
-  });
+  ipcMain.handle(
+    "annotations:deleteComment",
+    async (
+      _evt,
+      args: { repoRoot: string; commentId: string },
+    ) => {
+      try {
+        return await deleteComment(host, args.repoRoot, args.commentId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:endSession",
+    async (
+      _evt,
+      args: string | { repoRoot: string; sessionId?: string; export?: boolean },
+    ) => {
+      try {
+        if (typeof args === "string") {
+          return await endSession(host, args);
+        }
+        return await endSession(host, args.repoRoot, {
+          sessionId: args.sessionId,
+          export: args.export,
+        });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:newSession",
+    async (
+      _evt,
+      args: string | { repoRoot: string; title?: string },
+    ) => {
+      try {
+        if (typeof args === "string") {
+          return await newSession(host, args);
+        }
+        return await newSession(host, args.repoRoot, "local-user", args.title);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:restoreSession",
+    async (
+      _evt,
+      args: { repoRoot: string; sessionId: string },
+    ) => {
+      try {
+        return await restoreSession(host, args.repoRoot, args.sessionId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "annotations:exportSession",
+    async (
+      _evt,
+      args: { repoRoot: string; sessionId?: string },
+    ) => {
+      try {
+        return await exportSession(host, args.repoRoot, args.sessionId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   ipcMain.handle(
     "annotations:copyYamlPath",
-    async (_evt, repoRoot: string) => {
+    async (
+      _evt,
+      args: string | { repoRoot: string; sessionId?: string },
+    ) => {
       try {
-        const abs = await copyYamlPath(host, repoRoot);
+        const repoRoot = typeof args === "string" ? args : args.repoRoot;
+        const sessionId = typeof args === "string" ? undefined : args.sessionId;
+        const abs = await copyYamlPath(host, repoRoot, sessionId);
         clipboard.writeText(abs);
         return abs;
       } catch (err) {

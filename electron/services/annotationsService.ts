@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   parseSession,
@@ -6,6 +7,10 @@ import {
   toRepoRelative,
   type SessionParsed,
 } from "../../src/core/annotations/sessionSchema.js";
+import {
+  buildAnchReviewExport,
+  type AnchReviewExportPayload,
+} from "../../src/core/annotations/exportFormat.js";
 import type { LocalHostSession } from "../host/localHost.js";
 import { HostError } from "../host/types.js";
 
@@ -30,6 +35,7 @@ export interface CommentTarget {
   selected_text: string;
   before_context: string;
   after_context: string;
+  line_text?: string;
 }
 
 export interface CommentRecord {
@@ -56,9 +62,19 @@ export interface SessionRecord {
   filePath?: string;
 }
 
+export interface SessionSummary {
+  id: string;
+  title: string;
+  status: SessionStatus;
+  created_at: string;
+  ended_at: string | null;
+  commentCount: number;
+  filePath?: string;
+}
+
 export interface AddCommentInput {
   repoRoot: string;
-  filePath: string; // absolute or relative — we store relative to repo
+  filePath: string;
   kind: TargetKind;
   startLine: number;
   endLine: number;
@@ -67,6 +83,7 @@ export interface AddCommentInput {
   selectedText: string;
   beforeContext: string;
   afterContext: string;
+  lineText?: string;
   body: string;
   author?: string;
 }
@@ -75,8 +92,16 @@ function sessionDir(repoRoot: string): string {
   return path.join(repoRoot, ".anchor-code");
 }
 
+function exportDir(repoRoot: string): string {
+  return path.join(sessionDir(repoRoot), "exports");
+}
+
 function sessionFilePath(repoRoot: string, sessionId: string): string {
   return path.join(sessionDir(repoRoot), `${sessionId}.yaml`);
+}
+
+function exportFilePath(repoRoot: string, sessionId: string): string {
+  return path.join(exportDir(repoRoot), `${sessionId}.json`);
 }
 
 function nowIso(): string {
@@ -172,6 +197,7 @@ export async function loadSessions(
         };
       }
     }
+    sessions.sort((a, b) => b.created_at.localeCompare(a.created_at));
     return { sessions };
   } catch (err) {
     return {
@@ -181,10 +207,54 @@ export async function loadSessions(
   }
 }
 
+export async function listSessionSummaries(
+  host: LocalHostSession,
+  repoRoot: string,
+): Promise<{ sessions: SessionSummary[]; error?: string }> {
+  const { sessions, error } = await loadSessions(host, repoRoot);
+  return {
+    error,
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      title: s.title,
+      status: s.status,
+      created_at: s.created_at,
+      ended_at: s.ended_at,
+      commentCount: s.comments.length,
+      filePath: s.filePath,
+    })),
+  };
+}
+
+async function loadSessionById(
+  host: LocalHostSession,
+  repoRoot: string,
+  sessionId: string,
+): Promise<SessionRecord> {
+  const { sessions, error } = await loadSessions(host, repoRoot);
+  if (error) throw new HostError("failed", error);
+  const found = sessions.find((s) => s.id === sessionId);
+  if (!found) throw new HostError("not_found", `Session not found: ${sessionId}`);
+  return found;
+}
+
+async function requireActiveSession(
+  host: LocalHostSession,
+  repoRoot: string,
+  author = "local-user",
+): Promise<SessionRecord> {
+  const session = await ensureActiveSession(host, repoRoot, author);
+  if (session.status !== "active") {
+    throw new HostError("failed", "No active session");
+  }
+  return session;
+}
+
 export async function ensureActiveSession(
   host: LocalHostSession,
   repoRoot: string,
   author = "local-user",
+  title?: string,
 ): Promise<SessionRecord> {
   const { sessions, error } = await loadSessions(host, repoRoot);
   if (error) {
@@ -206,7 +276,7 @@ export async function ensureActiveSession(
   const session: SessionRecord = {
     version: 1,
     id,
-    title: "HITL review",
+    title: title?.trim() || `Review ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
     status: "active",
     created_at: nowIso(),
     ended_at: null,
@@ -247,15 +317,17 @@ export async function addComment(
   host: LocalHostSession,
   input: AddCommentInput,
 ): Promise<SessionRecord> {
-  const session = await ensureActiveSession(
+  const session = await requireActiveSession(
     host,
     input.repoRoot,
     input.author ?? "local-user",
   );
-  if (session.status !== "active") {
-    throw new HostError("failed", "No active session to write comments");
-  }
   const ts = nowIso();
+  const selected = input.selectedText;
+  const lineText =
+    input.lineText ??
+    selected.split(/\r?\n/)[0] ??
+    "";
   const comment: CommentRecord = {
     id: makeId("comment"),
     status: "discussing",
@@ -266,9 +338,10 @@ export async function addComment(
       end_line: input.endLine,
       start_column: input.startColumn,
       end_column: input.endColumn,
-      selected_text: input.selectedText,
+      selected_text: selected,
       before_context: input.beforeContext,
       after_context: input.afterContext,
+      line_text: lineText,
     },
     created_at: ts,
     updated_at: ts,
@@ -294,7 +367,7 @@ export async function setCommentStatus(
   commentId: string,
   status: CommentStatus,
 ): Promise<SessionRecord> {
-  const session = await ensureActiveSession(host, repoRoot);
+  const session = await requireActiveSession(host, repoRoot);
   const idx = session.comments.findIndex((c) => c.id === commentId);
   if (idx < 0) throw new HostError("not_found", "Comment not found");
   const c = session.comments[idx]!;
@@ -315,7 +388,10 @@ export async function replyComment(
   body: string,
   author = "local-user",
 ): Promise<SessionRecord> {
-  const session = await ensureActiveSession(host, repoRoot, author);
+  if (!body.trim()) {
+    throw new HostError("failed", "Reply body cannot be empty");
+  }
+  const session = await requireActiveSession(host, repoRoot, author);
   const idx = session.comments.findIndex((c) => c.id === commentId);
   if (idx < 0) throw new HostError("not_found", "Comment not found");
   const c = session.comments[idx]!;
@@ -335,25 +411,85 @@ export async function replyComment(
   return session;
 }
 
+/** Edit primary message body (or a specific message by id). */
+export async function editComment(
+  host: LocalHostSession,
+  repoRoot: string,
+  commentId: string,
+  body: string,
+  messageId?: string,
+): Promise<SessionRecord> {
+  if (!body.trim()) {
+    throw new HostError("failed", "Comment body cannot be empty");
+  }
+  const session = await requireActiveSession(host, repoRoot);
+  const idx = session.comments.findIndex((c) => c.id === commentId);
+  if (idx < 0) throw new HostError("not_found", "Comment not found");
+  const c = session.comments[idx]!;
+  const msgIdx = messageId
+    ? c.messages.findIndex((m) => m.id === messageId)
+    : 0;
+  if (msgIdx < 0) throw new HostError("not_found", "Message not found");
+  const messages = c.messages.map((m, i) =>
+    i === msgIdx ? { ...m, body } : m,
+  );
+  session.comments[idx] = {
+    ...c,
+    messages,
+    updated_at: nowIso(),
+  };
+  const filePath = await writeSession(host, repoRoot, session);
+  session.filePath = filePath;
+  return session;
+}
+
+export async function deleteComment(
+  host: LocalHostSession,
+  repoRoot: string,
+  commentId: string,
+): Promise<SessionRecord> {
+  const session = await requireActiveSession(host, repoRoot);
+  const before = session.comments.length;
+  session.comments = session.comments.filter((c) => c.id !== commentId);
+  if (session.comments.length === before) {
+    throw new HostError("not_found", "Comment not found");
+  }
+  const filePath = await writeSession(host, repoRoot, session);
+  session.filePath = filePath;
+  return session;
+}
+
 export async function endSession(
   host: LocalHostSession,
   repoRoot: string,
-): Promise<SessionRecord | null> {
+  options?: { export?: boolean; sessionId?: string },
+): Promise<{ session: SessionRecord | null; exportPath?: string }> {
   const { sessions, error } = await loadSessions(host, repoRoot);
   if (error) throw new HostError("failed", error);
-  const active = sessions.find((s) => s.status === "active");
-  if (!active) return null;
-  active.status = "closed";
-  active.ended_at = nowIso();
+  const active = options?.sessionId
+    ? sessions.find((s) => s.id === options.sessionId)
+    : sessions.find((s) => s.status === "active");
+  if (!active) return { session: null };
+  if (active.status === "active") {
+    active.status = "closed";
+    active.ended_at = nowIso();
+  }
   const filePath = await writeSession(host, repoRoot, active);
   active.filePath = filePath;
-  return active;
+
+  let exportPath: string | undefined;
+  if (options?.export !== false) {
+    const result = await exportSession(host, repoRoot, active.id);
+    exportPath = result.exportPath;
+  }
+  return { session: active, exportPath };
 }
 
 export async function newSession(
   host: LocalHostSession,
   repoRoot: string,
   author = "local-user",
+  title?: string,
 ): Promise<SessionRecord> {
   const { sessions, error } = await loadSessions(host, repoRoot);
   if (error) throw new HostError("failed", error);
@@ -363,14 +499,110 @@ export async function newSession(
       "End the active session before creating a new one",
     );
   }
-  return ensureActiveSession(host, repoRoot, author);
+  return ensureActiveSession(host, repoRoot, author, title);
+}
+
+/**
+ * Restore a closed session as the sole active one.
+ * Closes any other active session first.
+ */
+export async function restoreSession(
+  host: LocalHostSession,
+  repoRoot: string,
+  sessionId: string,
+): Promise<SessionRecord> {
+  const { sessions, error } = await loadSessions(host, repoRoot);
+  if (error) throw new HostError("failed", error);
+  const target = sessions.find((s) => s.id === sessionId);
+  if (!target) throw new HostError("not_found", `Session not found: ${sessionId}`);
+
+  for (const s of sessions) {
+    if (s.id !== sessionId && s.status === "active") {
+      s.status = "closed";
+      s.ended_at = s.ended_at ?? nowIso();
+      await writeSession(host, repoRoot, s);
+    }
+  }
+
+  target.status = "active";
+  target.ended_at = null;
+  const filePath = await writeSession(host, repoRoot, target);
+  target.filePath = filePath;
+  return target;
 }
 
 export async function copyYamlPath(
   host: LocalHostSession,
   repoRoot: string,
+  sessionId?: string,
 ): Promise<string> {
-  const session = await ensureActiveSession(host, repoRoot);
-  const abs = session.filePath ?? sessionFilePath(repoRoot, session.id);
-  return abs;
+  if (sessionId) {
+    const session = await loadSessionById(host, repoRoot, sessionId);
+    return session.filePath ?? sessionFilePath(repoRoot, session.id);
+  }
+  const session = await requireActiveSession(host, repoRoot);
+  return session.filePath ?? sessionFilePath(repoRoot, session.id);
+}
+
+async function collectExportMeta(
+  host: LocalHostSession,
+  repoRoot: string,
+  session: SessionRecord,
+): Promise<
+  Record<string, { fileHash?: string | null; gitCommitSha?: string | null }>
+> {
+  const meta: Record<
+    string,
+    { fileHash?: string | null; gitCommitSha?: string | null }
+  > = {};
+  let gitCommitSha: string | null = null;
+  try {
+    const result = await host.run(repoRoot, "git", ["rev-parse", "HEAD"]);
+    if (result.code === 0) {
+      gitCommitSha = result.stdout.trim() || null;
+    }
+  } catch {
+    gitCommitSha = null;
+  }
+
+  const paths = new Set(
+    session.comments.map((c) => c.target.file_path.replace(/\\/g, "/")),
+  );
+  for (const rel of paths) {
+    const abs = path.join(repoRoot, rel);
+    let fileHash: string | null = null;
+    try {
+      if (await host.exists(abs)) {
+        const text = await host.readFile(abs);
+        fileHash = createHash("sha256").update(text, "utf8").digest("hex");
+      }
+    } catch {
+      fileHash = null;
+    }
+    meta[rel] = { fileHash, gitCommitSha };
+  }
+  return meta;
+}
+
+export async function exportSession(
+  host: LocalHostSession,
+  repoRoot: string,
+  sessionId?: string,
+): Promise<{ exportPath: string; payload: AnchReviewExportPayload }> {
+  let session: SessionRecord;
+  if (sessionId) {
+    session = await loadSessionById(host, repoRoot, sessionId);
+  } else {
+    session = await requireActiveSession(host, repoRoot);
+  }
+
+  const meta = await collectExportMeta(host, repoRoot, session);
+  const payload = buildAnchReviewExport(session, repoRoot, meta);
+
+  const outDir = exportDir(repoRoot);
+  await host.mkdirp(outDir);
+  const outPath = exportFilePath(repoRoot, session.id);
+  const json = JSON.stringify(payload, null, 2) + "\n";
+  await host.writeFile(outPath, json);
+  return { exportPath: outPath, payload };
 }

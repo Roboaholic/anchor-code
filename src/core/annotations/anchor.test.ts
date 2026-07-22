@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { resolveAnchor, type AnchorTarget } from "./anchor";
 
-function target(partial: Partial<AnchorTarget> & Pick<AnchorTarget, "selected_text">): AnchorTarget {
+function target(
+  partial: Partial<AnchorTarget> & Pick<AnchorTarget, "selected_text">,
+): AnchorTarget {
   return {
     start_line: 2,
     end_line: 2,
@@ -54,8 +56,31 @@ describe("resolveAnchor", () => {
         selected_text: "legacyTransform",
       }),
     );
-    expect(r.status).toBe("resolved");
+    expect(r.status).toBe("relocated");
     expect(r.startLine).toBe(4);
+  });
+
+  it("picks nearer candidate when selected_text appears twice", () => {
+    const content = [
+      "legacyTransform first",
+      "padding",
+      "padding",
+      "padding",
+      "legacyTransform second",
+      "tail",
+    ].join("\n");
+    const r = resolveAnchor(
+      content,
+      target({
+        start_line: 5,
+        end_line: 5,
+        selected_text: "legacyTransform",
+        before_context: "padding",
+        after_context: "tail",
+      }),
+    );
+    expect(r.status).toBe("relocated");
+    expect(r.startLine).toBe(5);
   });
 
   it("uses before/after context sandwich when text missing", () => {
@@ -76,7 +101,7 @@ describe("resolveAnchor", () => {
         after_context: "return normalize(result)",
       }),
     );
-    expect(r.status).toBe("resolved");
+    expect(r.status).toBe("relocated");
     expect(r.startLine).toBeGreaterThan(1);
   });
 

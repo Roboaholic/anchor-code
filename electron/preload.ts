@@ -141,8 +141,14 @@ const anchor = {
       repoRoot: string,
     ): Promise<{ sessions: unknown[]; error?: string }> =>
       ipcRenderer.invoke("annotations:load", repoRoot),
-    ensureActive: (repoRoot: string): Promise<unknown> =>
-      ipcRenderer.invoke("annotations:ensureActive", repoRoot),
+    list: (
+      repoRoot: string,
+    ): Promise<{ sessions: unknown[]; error?: string }> =>
+      ipcRenderer.invoke("annotations:list", repoRoot),
+    ensureActive: (
+      args: string | { repoRoot: string; title?: string },
+    ): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:ensureActive", args),
     addComment: (input: unknown): Promise<unknown> =>
       ipcRenderer.invoke("annotations:addComment", input),
     setStatus: (args: {
@@ -155,12 +161,38 @@ const anchor = {
       commentId: string;
       body: string;
     }): Promise<unknown> => ipcRenderer.invoke("annotations:reply", args),
-    endSession: (repoRoot: string): Promise<unknown> =>
-      ipcRenderer.invoke("annotations:endSession", repoRoot),
-    newSession: (repoRoot: string): Promise<unknown> =>
-      ipcRenderer.invoke("annotations:newSession", repoRoot),
-    copyYamlPath: (repoRoot: string): Promise<string> =>
-      ipcRenderer.invoke("annotations:copyYamlPath", repoRoot),
+    editComment: (args: {
+      repoRoot: string;
+      commentId: string;
+      body: string;
+      messageId?: string;
+    }): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:editComment", args),
+    deleteComment: (args: {
+      repoRoot: string;
+      commentId: string;
+    }): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:deleteComment", args),
+    endSession: (
+      args: string | { repoRoot: string; sessionId?: string; export?: boolean },
+    ): Promise<unknown> => ipcRenderer.invoke("annotations:endSession", args),
+    newSession: (
+      args: string | { repoRoot: string; title?: string },
+    ): Promise<unknown> => ipcRenderer.invoke("annotations:newSession", args),
+    restoreSession: (args: {
+      repoRoot: string;
+      sessionId: string;
+    }): Promise<unknown> =>
+      ipcRenderer.invoke("annotations:restoreSession", args),
+    exportSession: (args: {
+      repoRoot: string;
+      sessionId?: string;
+    }): Promise<{ exportPath: string; payload: unknown }> =>
+      ipcRenderer.invoke("annotations:exportSession", args),
+    copyYamlPath: (
+      args: string | { repoRoot: string; sessionId?: string },
+    ): Promise<string> =>
+      ipcRenderer.invoke("annotations:copyYamlPath", args),
   },
   terminal: {
     create: (args?: {

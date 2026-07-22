@@ -298,6 +298,8 @@ const anchor = {
       ipcRenderer.invoke("agent:detect"),
     saveProfiles: (profiles: AgentCliProfile[]): Promise<AgentCliProfile[]> =>
       ipcRenderer.invoke("agent:saveProfiles", profiles),
+    upsertProfile: (profile: AgentCliProfile): Promise<AgentCliProfile[]> =>
+      ipcRenderer.invoke("agent:upsertProfile", profile),
     getDefaultId: (): Promise<string | undefined> =>
       ipcRenderer.invoke("agent:getDefaultId"),
     setDefaultId: (id: string | null | undefined): Promise<void> =>

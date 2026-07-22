@@ -7,6 +7,24 @@ import type {
 
 export type RightTermMode = "terminal" | "agent";
 
+const SESSION_LIST_KEY = "anchor.terminal.sessionListOpen";
+
+function readSessionListOpen(): boolean {
+  try {
+    return localStorage.getItem(SESSION_LIST_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionListOpen(open: boolean) {
+  try {
+    localStorage.setItem(SESSION_LIST_KEY, open ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 export interface TerminalState {
   tabs: TerminalTabInfo[];
   /** Active tab per mode so switching modes keeps both sides alive. */
@@ -34,6 +52,11 @@ export interface TerminalState {
   loadAgentProfiles: () => Promise<void>;
   detectAgents: () => Promise<void>;
   setAgentMenuOpen: (open: boolean) => void;
+  addCustomAgent: (input: {
+    name: string;
+    command: string;
+    args?: string[];
+  }) => Promise<AgentCliProfile | null>;
 }
 
 function modeOf(tab: TerminalTabInfo): RightTermMode {
@@ -54,7 +77,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
   activeByMode: { terminal: null, agent: null },
   mode: "terminal",
-  sessionListOpen: false,
+  sessionListOpen: readSessionListOpen(),
   error: null,
   workspaceCwd: null,
   agentProfiles: [],
@@ -79,6 +102,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         agentMenuOpen: false,
       });
       void get().loadAgentProfiles();
+      // Detect once per workspace open so "found" badges stay fresh.
+      void get().detectAgents();
     } catch (err) {
       set({
         workspaceCwd: cwd,
@@ -100,9 +125,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     })),
 
   toggleSessionList: () =>
-    set((s) => ({ sessionListOpen: !s.sessionListOpen })),
+    set((s) => {
+      const sessionListOpen = !s.sessionListOpen;
+      writeSessionListOpen(sessionListOpen);
+      return { sessionListOpen };
+    }),
 
-  setSessionListOpen: (open) => set({ sessionListOpen: open }),
+  setSessionListOpen: (open) => {
+    writeSessionListOpen(open);
+    set({ sessionListOpen: open });
+  },
 
   createShellTab: async () => {
     const cwd =
@@ -249,6 +281,35 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   setAgentMenuOpen: (open) => set({ agentMenuOpen: open }),
+
+  addCustomAgent: async (input) => {
+    const command = input.command.trim();
+    if (!command) {
+      set({ error: "Command is required" });
+      return null;
+    }
+    const name = input.name.trim() || command;
+    const id = `custom-${command
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .toLowerCase()}-${Date.now().toString(36)}`;
+    try {
+      const profiles = await window.anchor.agent.upsertProfile({
+        id,
+        name,
+        command,
+        args: input.args ?? [],
+        enabled: true,
+        detected: false,
+      });
+      set({ agentProfiles: profiles, error: null });
+      return profiles.find((p) => p.id === id) ?? null;
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  },
 }));
 
 export function sessionsForMode(

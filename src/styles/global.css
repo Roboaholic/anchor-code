@@ -1210,6 +1210,62 @@ button:disabled {
   font-weight: 600;
 }
 
+.agent-picker__footer {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.agent-picker__add-custom {
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-picker__add-custom:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agent-picker__custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+}
+
+.agent-picker__input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.agent-picker__input--mono {
+  font-family: var(--font-mono);
+}
+
+.agent-picker__input:focus {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.agent-picker__custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .agent-picker__meta {
   display: flex;
   align-items: center;

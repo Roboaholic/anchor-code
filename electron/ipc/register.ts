@@ -38,6 +38,7 @@ import {
   listAgentProfiles,
   saveAgentProfiles,
   setDefaultAgentId,
+  upsertAgentProfile,
 } from "../services/agentCli.js";
 import {
   getHostProfile,
@@ -758,6 +759,20 @@ export function registerIpc(opts: {
         return await saveAgentProfiles(
           Array.isArray(profiles) ? (profiles as never) : [],
         );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "agent:upsertProfile",
+    async (_evt, profile: unknown) => {
+      try {
+        if (!profile || typeof profile !== "object") {
+          throw new HostError("failed", "Invalid agent profile");
+        }
+        return await upsertAgentProfile(profile as never);
       } catch (err) {
         rethrowIpc(err);
       }

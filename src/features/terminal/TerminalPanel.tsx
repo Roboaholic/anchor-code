@@ -25,6 +25,7 @@ export function TerminalPanel() {
   const error = useTerminalStore((s) => s.error);
   const agentProfiles = useTerminalStore((s) => s.agentProfiles);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
+  const addCustomAgent = useTerminalStore((s) => s.addCustomAgent);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
   const createAgentDefault = useTerminalStore((s) => s.createAgentDefault);
@@ -133,6 +134,10 @@ export function TerminalPanel() {
                 profiles={agentProfiles}
                 onPick={onPickAgent}
                 onDetect={() => void detectAgents()}
+                onAddCustom={async (input) => {
+                  const p = await addCustomAgent(input);
+                  if (p) onPickAgent(p);
+                }}
                 onClose={() => setAgentMenuOpen(false)}
               />
             ) : null}
@@ -289,14 +294,25 @@ function AgentPicker({
   profiles,
   onPick,
   onDetect,
+  onAddCustom,
   onClose,
 }: {
   profiles: AgentCliProfile[];
   onPick: (p: AgentCliProfile) => void;
   onDetect: () => void;
+  onAddCustom: (input: {
+    name: string;
+    command: string;
+    args?: string[];
+  }) => Promise<void>;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [showCustom, setShowCustom] = useState(false);
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -306,6 +322,19 @@ function AgentPicker({
   }, [onClose]);
 
   const enabled = profiles.filter((p) => p.enabled !== false);
+
+  const submitCustom = async () => {
+    if (!command.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onAddCustom({
+        name: name.trim() || command.trim(),
+        command: command.trim(),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="agent-picker" ref={ref} role="menu">
@@ -343,6 +372,53 @@ function AgentPicker({
           ))}
         </ul>
       )}
+      <div className="agent-picker__footer">
+        {showCustom ? (
+          <div className="agent-picker__custom">
+            <input
+              className="agent-picker__input"
+              placeholder="Display name (optional)"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <input
+              className="agent-picker__input agent-picker__input--mono"
+              placeholder="command (e.g. claude)"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitCustom();
+              }}
+              autoFocus
+            />
+            <div className="agent-picker__custom-actions">
+              <button
+                type="button"
+                className="btn btn--ghost btn--small"
+                onClick={() => setShowCustom(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--small"
+                disabled={!command.trim() || saving}
+                onClick={() => void submitCustom()}
+              >
+                Add & open
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="agent-picker__add-custom"
+            onClick={() => setShowCustom(true)}
+          >
+            + Custom command…
+          </button>
+        )}
+      </div>
     </div>
   );
 }

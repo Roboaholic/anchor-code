@@ -61,6 +61,29 @@ export async function saveAgentProfiles(
   return next;
 }
 
+export async function upsertAgentProfile(
+  profile: AgentCliProfile,
+): Promise<AgentCliProfile[]> {
+  const list = await listAgentProfiles();
+  const idx = list.findIndex((p) => p.id === profile.id);
+  if (idx >= 0) {
+    list[idx] = {
+      ...list[idx]!,
+      ...profile,
+      command: profile.command,
+      name: profile.name || list[idx]!.name,
+    };
+  } else {
+    list.push({
+      ...profile,
+      enabled: profile.enabled !== false,
+      detected: profile.detected ?? false,
+      args: profile.args ?? [],
+    });
+  }
+  return saveAgentProfiles(list);
+}
+
 export async function getDefaultAgentId(): Promise<string | undefined> {
   const settings = await loadSettings();
   return settings.defaultAgentId;

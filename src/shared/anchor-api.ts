@@ -326,6 +326,7 @@ export interface AnchorApi {
     listProfiles: () => Promise<AgentCliProfile[]>;
     detect: () => Promise<AgentCliProfile[]>;
     saveProfiles: (profiles: AgentCliProfile[]) => Promise<AgentCliProfile[]>;
+    upsertProfile: (profile: AgentCliProfile) => Promise<AgentCliProfile[]>;
     getDefaultId: () => Promise<string | undefined>;
     setDefaultId: (id: string | null | undefined) => Promise<void>;
   };

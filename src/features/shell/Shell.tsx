@@ -5,17 +5,19 @@ import {
   PanelResizeHandle,
 } from "react-resizable-panels";
 import { DocumentArea } from "@/features/document/DocumentArea";
+import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { LeftNav } from "./LeftNav";
 import { TerminalPanel } from "./TerminalPanel";
 import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
-
+import { openWorkspaceWithHost } from "./orchestrate";
 export function Shell() {
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
+  const openWorkspaceDialog = useShellStore((s) => s.openWorkspaceDialog);
+  const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
   const loadRecent = useWorkspaceStore((s) => s.loadRecent);
-
   useEffect(() => {
     let cancelled = false;
     async function loadVersion() {
@@ -80,6 +82,14 @@ export function Shell() {
           ) : null}
         </PanelGroup>
       </div>
+
+      <OpenWorkspaceDialog
+        open={openWorkspaceDialog}
+        onClose={() => setOpenWorkspaceDialog(false)}
+        onOpen={(result) => {
+          void openWorkspaceWithHost(result);
+        }}
+      />
     </div>
   );
 }

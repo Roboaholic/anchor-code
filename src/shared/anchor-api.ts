@@ -1,18 +1,37 @@
 /** Mirror of preload bridge types for the renderer (no Electron imports). */
 
+export type HostKind = "local" | "wsl" | "ssh";
+
 export interface AppVersionInfo {
   app: string;
   electron: string;
   chrome: string;
   node: string;
   hostId: string;
-  hostKind: "local" | "ssh";
+  hostKind: HostKind;
 }
 
 export interface HostInfo {
   id: string;
-  kind: "local" | "ssh";
+  kind: HostKind;
+  profileId: string;
   workspaceRoot: string | null;
+}
+
+export interface HostProfile {
+  id: string;
+  kind: HostKind;
+  label?: string;
+  ssh?: {
+    host: string;
+    port?: number;
+    username: string;
+    privateKeyPath?: string;
+  };
+  wsl?: {
+    distro?: string;
+    user?: string;
+  };
 }
 
 export interface DirEntry {
@@ -29,7 +48,7 @@ export interface StatResult {
 
 export interface RecentWorkspace {
   path: string;
-  name: string;
+  hostProfileId: string;
   lastOpenedAt: string;
 }
 
@@ -169,13 +188,32 @@ export interface AnchorApi {
   };
   host: {
     getInfo: () => Promise<HostInfo>;
+    listProfiles: () => Promise<HostProfile[]>;
+    listWslDistros: () => Promise<string[]>;
+    wslHome: (args?: { distro?: string }) => Promise<string>;
+    browseListDir: (args: {
+      path: string;
+      kind: "wsl" | "ssh";
+      distro?: string;
+    }) => Promise<DirEntry[]>;
+    useProfile: (
+      profileId: string,
+    ) => Promise<{ id: string; kind: HostKind; profileId: string }>;
+    upsertProfile: (profile: HostProfile) => Promise<HostProfile[]>;
   };
   clipboard: {
     writeText: (text: string) => Promise<boolean>;
   };
   workspace: {
     pickFolder: () => Promise<string | null>;
-    open: (path: string) => Promise<{ root: string; name: string }>;
+    open: (
+      pathOrArgs: string | { path: string; hostProfileId?: string },
+    ) => Promise<{
+      root: string;
+      name: string;
+      hostKind: HostKind;
+      hostProfileId: string;
+    }>;
     getRecent: () => Promise<RecentWorkspace[]>;
     listDir: (path: string) => Promise<DirEntry[]>;
     readText: (path: string) => Promise<ReadTextResult>;

@@ -1,4 +1,4 @@
-/* Anchor Code — light, flat, reading-first shell (align roles with ui-reference.png) */
+/* Anchor Code — light, flat, reading-first shell (align roles with ui-reference.png) v */
 
 :root {
   color-scheme: light;
@@ -23,8 +23,8 @@
   --terminal-tab-active: #ffffff;
   --terminal-selection: #cfe0fc;
   --terminal-cursor: #2563eb;
-  --radius: 6px; /* shared by buttons, search, inputs — keep rectangular, not pill */
-  /* Elevation — soft, menu-like (not heavy drop shadows) */
+  --radius: 6px; /* shared by buttons, search, inputs 鈥?keep rectangular, not pill */
+  /* Elevation 鈥?soft, menu-like (not heavy drop shadows) */
   --shadow-xs: 0 1px 2px rgba(26, 29, 35, 0.06);
   --shadow-sm: 0 1px 2px rgba(26, 29, 35, 0.06), 0 4px 12px rgba(26, 29, 35, 0.08);
   --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -70,7 +70,7 @@ button:disabled {
   opacity: 0.55;
 }
 
-/* ── Shell ─────────────────────────────────────────── */
+/* 鈹€鈹€ Shell 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .shell {
   display: flex;
@@ -84,7 +84,7 @@ button:disabled {
   min-height: 0;
 }
 
-/* ── Top bar ───────────────────────────────────────── */
+/* 鈹€鈹€ Top bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .topbar {
   position: relative;
@@ -142,7 +142,7 @@ button:disabled {
   white-space: nowrap;
   user-select: none;
   cursor: default;
-  /* Claude Code–style wordmark: unified black old-style serif */
+  /* Claude Code鈥搒tyle wordmark: unified black old-style serif */
   font-family: "EB Garamond", "Palatino Linotype", "Book Antiqua", Palatino,
     "Times New Roman", Georgia, "Noto Serif", serif;
   font-size: 20px;
@@ -261,7 +261,7 @@ button:disabled {
   color: var(--text-muted);
 }
 
-/* ── Resize ────────────────────────────────────────── */
+/* 鈹€鈹€ Resize 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .resize-handle {
   width: 1px;
@@ -274,7 +274,7 @@ button:disabled {
   background: var(--accent);
 }
 
-/* ── Left nav ──────────────────────────────────────── */
+/* 鈹€鈹€ Left nav 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .left-nav {
   display: flex;
@@ -484,7 +484,7 @@ button:disabled {
   line-height: 1.5;
 }
 
-/* ── Document / center ─────────────────────────────── */
+/* 鈹€鈹€ Document / center 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .document-area {
   display: flex;
@@ -535,7 +535,7 @@ button:disabled {
   max-width: 180px;
   border: 1px solid transparent;
   border-bottom: none;
-  /* Soft chip on muted strip — distinct from active white panel */
+  /* Soft chip on muted strip 鈥?distinct from active white panel */
   background: rgba(255, 255, 255, 0.45);
   position: relative;
   top: 1px; /* sit on the strip border */
@@ -609,7 +609,7 @@ button:disabled {
   overflow: auto;
   padding: 28px 36px 48px;
   background: var(--bg-panel);
-  /* flush with tab strip — no extra top border / gap */
+  /* flush with tab strip 鈥?no extra top border / gap */
   margin-top: 0;
   border-top: none;
 }
@@ -885,7 +885,7 @@ button:disabled {
   line-height: 1.5;
 }
 
-/* ── Terminal panel (light, matches workbench) ─────── */
+/* 鈹€鈹€ Terminal panel (light, matches workbench) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .terminal-panel {
   display: flex;
@@ -1025,7 +1025,7 @@ button:disabled {
   color: var(--text);
 }
 
-/* ── Buttons ───────────────────────────────────────── */
+/* 鈹€鈹€ Buttons 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .btn--small {
   height: 26px;
@@ -1075,7 +1075,7 @@ button:disabled {
   font-size: 11.5px;
 }
 
-/* ── History ───────────────────────────────────────── */
+/* 鈹€鈹€ History 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .history-pane {
   display: flex;
@@ -1199,7 +1199,7 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Comments ──────────────────────────────────────── */
+/* 鈹€鈹€ Comments 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .comments-pane {
   display: flex;
@@ -1438,7 +1438,7 @@ button:disabled {
   border-bottom: 1px solid #a7f3d0;
 }
 
-/* ── Diff ──────────────────────────────────────────── */
+/* 鈹€鈹€ Diff 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .diff-viewer {
   display: flex;
@@ -1508,7 +1508,7 @@ button:disabled {
   margin: 8px;
 }
 
-/* ── Code annotations ──────────────────────────────── */
+/* 鈹€鈹€ Code annotations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .code-viewer__toolbar {
   display: flex;
@@ -1744,8 +1744,8 @@ button:disabled {
   justify-content: space-between;
 }
 
-/* ── Monaco overlay message (read-only tip) ────────── */
-/* Defaults use unset --vscode-* vars → neon info border. Match workbench. */
+/* 鈹€鈹€ Monaco overlay message (read-only tip) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+/* Defaults use unset --vscode-* vars 鈫?neon info border. Match workbench. */
 
 .monaco-editor .monaco-editor-overlaymessage .message {
   padding: 6px 10px;
@@ -1771,4 +1771,342 @@ button:disabled {
 
 .monaco-editor .monaco-editor-overlaymessage .anchor.below {
   border-top-color: var(--border);
+}
+
+/* 鈹€鈹€ Open Workspace modal 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(26, 29, 35, 0.28);
+}
+
+.modal {
+  width: min(480px, calc(100vw - 32px));
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modal__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.modal__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.modal__error {
+  margin: 0;
+  font-size: 12.5px;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.modal__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.modal__body {
+  /* Reserve space so Local 鈫?WSL / folder depth don't resize the dialog */
+  height: 340px;
+  min-height: 340px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.modal__body-local {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 4px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+
+.host-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+}
+
+.host-choice__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  cursor: pointer;
+  position: relative;
+  color: var(--text-secondary);
+  transition: background 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.host-choice__card:hover:not(.is-selected) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.host-choice__card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Selected: accent title + soft lift shadow */
+.host-choice__card.is-selected {
+  background: var(--bg-panel);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+  color: var(--accent);
+}
+
+.host-choice__card.is-selected .host-choice__title {
+  color: var(--accent);
+}
+
+.host-choice__card.is-selected .host-choice__desc {
+  color: var(--text-secondary);
+}
+
+.host-choice__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.host-choice__desc {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.field--grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.field--grow .wsl-browser {
+  flex: 1;
+  min-height: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field__label {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--text-secondary);
+}
+
+.field__input {
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.field__input--mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+select.field__input {
+  cursor: pointer;
+}
+
+.modal--wide {
+  width: min(520px, calc(100vw - 32px));
+  /* Fixed overall height 鈫?no jump when host or path changes */
+  height: min(580px, calc(100vh - 48px));
+  max-height: min(580px, calc(100vh - 48px));
+  padding-bottom: 22px;
+}
+
+.wsl-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f6f7f9;
+  padding: 8px;
+}
+
+.wsl-browser__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.wsl-browser__path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+.wsl-browser__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.wsl-browser__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  text-align: left;
+  color: var(--text);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wsl-browser__row + .wsl-browser__row {
+  border-top: 1px solid var(--border);
+}
+
+.wsl-browser__row:hover {
+  background: var(--bg-hover);
+}
+
+.wsl-browser__icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.wsl-browser__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.wsl-browser__empty {
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.wsl-browser__hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.wsl-browser__code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.wsl-browser__chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.wsl-browser__up-icon {
+  transform: rotate(-90deg);
+}
+
+/* Modal footer: softer corners (less boxy than sharp 3px rect) */
+.modal__footer .btn {
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 14px;
+}
+
+.modal__footer .btn--accent {
+  min-width: 96px;
 }

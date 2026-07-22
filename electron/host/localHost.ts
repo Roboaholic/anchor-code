@@ -10,6 +10,7 @@ import type {
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
+import { shellDisplayName, spawnLocalPty } from "./localPty.js";
 
 function mapFsError(err: unknown, fallback: string): HostError {
   if (err instanceof HostError) return err;
@@ -28,15 +29,18 @@ function mapFsError(err: unknown, fallback: string): HostError {
 }
 
 /**
- * Local HostSession — real fs (Slice 2); run/pty still deferred to later slices.
+ * Local HostSession — same-machine fs / spawn / node-pty.
  */
 export class LocalHostSession implements HostSession {
   readonly id: string;
   readonly kind = "local" as const;
+  readonly profileId: string;
   workspaceRoot: string | null = null;
+  private openPtys = new Set<PtyHandle>();
 
-  constructor(id?: string) {
+  constructor(id?: string, profileId = "local-default") {
     this.id = id ?? `local-${randomUUID().slice(0, 8)}`;
+    this.profileId = profileId;
   }
 
   async run(
@@ -109,7 +113,6 @@ export class LocalHostSession implements HostSession {
             type = "file";
           }
         } else if (!d.isFile()) {
-          // skip sockets, devices, etc.
           continue;
         }
         entries.push({ name: d.name, type });
@@ -156,17 +159,37 @@ export class LocalHostSession implements HostSession {
   }
 
   async openPty(
-    _cwd: string,
-    _cols: number,
-    _rows: number,
+    cwd: string,
+    cols: number,
+    rows: number,
   ): Promise<PtyHandle> {
-    throw new HostError(
-      "not_implemented",
-      "host.openPty is not implemented yet (terminal arrives in Slice 5)",
-    );
+    const { handle } = await spawnLocalPty(cwd, cols, rows);
+    this.openPtys.add(handle);
+    const origKill = handle.kill.bind(handle);
+    handle.kill = () => {
+      this.openPtys.delete(handle);
+      origKill();
+    };
+    return handle;
+  }
+
+  /** Shell basename for tab titles (best-effort). */
+  static shellLabel(): string {
+    if (process.platform === "win32") {
+      return "cmd";
+    }
+    return shellDisplayName(process.env.SHELL || "zsh");
   }
 
   async dispose(): Promise<void> {
+    for (const p of [...this.openPtys]) {
+      try {
+        p.kill();
+      } catch {
+        // ignore
+      }
+    }
+    this.openPtys.clear();
     this.workspaceRoot = null;
   }
 }

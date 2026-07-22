@@ -1,0 +1,376 @@
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import type {
+  DirEntry,
+  HostSession,
+  PtyHandle,
+  RunResult,
+  StatResult,
+} from "./types.js";
+import { HostError } from "./types.js";
+import { hostNormalize } from "./paths.js";
+import { spawnLocalPty } from "./localPty.js";
+
+export interface WslHostOptions {
+  profileId?: string;
+  /** WSL distro name; omit for default distro. */
+  distro?: string;
+  /** Login user inside WSL (optional; uses distro default). */
+  user?: string;
+}
+
+/**
+ * Windows → WSL HostSession.
+ *
+ * Paths stay POSIX (execution-end). Fast path for fs uses Windows UNC
+ * `\\wsl$\<distro>\…` so listDir/readFile don't spawn wsl.exe per click.
+ * `run` / PTY still go through wsl.exe.
+ */
+export class WslHostSession implements HostSession {
+  readonly id: string;
+  readonly kind = "wsl" as const;
+  readonly profileId: string;
+  readonly distro?: string;
+  readonly user?: string;
+  workspaceRoot: string | null = null;
+  private openPtys = new Set<PtyHandle>();
+  /** Resolved distro for UNC paths (cached). */
+  private uncDistro: string | null = null;
+  private uncDistroPromise: Promise<string> | null = null;
+
+  constructor(opts: WslHostOptions = {}) {
+    this.id = `wsl-${randomUUID().slice(0, 8)}`;
+    this.profileId = opts.profileId ?? "wsl-default";
+    this.distro = opts.distro?.trim() || undefined;
+    this.user = opts.user?.trim() || undefined;
+    if (this.distro) this.uncDistro = this.distro;
+  }
+
+  private wslBaseArgs(): string[] {
+    const args: string[] = [];
+    if (this.distro) {
+      args.push("-d", this.distro);
+    }
+    if (this.user) {
+      args.push("-u", this.user);
+    }
+    return args;
+  }
+
+  private resolveWslExe(): string {
+    const candidates = [
+      process.env.SystemRoot
+        ? `${process.env.SystemRoot}\\System32\\wsl.exe`
+        : null,
+      "C:\\Windows\\System32\\wsl.exe",
+      "wsl.exe",
+    ].filter(Boolean) as string[];
+    for (const c of candidates) {
+      try {
+        if (c === "wsl.exe" || fs.existsSync(c)) return c;
+      } catch {
+        // continue
+      }
+    }
+    return "wsl.exe";
+  }
+
+  private async resolveUncDistro(): Promise<string> {
+    if (this.uncDistro) return this.uncDistro;
+    if (this.uncDistroPromise) return this.uncDistroPromise;
+    this.uncDistroPromise = (async () => {
+      if (this.distro) {
+        this.uncDistro = this.distro;
+        return this.distro;
+      }
+      // Default distro: first from `wsl -l -q`, else common fallback.
+      const list = await listWslDistros();
+      const name = list[0] || "Ubuntu";
+      this.uncDistro = name;
+      return name;
+    })();
+    try {
+      return await this.uncDistroPromise;
+    } finally {
+      this.uncDistroPromise = null;
+    }
+  }
+
+  /**
+   * Map POSIX WSL path → Windows UNC under \\wsl$\distro\...
+   * UI/API still use POSIX; UNC is internal only.
+   */
+  private async toUnc(posixPath: string): Promise<string> {
+    const p = hostNormalize("wsl", posixPath);
+    const distro = await this.resolveUncDistro();
+    // `/home/u/repo` → `\\wsl$\Ubuntu\home\u\repo`
+    const relative = p === "/" ? "" : p.replace(/^\//, "").replace(/\//g, "\\");
+    return relative
+      ? `\\\\wsl$\\${distro}\\${relative}`
+      : `\\\\wsl$\\${distro}\\`;
+  }
+
+  private mapFsError(err: unknown, fallback: string): HostError {
+    if (err instanceof HostError) return err;
+    const e = err as NodeJS.ErrnoException;
+    if (e?.code === "ENOENT") {
+      return new HostError("not_found", fallback, e.message);
+    }
+    if (e?.code === "EACCES" || e?.code === "EPERM") {
+      return new HostError("permission", fallback, e.message);
+    }
+    return new HostError(
+      "failed",
+      fallback,
+      e?.message ?? String(err),
+    );
+  }
+
+  /**
+   * Run a command inside WSL.
+   * Uses `wsl.exe … -- command args` (command runs in WSL).
+   */
+  async run(
+    cwd: string,
+    command: string,
+    args: string[],
+  ): Promise<RunResult> {
+    const wsl = this.resolveWslExe();
+    const safeCwd = hostNormalize("wsl", cwd || "/");
+    const wslArgs = [
+      ...this.wslBaseArgs(),
+      "--cd",
+      safeCwd,
+      "--",
+      command,
+      ...args,
+    ];
+    return spawnCapture(wsl, wslArgs);
+  }
+
+  async readFile(filePath: string): Promise<string> {
+    const p = hostNormalize("wsl", filePath);
+    try {
+      const unc = await this.toUnc(p);
+      return await fsp.readFile(unc, "utf8");
+    } catch (err) {
+      throw this.mapFsError(err, `Cannot read file: ${p}`);
+    }
+  }
+
+  async writeFile(filePath: string, data: string): Promise<void> {
+    const p = hostNormalize("wsl", filePath);
+    try {
+      const unc = await this.toUnc(p);
+      const parent = path.win32.dirname(unc);
+      await fsp.mkdir(parent, { recursive: true });
+      await fsp.writeFile(unc, data, "utf8");
+    } catch (err) {
+      throw this.mapFsError(err, `Cannot write file: ${p}`);
+    }
+  }
+
+  async listDir(dirPath: string): Promise<DirEntry[]> {
+    const p = hostNormalize("wsl", dirPath);
+    try {
+      const unc = await this.toUnc(p);
+      const names = await fsp.readdir(unc, { withFileTypes: true });
+      const entries: DirEntry[] = [];
+      for (const d of names) {
+        let type: "file" | "dir" = "file";
+        if (d.isDirectory()) {
+          type = "dir";
+        } else if (d.isSymbolicLink()) {
+          try {
+            const st = await fsp.stat(path.win32.join(unc, d.name));
+            type = st.isDirectory() ? "dir" : "file";
+          } catch {
+            type = "file";
+          }
+        } else if (!d.isFile()) {
+          continue;
+        }
+        entries.push({ name: d.name, type });
+      }
+      entries.sort((a, b) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      });
+      return entries;
+    } catch (err) {
+      throw this.mapFsError(err, `Cannot list directory: ${p}`);
+    }
+  }
+
+  async stat(filePath: string): Promise<StatResult> {
+    const p = hostNormalize("wsl", filePath);
+    try {
+      const unc = await this.toUnc(p);
+      const st = await fsp.stat(unc);
+      return {
+        isFile: st.isFile(),
+        isDir: st.isDirectory(),
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+      };
+    } catch (err) {
+      throw this.mapFsError(err, `Cannot stat: ${p}`);
+    }
+  }
+
+  async exists(filePath: string): Promise<boolean> {
+    const p = hostNormalize("wsl", filePath);
+    try {
+      const unc = await this.toUnc(p);
+      await fsp.access(unc);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async mkdirp(dirPath: string): Promise<void> {
+    const p = hostNormalize("wsl", dirPath);
+    try {
+      const unc = await this.toUnc(p);
+      await fsp.mkdir(unc, { recursive: true });
+    } catch (err) {
+      throw this.mapFsError(err, `Cannot create directory: ${p}`);
+    }
+  }
+
+  async openPty(
+    cwd: string,
+    cols: number,
+    rows: number,
+  ): Promise<PtyHandle> {
+    if (process.platform !== "win32") {
+      throw new HostError(
+        "failed",
+        "WSL host is only available on Windows",
+      );
+    }
+    const wsl = this.resolveWslExe();
+    const safeCwd = hostNormalize("wsl", cwd || this.workspaceRoot || "~");
+    const args = [
+      ...this.wslBaseArgs(),
+      "--cd",
+      safeCwd,
+    ];
+    const { handle } = await spawnLocalPty(
+      process.env.USERPROFILE || "C:\\",
+      cols,
+      rows,
+      {
+        shell: wsl,
+        args,
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (e): e is [string, string] => typeof e[1] === "string",
+            ),
+          ),
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+        },
+      },
+    );
+    this.openPtys.add(handle);
+    const origKill = handle.kill.bind(handle);
+    handle.kill = () => {
+      this.openPtys.delete(handle);
+      origKill();
+    };
+    return handle;
+  }
+
+  async dispose(): Promise<void> {
+    for (const p of [...this.openPtys]) {
+      try {
+        p.kill();
+      } catch {
+        // ignore
+      }
+    }
+    this.openPtys.clear();
+    this.workspaceRoot = null;
+  }
+}
+
+function spawnCapture(command: string, args: string[]): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: false,
+      windowsHide: true,
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (err) => {
+      reject(
+        new HostError(
+          "failed",
+          `Failed to run ${command}`,
+          err.message,
+        ),
+      );
+    });
+    child.on("close", (code) => {
+      resolve({
+        stdout,
+        stderr,
+        code: code ?? 1,
+      });
+    });
+  });
+}
+
+/** List installed WSL distros (Windows only). */
+export async function listWslDistros(): Promise<string[]> {
+  if (process.platform !== "win32") return [];
+  const wsl = process.env.SystemRoot
+    ? `${process.env.SystemRoot}\\System32\\wsl.exe`
+    : "wsl.exe";
+  try {
+    const text = await new Promise<string>((resolve, reject) => {
+      const child = spawn(wsl, ["-l", "-q"], {
+        shell: false,
+        windowsHide: true,
+        env: process.env,
+      });
+      const chunks: Buffer[] = [];
+      child.stdout?.on("data", (chunk: Buffer) => {
+        chunks.push(Buffer.from(chunk));
+      });
+      child.on("error", (err) => reject(err));
+      child.on("close", (code) => {
+        if (code !== 0) {
+          resolve("");
+          return;
+        }
+        const buf = Buffer.concat(chunks);
+        // wsl.exe -l emits UTF-16LE on Windows.
+        let decoded = buf.toString("utf16le").replace(/^\uFEFF/, "");
+        if (!decoded.trim() || decoded.includes("\uFFFD")) {
+          decoded = buf.toString("utf8");
+        }
+        resolve(decoded.replace(/\u0000/g, ""));
+      });
+    });
+    return text
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !/^windows subsystem/i.test(s));
+  } catch {
+    return [];
+  }
+}

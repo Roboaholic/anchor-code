@@ -1,10 +1,10 @@
-import path from "node:path";
 import {
   formatCompareTitle,
   parseNameStatus,
   type DiffFile,
 } from "../../src/core/history/diffParse.js";
-import type { LocalHostSession } from "../host/localHost.js";
+import type { HostSession } from "../host/types.js";
+import { hostBasename, hostJoin, hostNormalize } from "../host/paths.js";
 import { HostError } from "../host/types.js";
 
 const LOG_LIMIT = 200;
@@ -41,8 +41,8 @@ export interface FileDiffContent {
   status: string;
 }
 
-async function isGitRoot(host: LocalHostSession, dir: string): Promise<boolean> {
-  const gitPath = path.join(dir, ".git");
+async function isGitRoot(host: HostSession, dir: string): Promise<boolean> {
+  const gitPath = hostJoin(host.kind, dir, ".git");
   if (!(await host.exists(gitPath))) return false;
   try {
     const st = await host.stat(gitPath);
@@ -53,7 +53,7 @@ async function isGitRoot(host: LocalHostSession, dir: string): Promise<boolean> 
 }
 
 async function walkForGitRoots(
-  host: LocalHostSession,
+  host: HostSession,
   dir: string,
   depth: number,
   maxDepth: number,
@@ -72,7 +72,7 @@ async function walkForGitRoots(
       // still allow checking if this workspace root itself is git (handled outside)
       if (e.name !== ".git") continue;
     }
-    const child = path.join(dir, e.name);
+    const child = hostJoin(host.kind, dir, e.name);
     if (await isGitRoot(host, child)) {
       out.push(child);
       // do not descend into nested repos
@@ -83,7 +83,7 @@ async function walkForGitRoots(
 }
 
 export async function discoverRepos(
-  host: LocalHostSession,
+  host: HostSession,
   workspaceRoot: string,
 ): Promise<RepoInfo[]> {
   const roots: string[] = [];
@@ -91,15 +91,15 @@ export async function discoverRepos(
     roots.push(workspaceRoot);
   }
   await walkForGitRoots(host, workspaceRoot, 1, SCAN_DEPTH, roots);
-  const unique = [...new Set(roots.map((r) => path.resolve(r)))];
+  const unique = [...new Set(roots.map((r) => hostNormalize(host.kind, r)))];
   return unique.map((root) => ({
     root,
-    name: path.basename(root) || root,
+    name: hostBasename(host.kind, root) || root,
   }));
 }
 
 export async function loadLog(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
 ): Promise<CommitRow[]> {
   const result = await host.run(repoRoot, "git", [
@@ -133,7 +133,7 @@ function short(hash: string): string {
 }
 
 export async function compareCommits(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   base: string,
   head: string,
@@ -162,7 +162,7 @@ export async function compareCommits(
 }
 
 export async function compareToWorktree(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   base: string,
 ): Promise<DiffOpenPayload> {
@@ -189,7 +189,7 @@ export async function compareToWorktree(
 }
 
 async function gitShow(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   revPath: string,
 ): Promise<string> {
@@ -202,7 +202,7 @@ async function gitShow(
 }
 
 export async function getFileDiff(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   base: string,
   head: string | "worktree",
@@ -221,7 +221,7 @@ export async function getFileDiff(
   if (status.startsWith("D") || status === "D") {
     newText = "";
   } else if (head === "worktree") {
-    const abs = path.join(repoRoot, filePath);
+    const abs = hostJoin(host.kind, repoRoot, filePath);
     if (await host.exists(abs)) {
       try {
         newText = await host.readFile(abs);

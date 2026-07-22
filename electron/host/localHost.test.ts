@@ -60,5 +60,36 @@ describe("LocalHostSession (integration)", () => {
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("ok");
   });
+
+  it(
+    "openPty returns a writable handle",
+    async () => {
+      // Use process cwd / shared tmp so afterEach can rm the fixture dir.
+      const pty = await host.openPty(os.tmpdir(), 80, 24);
+      expect(pty.id).toBeTruthy();
+      expect(typeof pty.write).toBe("function");
+      expect(typeof pty.resize).toBe("function");
+      pty.resize(100, 30);
+      // Wait for real PTY I/O rather than a fixed sleep.
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const timer = setTimeout(() => resolve(), 3_000);
+      pty.onData(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+      pty.write("\r");
+      try {
+        await promise;
+      } finally {
+        pty.kill();
+      }
+    },
+    15_000,
+  );
+  it("exposes profileId from constructor", () => {
+    const h = new LocalHostSession("id-1", "local-custom");
+    expect(h.profileId).toBe("local-custom");
+    expect(h.kind).toBe("local");
+  });
 });
 

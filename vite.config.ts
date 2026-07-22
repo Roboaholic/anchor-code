@@ -18,7 +18,14 @@ export default defineConfig({
           build: {
             outDir: "dist-electron",
             rollupOptions: {
-              external: ["electron", "node-pty", "yaml"],
+              external: [
+                "electron",
+                "node-pty",
+                "yaml",
+                "ssh2",
+                "cpu-features",
+                /^ssh2\//,
+              ],
             },
           },
         },

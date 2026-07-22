@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LocalHostSession } from "./host/localHost.js";
+import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 
@@ -16,8 +16,11 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null;
 
-const host = new LocalHostSession();
-const terminal = new TerminalService(() => mainWindow);
+const hosts = new HostManager();
+const terminal = new TerminalService(
+  () => mainWindow,
+  () => hosts.session,
+);
 
 /**
  * Preload must load as CommonJS when package.json has "type":"module".
@@ -27,7 +30,7 @@ function resolvePreloadPath(): string {
   const candidates = [
     path.join(__dirname, "preload.cjs"),
     path.join(__dirname, "preload.js"),
-    path.join(__dirname, "preload.mjs"),
+    path.join(__dirname, "../dist-electron/preload.cjs"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
@@ -41,14 +44,12 @@ function createWindow() {
   console.log("[main] using preload:", preloadPath);
 
   mainWindow = new BrowserWindow({
-    width: 1440,
+    width: 1400,
     height: 900,
     minWidth: 960,
-    minHeight: 640,
+    minHeight: 600,
     title: "Anchor Code",
-    backgroundColor: "#f7f7f8",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-    trafficLightPosition: { x: 14, y: 14 },
+    backgroundColor: "#f7f7f5",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -75,7 +76,24 @@ function createWindow() {
 function buildMenu() {
   const isMac = process.platform === "darwin";
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
     {
       label: "File",
       submenu: [
@@ -92,16 +110,40 @@ function buildMenu() {
         isMac ? { role: "close" } : { role: "quit" },
       ],
     },
-    { role: "editMenu" },
-    { role: "viewMenu" },
-    { role: "windowMenu" },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(isMac
+          ? [
+              { type: "separator" as const },
+              { role: "front" as const },
+            ]
+          : [{ role: "close" as const }]),
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 app.whenReady().then(() => {
   registerIpc({
-    host,
+    hosts,
     getMainWindow: () => mainWindow,
     appVersion: app.getVersion(),
     terminal,
@@ -118,7 +160,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   terminal.disposeAll();
-  void host.dispose();
+  void hosts.dispose();
   if (process.platform !== "darwin") {
     app.quit();
   }

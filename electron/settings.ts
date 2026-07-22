@@ -1,6 +1,7 @@
 import { app } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { HostKind } from "./host/types.js";
 
 export interface RecentWorkspace {
   path: string;
@@ -8,9 +9,33 @@ export interface RecentWorkspace {
   lastOpenedAt: string;
 }
 
+export interface SshProfileConfig {
+  host: string;
+  port?: number;
+  username: string;
+  privateKeyPath?: string;
+  knownHostsPolicy?: "accept-new" | "strict" | "ignore";
+}
+
+export interface WslProfileConfig {
+  /** Distro name from `wsl -l -q`; omit for default. */
+  distro?: string;
+  user?: string;
+}
+
+export interface HostProfile {
+  id: string;
+  kind: HostKind;
+  label?: string;
+  ssh?: SshProfileConfig;
+  wsl?: WslProfileConfig;
+}
+
 export interface AppSettings {
   recentWorkspaces: RecentWorkspace[];
-  hostProfiles: { id: string; kind: "local" | "ssh" }[];
+  hostProfiles: HostProfile[];
+  /** Last used host profile for Open Workspace default. */
+  lastHostProfileId?: string;
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -18,9 +43,18 @@ export interface AppSettings {
   };
 }
 
+const DEFAULT_PROFILES: HostProfile[] = [
+  { id: "local-default", kind: "local", label: "Local" },
+  ...(process.platform === "win32"
+    ? [{ id: "wsl-default", kind: "wsl" as const, label: "WSL" }]
+    : []),
+];
+
 const DEFAULT_SETTINGS: AppSettings = {
   recentWorkspaces: [],
-  hostProfiles: [{ id: "local-default", kind: "local" }],
+  hostProfiles: DEFAULT_PROFILES,
+  lastHostProfileId:
+    process.platform === "win32" ? "wsl-default" : "local-default",
   ui: { terminalVisible: true },
 };
 
@@ -28,6 +62,21 @@ const MAX_RECENT = 12;
 
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
+}
+
+function normalizeProfiles(parsed: HostProfile[] | undefined): HostProfile[] {
+  const list = parsed?.length ? [...parsed] : [...DEFAULT_PROFILES];
+  // Ensure local default always present.
+  if (!list.some((p) => p.id === "local-default")) {
+    list.unshift({ id: "local-default", kind: "local", label: "Local" });
+  }
+  if (
+    process.platform === "win32" &&
+    !list.some((p) => p.kind === "wsl")
+  ) {
+    list.push({ id: "wsl-default", kind: "wsl", label: "WSL" });
+  }
+  return list;
 }
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -38,7 +87,9 @@ export async function loadSettings(): Promise<AppSettings> {
       ...DEFAULT_SETTINGS,
       ...parsed,
       recentWorkspaces: parsed.recentWorkspaces ?? [],
-      hostProfiles: parsed.hostProfiles ?? DEFAULT_SETTINGS.hostProfiles,
+      hostProfiles: normalizeProfiles(parsed.hostProfiles),
+      lastHostProfileId:
+        parsed.lastHostProfileId ?? DEFAULT_SETTINGS.lastHostProfileId,
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {
@@ -60,9 +111,33 @@ export async function pushRecentWorkspace(
   const now = new Date().toISOString();
   const next: RecentWorkspace[] = [
     { path: workspacePath, hostProfileId, lastOpenedAt: now },
-    ...settings.recentWorkspaces.filter((r) => r.path !== workspacePath),
+    ...settings.recentWorkspaces.filter(
+      (r) => !(r.path === workspacePath && r.hostProfileId === hostProfileId),
+    ),
   ].slice(0, MAX_RECENT);
   settings.recentWorkspaces = next;
+  settings.lastHostProfileId = hostProfileId;
   await saveSettings(settings);
   return next;
+}
+
+export async function getHostProfile(
+  profileId: string,
+): Promise<HostProfile | null> {
+  const settings = await loadSettings();
+  return settings.hostProfiles.find((p) => p.id === profileId) ?? null;
+}
+
+export async function upsertHostProfile(
+  profile: HostProfile,
+): Promise<HostProfile[]> {
+  const settings = await loadSettings();
+  const idx = settings.hostProfiles.findIndex((p) => p.id === profile.id);
+  if (idx >= 0) {
+    settings.hostProfiles[idx] = profile;
+  } else {
+    settings.hostProfiles.push(profile);
+  }
+  await saveSettings(settings);
+  return settings.hostProfiles;
 }

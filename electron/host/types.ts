@@ -3,7 +3,7 @@
  * Business modules call only through this surface; Renderer never touches PTY/SSH/child_process.
  */
 
-export type HostKind = "local" | "ssh";
+export type HostKind = "local" | "wsl" | "ssh";
 
 export type HostErrorCode =
   | "not_found"
@@ -64,6 +64,8 @@ export interface PtyHandle {
 export interface HostSession {
   readonly id: string;
   readonly kind: HostKind;
+  /** Active host profile id from settings (when known). */
+  readonly profileId: string;
   workspaceRoot: string | null;
 
   run(cwd: string, command: string, args: string[]): Promise<RunResult>;

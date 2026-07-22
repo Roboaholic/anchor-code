@@ -1,4 +1,3 @@
-import path from "node:path";
 import { createHash } from "node:crypto";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
@@ -11,7 +10,8 @@ import {
   buildAnchReviewExport,
   type AnchReviewExportPayload,
 } from "../../src/core/annotations/exportFormat.js";
-import type { LocalHostSession } from "../host/localHost.js";
+import type { HostSession } from "../host/types.js";
+import { hostBasename, hostDirname, hostJoin, hostNormalize } from "../host/paths.js";
 import { HostError } from "../host/types.js";
 
 export type SessionStatus = "active" | "closed";
@@ -88,20 +88,20 @@ export interface AddCommentInput {
   author?: string;
 }
 
-function sessionDir(repoRoot: string): string {
-  return path.join(repoRoot, ".anchor-code");
+function sessionDir(host: HostSession, repoRoot: string): string {
+  return hostJoin(host.kind, repoRoot, ".anchor-code");
 }
 
-function exportDir(repoRoot: string): string {
-  return path.join(sessionDir(repoRoot), "exports");
+function exportDir(host: HostSession, repoRoot: string): string {
+  return hostJoin(host.kind, sessionDir(host, repoRoot), "exports");
 }
 
-function sessionFilePath(repoRoot: string, sessionId: string): string {
-  return path.join(sessionDir(repoRoot), `${sessionId}.yaml`);
+function sessionFilePath(host: HostSession, repoRoot: string, sessionId: string): string {
+  return hostJoin(host.kind, sessionDir(host, repoRoot), `${sessionId}.yaml`);
 }
 
-function exportFilePath(repoRoot: string, sessionId: string): string {
-  return path.join(exportDir(repoRoot), `${sessionId}.json`);
+function exportFilePath(host: HostSession, repoRoot: string, sessionId: string): string {
+  return hostJoin(host.kind, exportDir(host, repoRoot), `${sessionId}.json`);
 }
 
 function nowIso(): string {
@@ -114,28 +114,26 @@ function makeId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${stamp}_${rand}`;
 }
-
-function asRelative(repoRoot: string, filePath: string): string {
-  const r = path.resolve(repoRoot);
-  const f = path.resolve(filePath);
+function asRelative(host: HostSession, repoRoot: string, filePath: string): string {
+  const r = hostNormalize(host.kind, repoRoot);
+  const f = hostNormalize(host.kind, filePath);
   return toRepoRelative(r, f);
 }
-
 export async function locateGitRoot(
-  host: LocalHostSession,
+  host: HostSession,
   startPath: string,
 ): Promise<string | null> {
-  let current = path.resolve(startPath);
+  let current = hostNormalize(host.kind, startPath);
   try {
     const st = await host.stat(current);
-    if (st.isFile) current = path.dirname(current);
+    if (st.isFile) current = hostDirname(host.kind, current);
   } catch {
-    current = path.dirname(current);
+    current = hostDirname(host.kind, current);
   }
   for (let i = 0; i < 40; i++) {
-    const git = path.join(current, ".git");
+    const git = hostJoin(host.kind, current, ".git");
     if (await host.exists(git)) return current;
-    const parent = path.dirname(current);
+    const parent = hostDirname(host.kind, current);
     if (parent === current) break;
     current = parent;
   }
@@ -161,21 +159,20 @@ function validateSession(raw: unknown): SessionRecord {
     throw new HostError("failed", `Invalid session YAML: ${message}`);
   }
 }
-
 async function listSessionFiles(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
 ): Promise<string[]> {
-  const dir = sessionDir(repoRoot);
+  const dir = sessionDir(host, repoRoot);
   if (!(await host.exists(dir))) return [];
   const entries = await host.listDir(dir);
   return entries
     .filter((e) => e.type === "file" && e.name.endsWith(".yaml"))
-    .map((e) => path.join(dir, e.name));
+    .map((e) => hostJoin(host.kind, dir, e.name));
 }
 
 export async function loadSessions(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
 ): Promise<{ sessions: SessionRecord[]; error?: string }> {
   try {
@@ -192,7 +189,7 @@ export async function loadSessions(
           sessions: [],
           error:
             err instanceof Error
-              ? `Failed to parse ${path.basename(file)}: ${err.message}`
+              ? `Failed to parse ${hostBasename(host.kind, file)}: ${err.message}`
               : String(err),
         };
       }
@@ -208,7 +205,7 @@ export async function loadSessions(
 }
 
 export async function listSessionSummaries(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
 ): Promise<{ sessions: SessionSummary[]; error?: string }> {
   const { sessions, error } = await loadSessions(host, repoRoot);
@@ -227,7 +224,7 @@ export async function listSessionSummaries(
 }
 
 async function loadSessionById(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   sessionId: string,
 ): Promise<SessionRecord> {
@@ -239,7 +236,7 @@ async function loadSessionById(
 }
 
 async function requireActiveSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   author = "local-user",
 ): Promise<SessionRecord> {
@@ -251,7 +248,7 @@ async function requireActiveSession(
 }
 
 export async function ensureActiveSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   author = "local-user",
   title?: string,
@@ -285,18 +282,18 @@ export async function ensureActiveSession(
     comments: [],
   };
   await writeSession(host, repoRoot, session);
-  session.filePath = sessionFilePath(repoRoot, id);
+  session.filePath = sessionFilePath(host, repoRoot, id);
   return session;
 }
 
 async function writeSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   session: SessionRecord,
 ): Promise<string> {
-  const dir = sessionDir(repoRoot);
+  const dir = sessionDir(host, repoRoot);
   await host.mkdirp(dir);
-  const filePath = sessionFilePath(repoRoot, session.id);
+  const filePath = sessionFilePath(host, repoRoot, session.id);
   const toWrite = {
     version: session.version,
     id: session.id,
@@ -314,7 +311,7 @@ async function writeSession(
 }
 
 export async function addComment(
-  host: LocalHostSession,
+  host: HostSession,
   input: AddCommentInput,
 ): Promise<SessionRecord> {
   const session = await requireActiveSession(
@@ -332,7 +329,7 @@ export async function addComment(
     id: makeId("comment"),
     status: "discussing",
     target: {
-      file_path: asRelative(input.repoRoot, input.filePath),
+      file_path: asRelative(host, input.repoRoot, input.filePath),
       kind: input.kind,
       start_line: input.startLine,
       end_line: input.endLine,
@@ -362,7 +359,7 @@ export async function addComment(
 }
 
 export async function setCommentStatus(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   commentId: string,
   status: CommentStatus,
@@ -382,7 +379,7 @@ export async function setCommentStatus(
 }
 
 export async function replyComment(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   commentId: string,
   body: string,
@@ -413,7 +410,7 @@ export async function replyComment(
 
 /** Edit primary message body (or a specific message by id). */
 export async function editComment(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   commentId: string,
   body: string,
@@ -444,7 +441,7 @@ export async function editComment(
 }
 
 export async function deleteComment(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   commentId: string,
 ): Promise<SessionRecord> {
@@ -460,7 +457,7 @@ export async function deleteComment(
 }
 
 export async function endSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   options?: { export?: boolean; sessionId?: string },
 ): Promise<{ session: SessionRecord | null; exportPath?: string }> {
@@ -486,7 +483,7 @@ export async function endSession(
 }
 
 export async function newSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   author = "local-user",
   title?: string,
@@ -507,7 +504,7 @@ export async function newSession(
  * Closes any other active session first.
  */
 export async function restoreSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   sessionId: string,
 ): Promise<SessionRecord> {
@@ -532,20 +529,20 @@ export async function restoreSession(
 }
 
 export async function copyYamlPath(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   sessionId?: string,
 ): Promise<string> {
   if (sessionId) {
     const session = await loadSessionById(host, repoRoot, sessionId);
-    return session.filePath ?? sessionFilePath(repoRoot, session.id);
+    return session.filePath ?? sessionFilePath(host, repoRoot, session.id);
   }
   const session = await requireActiveSession(host, repoRoot);
-  return session.filePath ?? sessionFilePath(repoRoot, session.id);
+  return session.filePath ?? sessionFilePath(host, repoRoot, session.id);
 }
 
 async function collectExportMeta(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   session: SessionRecord,
 ): Promise<
@@ -569,7 +566,7 @@ async function collectExportMeta(
     session.comments.map((c) => c.target.file_path.replace(/\\/g, "/")),
   );
   for (const rel of paths) {
-    const abs = path.join(repoRoot, rel);
+    const abs = hostJoin(host.kind, repoRoot, rel);
     let fileHash: string | null = null;
     try {
       if (await host.exists(abs)) {
@@ -585,7 +582,7 @@ async function collectExportMeta(
 }
 
 export async function exportSession(
-  host: LocalHostSession,
+  host: HostSession,
   repoRoot: string,
   sessionId?: string,
 ): Promise<{ exportPath: string; payload: AnchReviewExportPayload }> {
@@ -599,9 +596,9 @@ export async function exportSession(
   const meta = await collectExportMeta(host, repoRoot, session);
   const payload = buildAnchReviewExport(session, repoRoot, meta);
 
-  const outDir = exportDir(repoRoot);
+  const outDir = exportDir(host, repoRoot);
   await host.mkdirp(outDir);
-  const outPath = exportFilePath(repoRoot, session.id);
+  const outPath = exportFilePath(host, repoRoot, session.id);
   const json = JSON.stringify(payload, null, 2) + "\n";
   await host.writeFile(outPath, json);
   return { exportPath: outPath, payload };

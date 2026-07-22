@@ -49,12 +49,14 @@ export function FileTree() {
             <div className="files-pane__title">RECENT</div>
             <ul className="file-tree">
               {recent.map((r) => (
-                <li key={r.path}>
+                <li key={`${r.hostProfileId}:${r.path}`}>
                   <button
                     type="button"
                     className="file-tree__row"
-                    title={r.path}
-                    onClick={() => void openWorkspacePath(r.path)}
+                    title={`${r.path} (${r.hostProfileId})`}
+                    onClick={() =>
+                      void openWorkspacePath(r.path, r.hostProfileId)
+                    }
                   >
                     <Icon name="folder" className="file-tree__icon" />
                     <span className="file-tree__name">

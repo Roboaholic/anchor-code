@@ -1,6 +1,10 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
-import path from "node:path";
-import type { LocalHostSession } from "../host/localHost.js";
+import type { HostManager } from "../host/hostManager.js";
+import { WslHostSession, listWslDistros } from "../host/wslHost.js";
+import {
+  hostBasename,
+  hostNormalize,
+} from "../host/paths.js";
 import { HostError } from "../host/types.js";
 import {
   addComment,
@@ -29,8 +33,11 @@ import {
 } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import {
+  getHostProfile,
   loadSettings,
   pushRecentWorkspace,
+  upsertHostProfile,
+  type HostProfile,
   type RecentWorkspace,
 } from "../settings.js";
 
@@ -63,28 +70,142 @@ function rethrowIpc(err: unknown): never {
 }
 
 export function registerIpc(opts: {
-  host: LocalHostSession;
+  hosts: HostManager;
   getMainWindow: () => BrowserWindow | null;
   appVersion: string;
   terminal: TerminalService;
 }): void {
-  const { host, getMainWindow, appVersion, terminal } = opts;
+  const { hosts, getMainWindow, appVersion, terminal } = opts;
+
+  const host = () => hosts.session;
 
   // ── shell ──────────────────────────────────────────
-  ipcMain.handle("shell:getVersion", async () => ({
-    app: appVersion,
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    node: process.versions.node,
-    hostId: host.id,
-    hostKind: host.kind,
-  }));
+  ipcMain.handle("shell:getVersion", async () => {
+    const h = host();
+    return {
+      app: appVersion,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      hostId: h.id,
+      hostKind: h.kind,
+    };
+  });
 
-  ipcMain.handle("host:getInfo", async () => ({
-    id: host.id,
-    kind: host.kind,
-    workspaceRoot: host.workspaceRoot,
-  }));
+  ipcMain.handle("host:getInfo", async () => {
+    const h = host();
+    return {
+      id: h.id,
+      kind: h.kind,
+      profileId: h.profileId,
+      workspaceRoot: h.workspaceRoot,
+    };
+  });
+
+  ipcMain.handle("host:listProfiles", async (): Promise<HostProfile[]> => {
+    const settings = await loadSettings();
+    return settings.hostProfiles;
+  });
+
+  ipcMain.handle("host:listWslDistros", async (): Promise<string[]> => {
+    try {
+      return await listWslDistros();
+    } catch (err) {
+      console.warn("[ipc] listWslDistros failed:", err);
+      return [];
+    }
+  });
+
+  /** Home path inside a WSL distro (POSIX). Does not switch active host. */
+  ipcMain.handle(
+    "host:wslHome",
+    async (
+      _evt,
+      args?: { distro?: string },
+    ): Promise<string> => {
+      try {
+        const session = new WslHostSession({
+          profileId: "wsl-browse",
+          distro: args?.distro,
+        });
+        try {
+          const r = await session.run("/", "bash", ["-lc", "printf %s \"$HOME\""]);
+          const home = (r.stdout || "").trim();
+          if (r.code === 0 && home.startsWith("/")) return home;
+          return "/home";
+        } finally {
+          await session.dispose();
+        }
+      } catch (err) {
+        console.warn("[ipc] host:wslHome failed:", err);
+        return "/home";
+      }
+    },
+  );
+
+  /**
+   * List a directory on a host profile without committing active workspace host.
+   * Used by Open Workspace WSL folder browser.
+   */
+  ipcMain.handle(
+    "host:browseListDir",
+    async (
+      _evt,
+      args: { path: string; kind: "wsl" | "ssh"; distro?: string },
+    ) => {
+      try {
+        if (!args?.path || typeof args.path !== "string") {
+          throw new HostError("failed", "Invalid browse path");
+        }
+        if (args.kind !== "wsl") {
+          throw new HostError("not_implemented", "Browse only supports WSL for now");
+        }
+        const session = new WslHostSession({
+          profileId: "wsl-browse",
+          distro: args.distro,
+        });
+        try {
+          return await session.listDir(args.path);
+        } finally {
+          await session.dispose();
+        }
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "host:useProfile",
+    async (_evt, profileId: string): Promise<{ id: string; kind: string; profileId: string }> => {
+      try {
+        const profile = await getHostProfile(profileId);
+        if (!profile) {
+          throw new HostError("not_found", `Host profile not found: ${profileId}`);
+        }
+        terminal.disposeAll();
+        const session = await hosts.useProfile(profile);
+        return {
+          id: session.id,
+          kind: session.kind,
+          profileId: session.profileId,
+        };
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "host:upsertProfile",
+    async (_evt, profile: HostProfile): Promise<HostProfile[]> => {
+      try {
+        return await upsertHostProfile(profile);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   ipcMain.handle("clipboard:writeText", async (_evt, text: string) => {
     clipboard.writeText(text ?? "");
@@ -104,6 +225,14 @@ export function registerIpc(opts: {
     "workspace:pickFolder",
     async (): Promise<string | null> => {
       try {
+        const h = host();
+        if (h.kind !== "local") {
+          // Remote/WSL path selection is handled in the renderer dialog.
+          throw new HostError(
+            "failed",
+            "Native folder picker is only available for Local host",
+          );
+        }
         const win = getMainWindow();
         const options: Electron.OpenDialogOptions = {
           properties: ["openDirectory", "createDirectory"],
@@ -111,9 +240,8 @@ export function registerIpc(opts: {
           buttonLabel: "Open",
           message: "Choose a folder to open as the workspace",
           defaultPath:
-            host.workspaceRoot ?? app.getPath("home") ?? undefined,
+            h.workspaceRoot ?? app.getPath("home") ?? undefined,
         };
-        // Prefer parented dialog so it appears above the app on macOS.
         const result = win
           ? await dialog.showOpenDialog(win, options)
           : await dialog.showOpenDialog(options);
@@ -130,28 +258,48 @@ export function registerIpc(opts: {
 
   ipcMain.handle(
     "workspace:open",
-    async (_evt, dirPath: string): Promise<{ root: string; name: string }> => {
+    async (
+      _evt,
+      args: string | { path: string; hostProfileId?: string },
+    ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string }> => {
       try {
+        const dirPath = typeof args === "string" ? args : args.path;
+        const requestedProfileId =
+          typeof args === "string" ? undefined : args.hostProfileId;
+
         if (!dirPath || typeof dirPath !== "string") {
           throw new HostError("failed", "Invalid workspace path");
         }
-        const resolved = path.resolve(dirPath);
-        const ok = await host.exists(resolved);
+
+        if (requestedProfileId && requestedProfileId !== hosts.profileId) {
+          const profile = await getHostProfile(requestedProfileId);
+          if (!profile) {
+            throw new HostError(
+              "not_found",
+              `Host profile not found: ${requestedProfileId}`,
+            );
+          }
+          terminal.disposeAll();
+          await hosts.useProfile(profile);
+        }
+
+        const h = host();
+        const resolved = hostNormalize(h.kind, dirPath);
+        const ok = await h.exists(resolved);
         if (!ok) {
           throw new HostError("not_found", `Directory not found: ${resolved}`);
         }
-        const st = await host.stat(resolved);
+        const st = await h.stat(resolved);
         if (!st.isDir) {
           throw new HostError("failed", `Not a directory: ${resolved}`);
         }
-        host.workspaceRoot = resolved;
-        // Recent list is best-effort — never block opening.
+        h.workspaceRoot = resolved;
+
         try {
-          await pushRecentWorkspace(resolved);
+          await pushRecentWorkspace(resolved, h.profileId);
         } catch (err) {
           console.warn("[ipc] pushRecentWorkspace failed:", err);
         }
-        // Reset terminals to new cwd
         try {
           terminal.disposeAll();
         } catch (err) {
@@ -159,7 +307,9 @@ export function registerIpc(opts: {
         }
         return {
           root: resolved,
-          name: path.basename(resolved) || resolved,
+          name: hostBasename(h.kind, resolved) || resolved,
+          hostKind: h.kind,
+          hostProfileId: h.profileId,
         };
       } catch (err) {
         console.error("[ipc] workspace:open failed:", err);
@@ -170,7 +320,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("workspace:listDir", async (_evt, dirPath: string) => {
     try {
-      return await host.listDir(dirPath);
+      return await host().listDir(dirPath);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -183,23 +333,20 @@ export function registerIpc(opts: {
       filePath: string,
     ): Promise<{ text: string; size: number; truncated: boolean }> => {
       try {
-        const st = await host.stat(filePath);
+        const h = host();
+        const st = await h.stat(filePath);
         if (!st.isFile) {
           throw new HostError("failed", `Not a file: ${filePath}`);
         }
         if (st.size > MAX_READ_BYTES) {
-          const fs = await import("node:fs/promises");
-          const fh = await fs.open(filePath, "r");
-          try {
-            const buf = Buffer.alloc(MAX_READ_BYTES);
-            const { bytesRead } = await fh.read(buf, 0, MAX_READ_BYTES, 0);
-            const text = buf.subarray(0, bytesRead).toString("utf8");
-            return { text, size: st.size, truncated: true };
-          } finally {
-            await fh.close();
-          }
+          const text = await h.readFile(filePath);
+          return {
+            text: text.slice(0, MAX_READ_BYTES),
+            size: st.size,
+            truncated: true,
+          };
         }
-        const text = await host.readFile(filePath);
+        const text = await h.readFile(filePath);
         return { text, size: st.size, truncated: false };
       } catch (err) {
         rethrowIpc(err);
@@ -209,24 +356,27 @@ export function registerIpc(opts: {
 
   ipcMain.handle("workspace:stat", async (_evt, targetPath: string) => {
     try {
-      return await host.stat(targetPath);
+      return await host().stat(targetPath);
     } catch (err) {
       rethrowIpc(err);
     }
   });
 
   // ── history ────────────────────────────────────────
-  ipcMain.handle("history:discover", async (_evt, workspaceRoot: string) => {
-    try {
-      return await discoverRepos(host, workspaceRoot);
-    } catch (err) {
-      rethrowIpc(err);
-    }
-  });
+  ipcMain.handle(
+    "history:discover",
+    async (_evt, workspaceRoot: string) => {
+      try {
+        return await discoverRepos(host(), workspaceRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   ipcMain.handle("history:loadLog", async (_evt, repoRoot: string) => {
     try {
-      return await loadLog(host, repoRoot);
+      return await loadLog(host(), repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -236,14 +386,18 @@ export function registerIpc(opts: {
     "history:compare",
     async (
       _evt,
-      args: { repoRoot: string; base: string; head: string | "worktree" },
+      args: {
+        repoRoot: string;
+        base: string;
+        head: string | "worktree";
+      },
     ) => {
       try {
         if (args.head === "worktree") {
-          return await compareToWorktree(host, args.repoRoot, args.base);
+          return await compareToWorktree(host(), args.repoRoot, args.base);
         }
         return await compareCommits(
-          host,
+          host(),
           args.repoRoot,
           args.base,
           args.head,
@@ -268,7 +422,7 @@ export function registerIpc(opts: {
     ) => {
       try {
         return await getFileDiff(
-          host,
+          host(),
           args.repoRoot,
           args.base,
           args.head,
@@ -282,17 +436,20 @@ export function registerIpc(opts: {
   );
 
   // ── annotations ────────────────────────────────────
-  ipcMain.handle("annotations:locateGitRoot", async (_evt, filePath: string) => {
-    try {
-      return await locateGitRoot(host, filePath);
-    } catch (err) {
-      rethrowIpc(err);
-    }
-  });
+  ipcMain.handle(
+    "annotations:locateGitRoot",
+    async (_evt, filePath: string) => {
+      try {
+        return await locateGitRoot(host(), filePath);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   ipcMain.handle("annotations:load", async (_evt, repoRoot: string) => {
     try {
-      return await loadSessions(host, repoRoot);
+      return await loadSessions(host(), repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -300,7 +457,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("annotations:list", async (_evt, repoRoot: string) => {
     try {
-      return await listSessionSummaries(host, repoRoot);
+      return await listSessionSummaries(host(), repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -313,10 +470,9 @@ export function registerIpc(opts: {
       args: string | { repoRoot: string; title?: string },
     ) => {
       try {
-        if (typeof args === "string") {
-          return await ensureActiveSession(host, args);
-        }
-        return await ensureActiveSession(host, args.repoRoot, "local-user", args.title);
+        const repoRoot = typeof args === "string" ? args : args.repoRoot;
+        const title = typeof args === "string" ? undefined : args.title;
+        return await ensureActiveSession(host(), repoRoot, "local-user", title);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -327,7 +483,7 @@ export function registerIpc(opts: {
     "annotations:addComment",
     async (_evt, input: AddCommentInput) => {
       try {
-        return await addComment(host, input);
+        return await addComment(host(), input);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -338,11 +494,15 @@ export function registerIpc(opts: {
     "annotations:setStatus",
     async (
       _evt,
-      args: { repoRoot: string; commentId: string; status: CommentStatus },
+      args: {
+        repoRoot: string;
+        commentId: string;
+        status: CommentStatus;
+      },
     ) => {
       try {
         return await setCommentStatus(
-          host,
+          host(),
           args.repoRoot,
           args.commentId,
           args.status,
@@ -361,7 +521,7 @@ export function registerIpc(opts: {
     ) => {
       try {
         return await replyComment(
-          host,
+          host(),
           args.repoRoot,
           args.commentId,
           args.body,
@@ -385,7 +545,7 @@ export function registerIpc(opts: {
     ) => {
       try {
         return await editComment(
-          host,
+          host(),
           args.repoRoot,
           args.commentId,
           args.body,
@@ -404,7 +564,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; commentId: string },
     ) => {
       try {
-        return await deleteComment(host, args.repoRoot, args.commentId);
+        return await deleteComment(host(), args.repoRoot, args.commentId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -418,13 +578,12 @@ export function registerIpc(opts: {
       args: string | { repoRoot: string; sessionId?: string; export?: boolean },
     ) => {
       try {
-        if (typeof args === "string") {
-          return await endSession(host, args);
-        }
-        return await endSession(host, args.repoRoot, {
-          sessionId: args.sessionId,
-          export: args.export,
-        });
+        const repoRoot = typeof args === "string" ? args : args.repoRoot;
+        const options =
+          typeof args === "string"
+            ? undefined
+            : { export: args.export, sessionId: args.sessionId };
+        return await endSession(host(), repoRoot, options);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -438,10 +597,9 @@ export function registerIpc(opts: {
       args: string | { repoRoot: string; title?: string },
     ) => {
       try {
-        if (typeof args === "string") {
-          return await newSession(host, args);
-        }
-        return await newSession(host, args.repoRoot, "local-user", args.title);
+        const repoRoot = typeof args === "string" ? args : args.repoRoot;
+        const title = typeof args === "string" ? undefined : args.title;
+        return await newSession(host(), repoRoot, "local-user", title);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -455,7 +613,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; sessionId: string },
     ) => {
       try {
-        return await restoreSession(host, args.repoRoot, args.sessionId);
+        return await restoreSession(host(), args.repoRoot, args.sessionId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -469,7 +627,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; sessionId?: string },
     ) => {
       try {
-        return await exportSession(host, args.repoRoot, args.sessionId);
+        return await exportSession(host(), args.repoRoot, args.sessionId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -485,7 +643,7 @@ export function registerIpc(opts: {
       try {
         const repoRoot = typeof args === "string" ? args : args.repoRoot;
         const sessionId = typeof args === "string" ? undefined : args.sessionId;
-        const abs = await copyYamlPath(host, repoRoot, sessionId);
+        const abs = await copyYamlPath(host(), repoRoot, sessionId);
         clipboard.writeText(abs);
         return abs;
       } catch (err) {
@@ -502,8 +660,13 @@ export function registerIpc(opts: {
       args: { cwd?: string; cols?: number; rows?: number },
     ) => {
       try {
+        const h = host();
         const cwd =
-          args.cwd ?? host.workspaceRoot ?? process.env.HOME ?? process.cwd();
+          args.cwd ??
+          h.workspaceRoot ??
+          (h.kind === "local"
+            ? process.env.HOME || process.env.USERPROFILE || process.cwd()
+            : "/");
         return await terminal.create(cwd, args.cols ?? 80, args.rows ?? 24);
       } catch (err) {
         rethrowIpc(err);

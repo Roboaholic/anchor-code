@@ -1,19 +1,39 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
+export type HostKind = "local" | "wsl" | "ssh";
+
 export interface AppVersionInfo {
   app: string;
   electron: string;
   chrome: string;
   node: string;
   hostId: string;
-  hostKind: "local" | "ssh";
+  hostKind: HostKind;
 }
 
 export interface HostInfo {
   id: string;
-  kind: "local" | "ssh";
+  kind: HostKind;
+  profileId: string;
   workspaceRoot: string | null;
 }
+
+export interface HostProfile {
+  id: string;
+  kind: HostKind;
+  label?: string;
+  ssh?: {
+    host: string;
+    port?: number;
+    username: string;
+    privateKeyPath?: string;
+  };
+  wsl?: {
+    distro?: string;
+    user?: string;
+  };
+}
+
 
 export interface DirEntry {
   name: string;
@@ -96,6 +116,23 @@ const anchor = {
   },
   host: {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),
+    listProfiles: (): Promise<HostProfile[]> =>
+      ipcRenderer.invoke("host:listProfiles"),
+    listWslDistros: (): Promise<string[]> =>
+      ipcRenderer.invoke("host:listWslDistros"),
+    wslHome: (args?: { distro?: string }): Promise<string> =>
+      ipcRenderer.invoke("host:wslHome", args ?? {}),
+    browseListDir: (args: {
+      path: string;
+      kind: "wsl" | "ssh";
+      distro?: string;
+    }): Promise<DirEntry[]> => ipcRenderer.invoke("host:browseListDir", args),
+    useProfile: (
+      profileId: string,
+    ): Promise<{ id: string; kind: HostKind; profileId: string }> =>
+      ipcRenderer.invoke("host:useProfile", profileId),
+    upsertProfile: (profile: HostProfile): Promise<HostProfile[]> =>
+      ipcRenderer.invoke("host:upsertProfile", profile),
   },
   clipboard: {
     writeText: (text: string): Promise<boolean> =>
@@ -104,8 +141,14 @@ const anchor = {
   workspace: {
     pickFolder: (): Promise<string | null> =>
       ipcRenderer.invoke("workspace:pickFolder"),
-    open: (path: string): Promise<{ root: string; name: string }> =>
-      ipcRenderer.invoke("workspace:open", path),
+    open: (
+      pathOrArgs: string | { path: string; hostProfileId?: string },
+    ): Promise<{
+      root: string;
+      name: string;
+      hostKind: HostKind;
+      hostProfileId: string;
+    }> => ipcRenderer.invoke("workspace:open", pathOrArgs),
     getRecent: (): Promise<RecentWorkspace[]> =>
       ipcRenderer.invoke("workspace:getRecent"),
     listDir: (path: string): Promise<DirEntry[]> =>

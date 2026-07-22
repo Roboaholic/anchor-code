@@ -21,6 +21,8 @@ export interface TreeNode {
 export interface WorkspaceState {
   workspaceRoot: string | null;
   workspaceName: string | null;
+  hostProfileId: string | null;
+  hostKind: "local" | "wsl" | "ssh" | null;
   recent: RecentWorkspace[];
   rootEntries: TreeNode[];
   status: "idle" | "loading" | "ready" | "error";
@@ -28,7 +30,10 @@ export interface WorkspaceState {
   selectedPath: string | null;
 
   loadRecent: () => Promise<void>;
-  openPath: (path: string) => Promise<void>;
+  openPath: (
+    path: string,
+    opts?: { hostProfileId?: string },
+  ) => Promise<void>;
   pickAndOpen: () => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
   setSelectedPath: (path: string | null) => void;
@@ -52,6 +57,8 @@ async function loadChildren(dirPath: string): Promise<TreeNode[]> {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaceRoot: null,
   workspaceName: null,
+  hostProfileId: null,
+  hostKind: null,
   recent: [],
   rootEntries: [],
   status: "idle",
@@ -67,7 +74,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  openPath: async (dirPath: string) => {
+  openPath: async (dirPath, opts) => {
     if (!window.anchor?.workspace?.open) {
       const message =
         "IPC bridge missing (window.anchor.workspace). Restart the Electron app, not a browser tab.";
@@ -76,11 +83,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     set({ status: "loading", error: null });
     try {
-      const { root, name } = await window.anchor.workspace.open(dirPath);
+      const opened = await window.anchor.workspace.open(
+        opts?.hostProfileId
+          ? { path: dirPath, hostProfileId: opts.hostProfileId }
+          : dirPath,
+      );
+      const { root, name, hostKind, hostProfileId } = opened;
       // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
       set({
         workspaceRoot: root,
         workspaceName: name || workspaceDisplayName(root),
+        hostKind: hostKind ?? null,
+        hostProfileId: hostProfileId ?? opts?.hostProfileId ?? null,
         selectedPath: null,
         status: "loading",
         error: null,
@@ -104,6 +118,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({
         workspaceRoot: root,
         workspaceName: name || workspaceDisplayName(root),
+        hostKind: hostKind ?? get().hostKind,
+        hostProfileId: hostProfileId ?? get().hostProfileId,
         rootEntries,
         recent,
         status: treeError ? "error" : "ready",
@@ -111,7 +127,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         selectedPath: null,
       });
       if (treeError) {
-        // Root is open; tree failure is recoverable — do not throw away the open.
         console.warn("[workspace] listDir failed:", treeError);
       }
     } catch (err) {

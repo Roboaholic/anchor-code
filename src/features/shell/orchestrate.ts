@@ -8,30 +8,38 @@ import { useDocumentStore } from "@/features/document/documentStore";
 import { useHistoryStore } from "@/features/history/historyStore";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import type { CommentRecord } from "@/shared/anchor-api";
+import type { CommentRecord, HostKind } from "@/shared/anchor-api";
+import { useShellStore } from "./shellStore";
 
-export async function openWorkspaceFromPicker(): Promise<void> {
+/** Opens the Local / WSL chooser dialog (Windows) or local picker flow. */
+export function openWorkspaceFromPicker(): void {
+  useShellStore.getState().setOpenWorkspaceDialog(true);
+}
+
+export async function openWorkspaceWithHost(args: {
+  path: string;
+  hostProfileId: string;
+  hostKind?: HostKind;
+}): Promise<void> {
   try {
-    if (!window.anchor?.workspace?.pickFolder) {
-      throw new Error(
-        "IPC bridge missing. Run via Electron (`npm run dev`), not a browser tab.",
-      );
-    }
-    const picked = await window.anchor.workspace.pickFolder();
-    if (!picked) return; // user cancelled — leave UI as-is
-    await useWorkspaceStore.getState().openPath(picked);
+    await useWorkspaceStore.getState().openPath(args.path, {
+      hostProfileId: args.hostProfileId,
+    });
     const root = useWorkspaceStore.getState().workspaceRoot;
     if (root) await afterWorkspaceOpened(root);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[shell] openWorkspaceFromPicker failed:", err);
+    console.error("[shell] openWorkspaceWithHost failed:", err);
     useWorkspaceStore.setState({ status: "error", error: message });
   }
 }
 
-export async function openWorkspacePath(path: string): Promise<void> {
+export async function openWorkspacePath(
+  path: string,
+  hostProfileId?: string,
+): Promise<void> {
   try {
-    await useWorkspaceStore.getState().openPath(path);
+    await useWorkspaceStore.getState().openPath(path, { hostProfileId });
     const root = useWorkspaceStore.getState().workspaceRoot;
     if (root) await afterWorkspaceOpened(root);
   } catch (err) {

@@ -9,7 +9,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts", "electron/**/*.test.ts"],
+    include: [
+      "src/**/*.test.ts",
+      "src/**/*.test.tsx",
+      "electron/**/*.test.ts",
+    ],
     exclude: ["node_modules", "dist", "dist-electron"],
   },
 });

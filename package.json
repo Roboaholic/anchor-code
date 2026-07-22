@@ -69,6 +69,13 @@
     ],
     "npmRebuild": false,
     "nodeGypRebuild": false,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Roboaholic",
+        "repo": "anchor-code"
+      }
+    ],
     "win": {
       "target": [
         {

@@ -18,7 +18,10 @@
     "ensure:pty": "node scripts/ensure-node-pty.js",
     "postinstall": "node scripts/ensure-node-pty.js",
     "pack:win": "npm run build && electron-builder --win --x64 --publish never",
-    "pack:win:dir": "npm run build && electron-builder --win --x64 --dir --publish never"
+    "pack:win:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "pack:mac": "npm run build && electron-builder --mac --publish never",
+    "pack:linux": "npm run build && electron-builder --linux --x64 --publish never",
+    "pack": "npm run build && electron-builder --publish never"
   },
   "dependencies": {
     "@fontsource/eb-garamond": "^5.3.0",
@@ -102,6 +105,50 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "maintainer": "Roboaholic"
     }
   }
 }

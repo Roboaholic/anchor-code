@@ -1,10 +1,12 @@
 name: Release
 
-# Create a GitHub Release with Windows installers when a version tag is pushed.
-# Example:
-#   npm version patch   # or edit package.json version
+# Create a GitHub Release with Windows / macOS / Linux installers on version tags.
+#
+#   # bump package.json version first (must match tag without leading v)
+#   npm version patch
 #   git push origin main --follow-tags
-# Tag format: v0.1.1 (leading "v" required)
+#
+# Tag format: v0.1.1
 
 on:
   push:
@@ -19,10 +21,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows:
-    name: Build Windows & publish
-    runs-on: windows-latest
-    timeout-minutes: 45
+  verify:
+    name: Verify version tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Tag must match package.json version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG must match package.json version $PKG. Bump package.json before tagging."
+            exit 1
+          fi
+          node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            pack: pack:win
+            artifacts: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
+          - os: macos-latest
+            platform: mac
+            pack: pack:mac
+            # apple silicon runner produces arm64; x64 via electron-builder arch list
+            artifacts: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/latest-mac.yml
+          - os: ubuntu-latest
+            platform: linux
+            pack: pack:linux
+            artifacts: |
+              release/*.AppImage
+              release/*.deb
+              release/latest-linux.yml
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,21 +83,10 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Verify tag matches package.json version
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./package.json').version")"
-          echo "tag=$TAG package.json=$PKG"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::Tag v$TAG must match package.json version $PKG. Bump package.json before tagging."
-            exit 1
-          fi
-
       - name: Install dependencies
         run: npm ci
 
-      # package.json has npmRebuild:false; rebuild node-pty against this Electron ABI.
+      # package.json has npmRebuild:false; rebuild node-pty for this Electron ABI.
       - name: Rebuild native modules
         run: npm run rebuild:native
 
@@ -56,24 +95,56 @@ jobs:
           npm run typecheck
           npm run test:unit
 
-      - name: Build app + package (NSIS + portable)
-        run: npm run pack:win
+      - name: Package ${{ matrix.platform }}
+        run: npm run ${{ matrix.pack }}
         env:
-          # Silence electron-builder telemetry / download noise
-          ELECTRON_GET_USE_PROXY: "true"
-          # Cache electron binaries under the runner home when possible
           ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+          # Unsigned mac builds still produce dmg/zip (Gatekeeper warning for users).
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      - name: Upload release artifacts
+      - name: List release output
+        shell: bash
+        run: |
+          ls -la release || true
+          find release -maxdepth 2 -type f | sort || true
+
+      - name: Upload artifacts to job
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.platform }}
+          path: |
+            release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-packages
+          pattern: packages-*
+          merge-multiple: true
+
+      - name: List downloaded files
+        run: find dist-packages -type f | sort
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # Draft first if you prefer review: draft: true
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
-            release/*.exe
-            release/*.blockmap
-            release/latest.yml
+            dist-packages/**/*.exe
+            dist-packages/**/*.blockmap
+            dist-packages/**/*.dmg
+            dist-packages/**/*.zip
+            dist-packages/**/*.AppImage
+            dist-packages/**/*.deb
+            dist-packages/**/latest*.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

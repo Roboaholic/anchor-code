@@ -309,6 +309,7 @@ export class SshHostSession implements HostSession {
     cwd: string,
     cols: number,
     rows: number,
+    opts?: { command?: string; args?: string[] },
   ): Promise<PtyHandle> {
     const client = await this.ensureConnected();
     const safeCwd = hostNormalize("ssh", cwd || this.workspaceRoot || "~");
@@ -335,9 +336,13 @@ export class SshHostSession implements HostSession {
       );
     });
 
-    // cd into workspace after shell starts
+    // cd into workspace after shell starts, then optional agent CLI.
     if (safeCwd && safeCwd !== "~") {
       channel.write(`cd ${shellQuote(safeCwd)}\n`);
+    }
+    if (opts?.command) {
+      const parts = [opts.command, ...(opts.args ?? [])].map(shellQuote);
+      channel.write(`${parts.join(" ")}\n`);
     }
 
     const id = `ssh-pty-${randomUUID().slice(0, 8)}`;

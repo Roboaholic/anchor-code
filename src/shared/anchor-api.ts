@@ -91,11 +91,24 @@ export interface FileDiffContent {
   status: string;
 }
 
+export type TerminalSessionKind = "shell" | "agent";
+
 export interface TerminalTabInfo {
   id: string;
   title: string;
   cwd: string;
   status: "running" | "exited";
+  kind: TerminalSessionKind;
+  agentId?: string;
+}
+
+export interface AgentCliProfile {
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  detected?: boolean;
+  enabled?: boolean;
 }
 
 export interface CommentMessage {
@@ -290,8 +303,14 @@ export interface AnchorApi {
       cwd?: string;
       cols?: number;
       rows?: number;
+      kind?: TerminalSessionKind;
+      command?: string;
+      args?: string[];
+      title?: string;
+      agentId?: string;
     }) => Promise<TerminalTabInfo>;
     list: () => Promise<TerminalTabInfo[]>;
+    rename: (id: string, title: string) => Promise<TerminalTabInfo>;
     write: (id: string, data: string) => Promise<void>;
     resize: (id: string, cols: number, rows: number) => Promise<void>;
     kill: (id: string) => Promise<void>;
@@ -302,5 +321,12 @@ export interface AnchorApi {
     onExit: (
       cb: (payload: { id: string; exitCode: number }) => void,
     ) => () => void;
+  };
+  agent: {
+    listProfiles: () => Promise<AgentCliProfile[]>;
+    detect: () => Promise<AgentCliProfile[]>;
+    saveProfiles: (profiles: AgentCliProfile[]) => Promise<AgentCliProfile[]>;
+    getDefaultId: () => Promise<string | undefined>;
+    setDefaultId: (id: string | null | undefined) => Promise<void>;
   };
 }

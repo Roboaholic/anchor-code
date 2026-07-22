@@ -61,6 +61,12 @@ export interface PtyHandle {
   kill(): void;
 }
 
+/** Optional command for non-default shells (agent CLIs). */
+export interface PtySpawnOptions {
+  command?: string;
+  args?: string[];
+}
+
 export interface HostSession {
   readonly id: string;
   readonly kind: HostKind;
@@ -75,6 +81,11 @@ export interface HostSession {
   stat(path: string): Promise<StatResult>;
   exists(path: string): Promise<boolean>;
   mkdirp(path: string): Promise<void>;
-  openPty(cwd: string, cols: number, rows: number): Promise<PtyHandle>;
+  openPty(
+    cwd: string,
+    cols: number,
+    rows: number,
+    opts?: PtySpawnOptions,
+  ): Promise<PtyHandle>;
   dispose(): Promise<void>;
 }

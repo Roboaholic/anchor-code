@@ -31,11 +31,25 @@ export interface HostProfile {
   wsl?: WslProfileConfig;
 }
 
+export interface AgentCliProfile {
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  /** Last detect result on active host. */
+  detected?: boolean;
+  enabled?: boolean;
+}
+
 export interface AppSettings {
   recentWorkspaces: RecentWorkspace[];
   hostProfiles: HostProfile[];
   /** Last used host profile for Open Workspace default. */
   lastHostProfileId?: string;
+  /** External agent CLIs (Claude Code, Codex, …). */
+  agentProfiles?: AgentCliProfile[];
+  /** Default agent id for Agent mode "+". */
+  defaultAgentId?: string;
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -55,6 +69,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hostProfiles: DEFAULT_PROFILES,
   lastHostProfileId:
     process.platform === "win32" ? "wsl-default" : "local-default",
+  agentProfiles: [],
   ui: { terminalVisible: true },
 };
 
@@ -90,6 +105,8 @@ export async function loadSettings(): Promise<AppSettings> {
       hostProfiles: normalizeProfiles(parsed.hostProfiles),
       lastHostProfileId:
         parsed.lastHostProfileId ?? DEFAULT_SETTINGS.lastHostProfileId,
+      agentProfiles: parsed.agentProfiles ?? [],
+      defaultAgentId: parsed.defaultAgentId,
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {

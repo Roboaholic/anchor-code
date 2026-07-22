@@ -2,11 +2,26 @@ import type { BrowserWindow } from "electron";
 import type { HostSession, PtyHandle } from "../host/types.js";
 import { shellDisplayName } from "../host/localPty.js";
 
+export type TerminalSessionKind = "shell" | "agent";
+
 export interface TerminalTabInfo {
   id: string;
   title: string;
   cwd: string;
   status: "running" | "exited";
+  kind: TerminalSessionKind;
+  agentId?: string;
+}
+
+export interface TerminalCreateOptions {
+  cwd: string;
+  cols?: number;
+  rows?: number;
+  kind?: TerminalSessionKind;
+  command?: string;
+  args?: string[];
+  title?: string;
+  agentId?: string;
 }
 
 interface TabInternal {
@@ -16,6 +31,7 @@ interface TabInternal {
 
 /**
  * Multi-tab terminal manager. Spawns PTYs through the active HostSession.
+ * Shell and agent sessions share the same pool; kind is metadata only.
  */
 export class TerminalService {
   private tabs = new Map<string, TabInternal>();
@@ -33,23 +49,46 @@ export class TerminalService {
 
   private send(channel: string, payload: unknown) {
     const win = this.getWindow();
-    win?.webContents.send(channel, payload);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
   }
 
   list(): TerminalTabInfo[] {
     return [...this.tabs.values()].map((t) => t.info);
   }
 
-  async create(cwd: string, cols = 80, rows = 24): Promise<TerminalTabInfo> {
+  async create(opts: TerminalCreateOptions): Promise<TerminalTabInfo> {
     const host = this.getHost();
-    const handle = await host.openPty(cwd, cols, rows);
+    const cols = opts.cols ?? 80;
+    const rows = opts.rows ?? 24;
+    const kind: TerminalSessionKind = opts.kind ?? "shell";
+    const spawnOpts =
+      opts.command && opts.command.trim()
+        ? { command: opts.command.trim(), args: opts.args ?? [] }
+        : undefined;
+
+    const handle = await host.openPty(opts.cwd, cols, rows, spawnOpts);
     this.counter += 1;
-    const title = `${this.counter}: ${titleForHost(host)}`;
+
+    let title = opts.title?.trim();
+    if (!title) {
+      if (kind === "agent" && opts.agentId) {
+        title = opts.agentId;
+      } else if (kind === "agent" && opts.command) {
+        title = shellDisplayName(opts.command);
+      } else {
+        title = `${this.counter}: ${titleForHost(host)}`;
+      }
+    }
+
     const info: TerminalTabInfo = {
       id: handle.id,
       title,
-      cwd,
+      cwd: opts.cwd,
       status: "running",
+      kind,
+      agentId: opts.agentId,
     };
     this.tabs.set(handle.id, { info, handle });
 
@@ -65,6 +104,14 @@ export class TerminalService {
     });
 
     return info;
+  }
+
+  rename(id: string, title: string): TerminalTabInfo | null {
+    const tab = this.tabs.get(id);
+    if (!tab) return null;
+    const next = title.trim() || tab.info.title;
+    tab.info = { ...tab.info, title: next };
+    return tab.info;
   }
 
   write(id: string, data: string): void {

@@ -162,8 +162,12 @@ export class LocalHostSession implements HostSession {
     cwd: string,
     cols: number,
     rows: number,
+    opts?: { command?: string; args?: string[] },
   ): Promise<PtyHandle> {
-    const { handle } = await spawnLocalPty(cwd, cols, rows);
+    const spawnOpts = opts?.command
+      ? { shell: opts.command, args: opts.args ?? [] }
+      : undefined;
+    const { handle } = await spawnLocalPty(cwd, cols, rows, spawnOpts);
     this.openPtys.add(handle);
     const origKill = handle.kill.bind(handle);
     handle.kill = () => {

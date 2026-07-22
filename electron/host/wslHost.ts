@@ -27,7 +27,8 @@ export interface WslHostOptions {
  *
  * Paths stay POSIX (execution-end). Fast path for fs uses Windows UNC
  * `\\wsl$\<distro>\…` so listDir/readFile don't spawn wsl.exe per click.
- * `run` / PTY still go through wsl.exe.
+ * Absolute symlinks and other UNC gaps fall back to `wsl.exe` (Linux fs).
+ * `run` / PTY always go through wsl.exe.
  */
 export class WslHostSession implements HostSession {
   readonly id: string;
@@ -122,10 +123,36 @@ export class WslHostSession implements HostSession {
     if (e?.code === "EACCES" || e?.code === "EPERM") {
       return new HostError("permission", fallback, e.message);
     }
+    // UNC sometimes returns EISDIR/EINVAL for Linux absolute symlinks.
+    if (e?.code === "EISDIR" || e?.code === "EINVAL" || e?.code === "UNKNOWN") {
+      return new HostError("failed", fallback, e.message);
+    }
     return new HostError(
       "failed",
       fallback,
       e?.message ?? String(err),
+    );
+  }
+
+  private escapeSingle(s: string): string {
+    return `'${s.replace(/'/g, `'\\''`)}'`;
+  }
+
+  private async runBash(script: string, cwd = "/"): Promise<RunResult> {
+    return this.run(cwd, "bash", ["-lc", script]);
+  }
+
+  /** True when UNC failed in a way that often means symlink / special file. */
+  private isUncGap(err: unknown): boolean {
+    const e = err as NodeJS.ErrnoException;
+    const code = e?.code;
+    return (
+      code === "ENOENT" ||
+      code === "EISDIR" ||
+      code === "EINVAL" ||
+      code === "EPERM" ||
+      code === "EACCES" ||
+      code === "UNKNOWN"
     );
   }
 
@@ -157,7 +184,24 @@ export class WslHostSession implements HostSession {
       const unc = await this.toUnc(p);
       return await fsp.readFile(unc, "utf8");
     } catch (err) {
-      throw this.mapFsError(err, `Cannot read file: ${p}`);
+      if (!this.isUncGap(err)) {
+        throw this.mapFsError(err, `Cannot read file: ${p}`);
+      }
+      // Absolute Linux symlinks are invisible/broken through \\wsl$\ — use cat.
+      const r = await this.runBash(
+        `if [ ! -e ${this.escapeSingle(p)} ] && [ ! -L ${this.escapeSingle(p)} ]; then echo '__AC_ENOENT__' >&2; exit 44; fi; cat ${this.escapeSingle(p)}`,
+      );
+      if (r.code === 44 || /__AC_ENOENT__/.test(r.stderr)) {
+        throw new HostError("not_found", `Cannot read file: ${p}`, r.stderr);
+      }
+      if (r.code !== 0) {
+        throw new HostError(
+          "failed",
+          `Cannot read file: ${p}`,
+          r.stderr || r.stdout,
+        );
+      }
+      return r.stdout;
     }
   }
 
@@ -169,7 +213,23 @@ export class WslHostSession implements HostSession {
       await fsp.mkdir(parent, { recursive: true });
       await fsp.writeFile(unc, data, "utf8");
     } catch (err) {
-      throw this.mapFsError(err, `Cannot write file: ${p}`);
+      if (!this.isUncGap(err)) {
+        throw this.mapFsError(err, `Cannot write file: ${p}`);
+      }
+      const dir = p.includes("/")
+        ? p.slice(0, p.lastIndexOf("/")) || "/"
+        : "/";
+      const b64 = Buffer.from(data, "utf8").toString("base64");
+      const r = await this.runBash(
+        `mkdir -p ${this.escapeSingle(dir)} && printf '%s' ${this.escapeSingle(b64)} | base64 -d > ${this.escapeSingle(p)}`,
+      );
+      if (r.code !== 0) {
+        throw new HostError(
+          "failed",
+          `Cannot write file: ${p}`,
+          r.stderr || r.stdout,
+        );
+      }
     }
   }
 
@@ -184,10 +244,12 @@ export class WslHostSession implements HostSession {
         if (d.isDirectory()) {
           type = "dir";
         } else if (d.isSymbolicLink()) {
+          // Prefer Linux view: absolute symlinks often fail UNC stat.
           try {
             const st = await fsp.stat(path.win32.join(unc, d.name));
             type = st.isDirectory() ? "dir" : "file";
           } catch {
+            // Keep as file so the tree still shows the name (open may use wsl fallback).
             type = "file";
           }
         } else if (!d.isFile()) {
@@ -217,7 +279,34 @@ export class WslHostSession implements HostSession {
         mtimeMs: st.mtimeMs,
       };
     } catch (err) {
-      throw this.mapFsError(err, `Cannot stat: ${p}`);
+      if (!this.isUncGap(err)) {
+        throw this.mapFsError(err, `Cannot stat: ${p}`);
+      }
+      // Follow symlinks inside WSL (UNC cannot resolve absolute link targets).
+      const r = await this.runBash(
+        `if [ ! -e ${this.escapeSingle(p)} ] && [ ! -L ${this.escapeSingle(p)} ]; then echo '__AC_ENOENT__' >&2; exit 44; fi; ` +
+          `if [ -d ${this.escapeSingle(p)} ]; then printf 'dir|'; elif [ -f ${this.escapeSingle(p)} ] || [ -L ${this.escapeSingle(p)} ]; then printf 'file|'; else printf 'other|'; fi; ` +
+          `stat -c '%s|%Y' ${this.escapeSingle(p)} 2>/dev/null || stat -f '%z|%m' ${this.escapeSingle(p)}`,
+      );
+      if (r.code === 44 || /__AC_ENOENT__/.test(r.stderr)) {
+        throw new HostError("not_found", `Cannot stat: ${p}`, r.stderr);
+      }
+      if (r.code !== 0) {
+        throw new HostError(
+          "failed",
+          `Cannot stat: ${p}`,
+          r.stderr || r.stdout,
+        );
+      }
+      const line = r.stdout.trim().split("\n")[0] ?? "";
+      const [kindRaw, sizeRaw, mtimeRaw] = line.split("|");
+      const isDir = (kindRaw ?? "").startsWith("dir");
+      return {
+        isFile: !isDir,
+        isDir,
+        size: Number(sizeRaw) || 0,
+        mtimeMs: (Number(mtimeRaw) || 0) * 1000,
+      };
     }
   }
 
@@ -227,8 +316,12 @@ export class WslHostSession implements HostSession {
       const unc = await this.toUnc(p);
       await fsp.access(unc);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      if (!this.isUncGap(err)) return false;
+      const r = await this.runBash(
+        `if [ -e ${this.escapeSingle(p)} ] || [ -L ${this.escapeSingle(p)} ]; then exit 0; else exit 1; fi`,
+      );
+      return r.code === 0;
     }
   }
 
@@ -246,6 +339,7 @@ export class WslHostSession implements HostSession {
     cwd: string,
     cols: number,
     rows: number,
+    opts?: { command?: string; args?: string[] },
   ): Promise<PtyHandle> {
     if (process.platform !== "win32") {
       throw new HostError(
@@ -260,6 +354,10 @@ export class WslHostSession implements HostSession {
       "--cd",
       safeCwd,
     ];
+    // Interactive shell by default; agent CLI: wsl … --cd dir -- cmd args
+    if (opts?.command) {
+      args.push("--", opts.command, ...(opts.args ?? []));
+    }
     const { handle } = await spawnLocalPty(
       process.env.USERPROFILE || "C:\\",
       cols,

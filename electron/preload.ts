@@ -92,11 +92,24 @@ export interface FileDiffContent {
   status: string;
 }
 
+export type TerminalSessionKind = "shell" | "agent";
+
 export interface TerminalTabInfo {
   id: string;
   title: string;
   cwd: string;
   status: "running" | "exited";
+  kind: TerminalSessionKind;
+  agentId?: string;
+}
+
+export interface AgentCliProfile {
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  detected?: boolean;
+  enabled?: boolean;
 }
 
 const anchor = {
@@ -242,9 +255,16 @@ const anchor = {
       cwd?: string;
       cols?: number;
       rows?: number;
+      kind?: TerminalSessionKind;
+      command?: string;
+      args?: string[];
+      title?: string;
+      agentId?: string;
     }): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:create", args ?? {}),
     list: (): Promise<TerminalTabInfo[]> => ipcRenderer.invoke("terminal:list"),
+    rename: (id: string, title: string): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("terminal:rename", { id, title }),
     write: (id: string, data: string): Promise<void> =>
       ipcRenderer.invoke("terminal:write", { id, data }),
     resize: (id: string, cols: number, rows: number): Promise<void> =>
@@ -270,6 +290,18 @@ const anchor = {
       ipcRenderer.on("terminal:exit", listener);
       return () => ipcRenderer.removeListener("terminal:exit", listener);
     },
+  },
+  agent: {
+    listProfiles: (): Promise<AgentCliProfile[]> =>
+      ipcRenderer.invoke("agent:listProfiles"),
+    detect: (): Promise<AgentCliProfile[]> =>
+      ipcRenderer.invoke("agent:detect"),
+    saveProfiles: (profiles: AgentCliProfile[]): Promise<AgentCliProfile[]> =>
+      ipcRenderer.invoke("agent:saveProfiles", profiles),
+    getDefaultId: (): Promise<string | undefined> =>
+      ipcRenderer.invoke("agent:getDefaultId"),
+    setDefaultId: (id: string | null | undefined): Promise<void> =>
+      ipcRenderer.invoke("agent:setDefaultId", id),
   },
 };
 

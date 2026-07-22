@@ -371,30 +371,6 @@ export function CodeViewer({
           File is larger than 1 MB — showing the first portion only ({path}).
         </div>
       ) : null}
-      <div className="code-viewer__toolbar">
-        <button
-          type="button"
-          className="btn btn--ghost btn--small"
-          onClick={() => {
-            if (editorRef.current) openComposer(editorRef.current, false);
-          }}
-        >
-          Add comment
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--small"
-          title="End current session (export) and save this comment into a new session"
-          onClick={() => {
-            if (editorRef.current) openComposer(editorRef.current, true);
-          }}
-        >
-          Add comment (new session)
-        </button>
-        <span className="muted toolbar-hint">
-          Select text · right-click · ⌘/Ctrl+M · click highlight for bubble
-        </span>
-      </div>
       <div className="code-viewer__editor" ref={overlayRef}>
         <Editor
           path={path}

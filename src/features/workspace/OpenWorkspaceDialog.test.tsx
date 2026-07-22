@@ -19,7 +19,7 @@ interface AnchorMock {
 }
 
 function getAnchor(): AnchorMock {
-  return (window as Window & { anchor: AnchorMock }).anchor;
+  return (window as unknown as { anchor: AnchorMock }).anchor;
 }
 
 function installAnchor(pickFolder?: ReturnType<typeof vi.fn>): AnchorMock {

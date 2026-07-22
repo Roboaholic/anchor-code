@@ -33,6 +33,13 @@ import {
 } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import {
+  detectAgentClis,
+  getDefaultAgentId,
+  listAgentProfiles,
+  saveAgentProfiles,
+  setDefaultAgentId,
+} from "../services/agentCli.js";
+import {
   getHostProfile,
   loadSettings,
   pushRecentWorkspace,
@@ -657,7 +664,16 @@ export function registerIpc(opts: {
     "terminal:create",
     async (
       _evt,
-      args: { cwd?: string; cols?: number; rows?: number },
+      args: {
+        cwd?: string;
+        cols?: number;
+        rows?: number;
+        kind?: "shell" | "agent";
+        command?: string;
+        args?: string[];
+        title?: string;
+        agentId?: string;
+      } = {},
     ) => {
       try {
         const h = host();
@@ -667,7 +683,16 @@ export function registerIpc(opts: {
           (h.kind === "local"
             ? process.env.HOME || process.env.USERPROFILE || process.cwd()
             : "/");
-        return await terminal.create(cwd, args.cols ?? 80, args.rows ?? 24);
+        return await terminal.create({
+          cwd,
+          cols: args.cols ?? 80,
+          rows: args.rows ?? 24,
+          kind: args.kind,
+          command: args.command,
+          args: args.args,
+          title: args.title,
+          agentId: args.agentId,
+        });
       } catch (err) {
         rethrowIpc(err);
       }
@@ -675,6 +700,17 @@ export function registerIpc(opts: {
   );
 
   ipcMain.handle("terminal:list", async () => terminal.list());
+
+  ipcMain.handle(
+    "terminal:rename",
+    async (_evt, args: { id: string; title: string }) => {
+      const info = terminal.rename(args.id, args.title);
+      if (!info) {
+        throw new HostError("not_found", `Terminal not found: ${args.id}`);
+      }
+      return info;
+    },
+  );
 
   ipcMain.handle(
     "terminal:write",
@@ -697,4 +733,53 @@ export function registerIpc(opts: {
   ipcMain.handle("terminal:disposeAll", async () => {
     terminal.disposeAll();
   });
+
+  // ── agent CLI profiles ─────────────────────────────
+  ipcMain.handle("agent:listProfiles", async () => {
+    try {
+      return await listAgentProfiles();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle("agent:detect", async () => {
+    try {
+      return await detectAgentClis(host());
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "agent:saveProfiles",
+    async (_evt, profiles: unknown) => {
+      try {
+        return await saveAgentProfiles(
+          Array.isArray(profiles) ? (profiles as never) : [],
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("agent:getDefaultId", async () => {
+    try {
+      return await getDefaultAgentId();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "agent:setDefaultId",
+    async (_evt, id: string | null | undefined) => {
+      try {
+        await setDefaultAgentId(id ?? undefined);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 }

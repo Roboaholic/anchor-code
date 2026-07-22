@@ -44,11 +44,12 @@ describe("TerminalService.create (integration)", () => {
     "spawns a local shell without posix_spawnp error",
     async () => {
       const cwd = os.tmpdir();
-      const tab = await service.create(cwd, 80, 24);
+      const tab = await service.create({ cwd, cols: 80, rows: 24 });
       tabs.push(tab.id);
       expect(tab.status).toBe("running");
       expect(tab.cwd).toBeTruthy();
       expect(tab.id).toBeTruthy();
+      expect(tab.kind).toBe("shell");
       // Integration: real PTY; wait for first data after write (no fixed sleep race).
       // TerminalService does not expose onData here — just ensure write does not throw.
       expect(() => service.write(tab.id, "echo anchor-pty-ok\r")).not.toThrow();

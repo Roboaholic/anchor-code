@@ -20,6 +20,7 @@ export type CodiconName =
   | "history"
   | "home"
   | "json"
+  | "list-flat"
   | "markdown"
   | "search"
   | "symbol-file"

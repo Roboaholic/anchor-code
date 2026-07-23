@@ -71,7 +71,10 @@ describe("LocalHostSession (integration)", () => {
       expect(typeof pty.resize).toBe("function");
       pty.resize(100, 30);
       // Wait for real PTY I/O rather than a fixed sleep.
-      const { promise, resolve } = Promise.withResolvers<void>();
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
       const timer = setTimeout(() => resolve(), 3_000);
       pty.onData(() => {
         clearTimeout(timer);

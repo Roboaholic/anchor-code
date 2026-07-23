@@ -12,9 +12,11 @@ import { QuickOpenPalette, invalidateFileIndexCache } from "./QuickOpen";
 import { TerminalPanel } from "./TerminalPanel";
 import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
+import { useThemeStore } from "./themeStore";
 import { openWorkspaceWithHost } from "./orchestrate";
 
 export function Shell() {
+  const leftVisible = useShellStore((s) => s.leftVisible);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
   const openWorkspaceDialog = useShellStore((s) => s.openWorkspaceDialog);
@@ -23,6 +25,11 @@ export function Shell() {
   const closePalette = useShellStore((s) => s.closePalette);
   const palette = useShellStore((s) => s.palette);
   const loadRecent = useWorkspaceStore((s) => s.loadRecent);
+  const hydrateTheme = useThemeStore((s) => s.hydrate);
+
+  useEffect(() => {
+    void hydrateTheme();
+  }, [hydrateTheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,9 +67,23 @@ export function Shell() {
         }
       }) ?? (() => undefined);
 
+    const onLocalMenu = (e: Event) => {
+      const detail = (e as CustomEvent<{ type?: string }>).detail;
+      const type = detail?.type;
+      if (type === "openWorkspace") {
+        void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
+      } else if (type === "quickOpen") {
+        openPalette("quickOpen");
+      } else if (type === "openFilePath") {
+        openPalette("openPath");
+      }
+    };
+    window.addEventListener("anchor:shell-command", onLocalMenu);
+
     return () => {
       cancelled = true;
       off();
+      window.removeEventListener("anchor:shell-command", onLocalMenu);
     };
   }, [setVersionLabel, loadRecent, openPalette]);
 
@@ -95,9 +116,17 @@ export function Shell() {
 
   // Drop file index when workspace changes.
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const setTerminalVisible = useShellStore((s) => s.setTerminalVisible);
   useEffect(() => {
     invalidateFileIndexCache();
   }, [workspaceRoot]);
+
+  // Right rail only when a workspace is open.
+  useEffect(() => {
+    if (!workspaceRoot) {
+      setTerminalVisible(false);
+    }
+  }, [workspaceRoot, setTerminalVisible]);
 
   // Esc closes palette if focus left the dialog.
   useEffect(() => {
@@ -117,17 +146,30 @@ export function Shell() {
       <TopBar />
       <div className="shell__body">
         <PanelGroup direction="horizontal" autoSaveId="anchor-shell">
-          <Panel defaultSize={22} minSize={14} maxSize={36} id="left">
-            <LeftNav />
-          </Panel>
+          {leftVisible ? (
+            <>
+              <Panel defaultSize={22} minSize={14} maxSize={36} id="left">
+                <LeftNav />
+              </Panel>
+              <PanelResizeHandle className="resize-handle" />
+            </>
+          ) : null}
 
-          <PanelResizeHandle className="resize-handle" />
-
-          <Panel defaultSize={terminalVisible ? 48 : 78} minSize={30} id="center">
+          <Panel
+            defaultSize={
+              leftVisible && terminalVisible && workspaceRoot
+                ? 48
+                : leftVisible || (terminalVisible && workspaceRoot)
+                  ? 70
+                  : 100
+            }
+            minSize={30}
+            id="center"
+          >
             <DocumentArea />
           </Panel>
 
-          {terminalVisible ? (
+          {terminalVisible && workspaceRoot ? (
             <>
               <PanelResizeHandle className="resize-handle" />
               <Panel defaultSize={30} minSize={18} maxSize={50} id="terminal">
@@ -147,6 +189,7 @@ export function Shell() {
       />
 
       <QuickOpenPalette />
+
     </div>
   );
 }

@@ -1,10 +1,9 @@
 import { useEffect } from "react";
 import { Icon } from "@/shared/Icon";
-import { joinPath } from "@/core/workspace/paths";
 import {
-  openFileFromTree,
   openHistoryCompare,
   openHistoryRecent,
+  openWorkingTreeFileDiff,
 } from "@/features/shell/orchestrate";
 import {
   WORKTREE_SELECTION,
@@ -247,12 +246,13 @@ function RepoCard({
                         <button
                           type="button"
                           className="wt-row wt-row--btn"
-                          title={`Open ${e.path}`}
-                          disabled={e.status === "D"}
+                          title={`Diff ${e.path} (HEAD → worktree)`}
                           onClick={() => {
-                            if (e.status === "D") return;
-                            const abs = joinPath(card.root, e.path);
-                            void openFileFromTree(abs);
+                            void openWorkingTreeFileDiff(
+                              card.root,
+                              e.path,
+                              e.status,
+                            );
                           }}
                         >
                           <span className="wt-row__status">{e.status}</span>

@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
+import { getUiTheme, type UiTheme } from "./settings.js";
+import {
+  shellBackground,
+  titleBarOverlayFor,
+} from "./windowChrome.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,9 +44,11 @@ function resolvePreloadPath(): string {
   return candidates[0]!;
 }
 
-function createWindow() {
+function createWindow(theme: UiTheme) {
   const preloadPath = resolvePreloadPath();
   console.log("[main] using preload:", preloadPath);
+
+  const isMac = process.platform === "darwin";
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -49,7 +56,19 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     title: "Anchor Code",
-    backgroundColor: "#f7f7f5",
+    backgroundColor: shellBackground(theme),
+    // Single chrome row: no OS title strip + separate menu row.
+    // macOS: traffic lights inset into the topbar; Windows: overlay caption buttons.
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    ...(isMac
+      ? {}
+      : {
+          titleBarOverlay: titleBarOverlayFor(theme),
+        }),
+    // Keep accelerators (Ctrl+P etc.) via application menu, but never paint
+    // a second File/View/Window row under the title bar.
+    autoHideMenuBar: true,
+    show: false,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -58,8 +77,17 @@ function createWindow() {
     },
   });
 
+  // Windows still attaches a native menu for roles/accelerators; hide the bar.
+  if (!isMac) {
+    mainWindow.setMenuBarVisibility(false);
+  }
+
   mainWindow.webContents.on("preload-error", (_event, failedPath, error) => {
     console.error("[main] preload-error:", failedPath, error);
+  });
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -129,6 +157,18 @@ function buildMenu() {
       ],
     },
     {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
       label: "View",
       submenu: [
         { role: "reload" },
@@ -159,7 +199,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerIpc({
     hosts,
     getMainWindow: () => mainWindow,
@@ -167,11 +207,14 @@ app.whenReady().then(() => {
     terminal,
   });
   buildMenu();
-  createWindow();
+  const theme = await getUiTheme().catch(() => "light" as UiTheme);
+  createWindow(theme);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      void getUiTheme()
+        .catch(() => "light" as UiTheme)
+        .then((t) => createWindow(t));
     }
   });
 });

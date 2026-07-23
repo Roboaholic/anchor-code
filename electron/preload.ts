@@ -118,6 +118,8 @@ const anchor = {
   shell: {
     getVersion: (): Promise<AppVersionInfo> =>
       ipcRenderer.invoke("shell:getVersion"),
+    menuAction: (action: string): Promise<boolean> =>
+      ipcRenderer.invoke("shell:menuAction", action),
     onCommand: (
       cb: (cmd: { type: string }) => void,
     ): (() => void) => {
@@ -349,6 +351,12 @@ const anchor = {
       ipcRenderer.on("terminal:exit", listener);
       return () => ipcRenderer.removeListener("terminal:exit", listener);
     },
+  },
+  settings: {
+    getTheme: (): Promise<"light" | "dark"> =>
+      ipcRenderer.invoke("settings:getTheme"),
+    setTheme: (theme: "light" | "dark"): Promise<"light" | "dark"> =>
+      ipcRenderer.invoke("settings:setTheme", theme),
   },
   agent: {
     listProfiles: (): Promise<AgentCliProfile[]> =>

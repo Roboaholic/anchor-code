@@ -74,6 +74,8 @@ export interface AppSettings {
     terminalVisible: boolean;
     leftWidth?: number;
     rightWidth?: number;
+    /** Workbench color theme. Default light. */
+    theme?: "light" | "dark";
   };
 }
 
@@ -92,7 +94,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentProfiles: [],
   agentLaunchCache: {},
   historyRecentCompares: {},
-  ui: { terminalVisible: true },
+  ui: { terminalVisible: true, theme: "light" },
 };
 
 const MAX_RECENT = 12;
@@ -228,4 +230,23 @@ export async function removeHistoryRecentCompare(
   settings.historyRecentCompares = all;
   await saveSettings(settings);
   return all[workspaceRoot] ?? [];
+}
+
+export type UiTheme = "light" | "dark";
+
+export function normalizeTheme(value: unknown): UiTheme {
+  return value === "dark" ? "dark" : "light";
+}
+
+export async function getUiTheme(): Promise<UiTheme> {
+  const settings = await loadSettings();
+  return normalizeTheme(settings.ui?.theme);
+}
+
+export async function setUiTheme(theme: UiTheme): Promise<UiTheme> {
+  const settings = await loadSettings();
+  const next = normalizeTheme(theme);
+  settings.ui = { ...settings.ui, theme: next };
+  await saveSettings(settings);
+  return next;
 }

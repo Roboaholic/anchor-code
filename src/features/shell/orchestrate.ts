@@ -53,6 +53,8 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
   useDocumentStore.getState().closeAllFiles();
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
+  // Right rail stays closed until the user toggles it (now allowed).
+  useShellStore.getState().setTerminalVisible(false);
   // History / terminal must not block a successful workspace open.
   try {
     await useHistoryStore.getState().discover(root);
@@ -94,6 +96,27 @@ export async function openHistoryRecent(
   if (payload) {
     useDocumentStore.getState().openDiff(payload);
   }
+}
+
+/**
+ * Open a single-file Diff for History → Changes (HEAD → worktree).
+ * Focus layout: no CHANGED FILES sidebar; comments work in side-by-side.
+ */
+export async function openWorkingTreeFileDiff(
+  repoRoot: string,
+  relativePath: string,
+  status: string,
+): Promise<void> {
+  const name = relativePath.split(/[/\\]/).pop() || relativePath;
+  useDocumentStore.getState().openDiff({
+    repoRoot,
+    base: "HEAD",
+    head: "worktree",
+    title: `${name} · ${status}`,
+    files: [{ path: relativePath, status: status || "M" }],
+    activeFilePath: relativePath,
+    hideFileList: true,
+  });
 }
 
 export async function openWorktreeFileFromDiff(

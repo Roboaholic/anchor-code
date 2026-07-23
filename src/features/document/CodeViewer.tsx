@@ -1,3 +1,5 @@
+import { accentHex, monacoThemeId } from "@/core/theme/theme";
+import { useThemeStore } from "@/features/shell/themeStore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
@@ -78,6 +80,7 @@ export function CodeViewer({
   revealLine?: number;
   kind?: "source" | "markdown";
 }) {
+  const theme = useThemeStore((s) => s.theme);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
@@ -144,11 +147,11 @@ export function CodeViewer({
               },
               isWholeLine: s.startLine !== s.endLine,
               overviewRuler: {
-                color: selected ? "#1d4ed8" : "#2563eb",
+                color: accentHex(theme),
                 position: 4,
               },
               minimap: {
-                color: selected ? "#1d4ed8" : "#2563eb",
+                color: accentHex(theme),
                 position: 1,
               },
             },
@@ -167,7 +170,7 @@ export function CodeViewer({
     const overlayW = overlayRef.current?.clientWidth ?? 480;
     const pos = positionForSpec(ed, still, overlayW);
     if (pos) setBubble({ commentId: open.commentId, ...pos });
-  }, [content, decorationsFor, path]);
+  }, [content, decorationsFor, path, theme]);
 
   useEffect(() => {
     applyDecorations();
@@ -222,16 +225,16 @@ export function CodeViewer({
               },
               isWholeLine: s.startLine !== s.endLine,
               overviewRuler: {
-                color: "#2563eb",
+                color: accentHex(theme),
                 position: 4,
               },
-              minimap: { color: "#2563eb", position: 1 },
+              minimap: { color: accentHex(theme), position: 1 },
             },
           })),
       );
       (ed as unknown as { __annoIds?: string[] }).__annoIds = ids;
     });
-  }, [content, decorationsFor, path]);
+  }, [content, decorationsFor, path, theme]);
 
   const openBubbleForSpec = (spec: DecorationSpec) => {
     const ed = editorRef.current;
@@ -376,7 +379,7 @@ export function CodeViewer({
           path={path}
           language={language}
           value={content}
-          theme="light"
+          theme={monacoThemeId(theme)}
           onMount={onMount}
           options={{
             readOnly: true,
@@ -388,7 +391,11 @@ export function CodeViewer({
               "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
             scrollBeyondLastLine: false,
             wordWrap: "on",
-            renderLineHighlight: "line",
+            // No current-line flash on single click; double-click still selects word.
+            renderLineHighlight: "none",
+            selectionHighlight: false,
+            occurrencesHighlight: "off",
+            matchBrackets: "never",
             padding: { top: 12, bottom: 12 },
             automaticLayout: true,
             contextmenu: true,

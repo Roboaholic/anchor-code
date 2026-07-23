@@ -40,6 +40,8 @@ export type OpenItem =
       files: DiffFile[];
       activeFilePath: string | null;
       branch?: string | null;
+      /** Hide left file list (single-file focus from Changes). */
+      hideFileList?: boolean;
     };
 
 export interface DocumentState {
@@ -73,7 +75,11 @@ function fileItemId(path: string): string {
 }
 
 function diffItemId(payload: DiffOpenPayload): string {
-  return `diff:${payload.repoRoot}:${payload.base}:${payload.head}`;
+  const base = `diff:${payload.repoRoot}:${payload.base}:${payload.head}`;
+  if (payload.hideFileList && payload.activeFilePath) {
+    return `${base}:${payload.activeFilePath}`;
+  }
+  return base;
 }
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
@@ -162,6 +168,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   openDiff: (payload) => {
     const id = diffItemId(payload);
+    const preferred =
+      payload.activeFilePath &&
+      payload.files.some((f) => f.path === payload.activeFilePath)
+        ? payload.activeFilePath
+        : (payload.files[0]?.path ?? null);
     const item: OpenItem = {
       id,
       kind: "diff",
@@ -170,8 +181,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       base: payload.base,
       head: payload.head,
       files: payload.files,
-      activeFilePath: payload.files[0]?.path ?? null,
+      activeFilePath: preferred,
       branch: payload.branch ?? null,
+      hideFileList: payload.hideFileList === true,
     };
     set((s) => {
       const without = s.openItems.filter((i) => i.id !== id);

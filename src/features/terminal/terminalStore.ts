@@ -59,6 +59,8 @@ export interface TerminalState {
   loadAgentProfiles: () => Promise<void>;
   detectAgents: () => Promise<void>;
   setAgentMenuOpen: (open: boolean) => void;
+  /** Dismiss New Agent dialog; return to Terminal when no agent sessions. */
+  closeAgentMenu: () => void;
   addCustomAgent: (input: {
     name: string;
     command: string;
@@ -104,8 +106,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaceCwd: cwd,
         tabs: [tab],
         activeByMode: { terminal: tab.id, agent: null },
-        // Agent-first UI: keep a ready shell tab but land on Agent mode.
-        mode: "agent",
+        // Terminal is home; Agent is entered only after a session is created.
+        mode: "terminal",
         error: null,
         agentMenuOpen: false,
       });
@@ -116,21 +118,33 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaceCwd: cwd,
         tabs: [],
         activeByMode: { terminal: null, agent: null },
-        mode: "agent",
+        mode: "terminal",
         error: err instanceof Error ? err.message : String(err),
+        agentMenuOpen: false,
       });
     }
   },
 
   setMode: (mode) =>
-    set((s) => ({
-      mode,
-      agentMenuOpen: false,
-      activeByMode: {
-        ...s.activeByMode,
-        [mode]: pickActive(s.tabs, mode, s.activeByMode[mode]),
-      },
-    })),
+    set((s) => {
+      const agentSessions = s.tabs.filter((t) => modeOf(t) === "agent");
+      // No agent yet: open create dialog without leaving Terminal.
+      if (mode === "agent" && agentSessions.length === 0) {
+        return {
+          agentMenuOpen: true,
+          // Keep Terminal mode until an agent session is actually created.
+          mode: "terminal",
+        };
+      }
+      return {
+        mode,
+        agentMenuOpen: false,
+        activeByMode: {
+          ...s.activeByMode,
+          [mode]: pickActive(s.tabs, mode, s.activeByMode[mode]),
+        },
+      };
+    }),
 
   toggleSessionList: () =>
     set((s) => {
@@ -241,11 +255,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
+  
   createAgentDefault: async () => {
     if (get().agentProfiles.length === 0) {
       await get().loadAgentProfiles();
     }
-    set({ agentMenuOpen: true });
+    const agentSessions = get().tabs.filter((t) => modeOf(t) === "agent");
+    if (agentSessions.length === 0) {
+      set({ agentMenuOpen: true, mode: "terminal" });
+    } else {
+      set({ agentMenuOpen: true, mode: "agent" });
+    }
   },
 
   closeTab: async (id) => {
@@ -266,7 +286,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (activeByMode[closedMode] === id) {
         activeByMode[closedMode] = pickActive(tabs, closedMode, null);
       }
-      return { tabs, activeByMode };
+      const hasAgent = tabs.some((t) => modeOf(t) === "agent");
+      // Closing last agent → back to Terminal home.
+      const mode =
+        closedMode === "agent" && !hasAgent ? "terminal" : s.mode;
+      return {
+        tabs,
+        activeByMode,
+        mode,
+        agentMenuOpen: mode === "terminal" ? false : s.agentMenuOpen,
+      };
     });
   },
 
@@ -350,6 +379,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   setAgentMenuOpen: (open) => set({ agentMenuOpen: open }),
+
+  closeAgentMenu: () =>
+    set((s) => {
+      const hasAgent = s.tabs.some((t) => modeOf(t) === "agent");
+      return {
+        agentMenuOpen: false,
+        mode: hasAgent ? s.mode : "terminal",
+      };
+    }),
 
   addCustomAgent: async (input) => {
     const command = input.command.trim();

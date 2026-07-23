@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { applyWindowChromeTheme } from "../windowChrome.js";
 import type { HostManager } from "../host/hostManager.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
@@ -49,14 +50,18 @@ import { findWorkspaceFiles } from "../services/fileIndex.js";
 import {
   getHistoryRecentCompares,
   getHostProfile,
+  getUiTheme,
   loadSettings,
+  normalizeTheme,
   pushHistoryRecentCompare,
   pushRecentWorkspace,
   removeHistoryRecentCompare,
+  setUiTheme,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
+  type UiTheme,
 } from "../settings.js";
 
 /** Max bytes for readText (1 MiB). */
@@ -108,6 +113,55 @@ export function registerIpc(opts: {
       hostId: h.id,
       hostKind: h.kind,
     };
+  });
+
+  ipcMain.handle("shell:menuAction", async (_evt, action: string) => {
+    const win = getMainWindow();
+    switch (action) {
+      case "openWorkspace":
+      case "quickOpen":
+      case "openFilePath":
+        win?.webContents.send("shell:command", { type: action });
+        return true;
+      case "reload":
+        win?.webContents.reload();
+        return true;
+      case "forceReload":
+        win?.webContents.reloadIgnoringCache();
+        return true;
+      case "toggleDevTools":
+        win?.webContents.toggleDevTools();
+        return true;
+      case "resetZoom":
+        if (win) win.webContents.setZoomLevel(0);
+        return true;
+      case "zoomIn":
+        if (win) win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+        return true;
+      case "zoomOut":
+        if (win) win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+        return true;
+      case "toggleFullscreen":
+        if (win) win.setFullScreen(!win.isFullScreen());
+        return true;
+      case "minimize":
+        win?.minimize();
+        return true;
+      case "zoom":
+        if (win) {
+          if (win.isMaximized()) win.unmaximize();
+          else win.maximize();
+        }
+        return true;
+      case "close":
+        win?.close();
+        return true;
+      case "quit":
+        app.quit();
+        return true;
+      default:
+        return false;
+    }
   });
 
   ipcMain.handle("host:getInfo", async () => {
@@ -229,6 +283,28 @@ export function registerIpc(opts: {
     clipboard.writeText(text ?? "");
     return true;
   });
+
+  // ── settings / appearance ──────────────────────────
+  ipcMain.handle("settings:getTheme", async (): Promise<UiTheme> => {
+    try {
+      return await getUiTheme();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "settings:setTheme",
+    async (_evt, theme: unknown): Promise<UiTheme> => {
+      try {
+        const next = await setUiTheme(normalizeTheme(theme));
+        applyWindowChromeTheme(getMainWindow(), next);
+        return next;
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   // ── workspace ──────────────────────────────────────
   ipcMain.handle(

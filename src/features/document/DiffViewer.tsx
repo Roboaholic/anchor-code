@@ -12,6 +12,8 @@ import {
 } from "@/features/shell/orchestrate";
 import type { OpenItem } from "./documentStore";
 import { useDocumentStore } from "./documentStore";
+import { useThemeStore } from "@/features/shell/themeStore";
+import { monacoThemeId } from "@/core/theme/theme";
 import "./monacoSetup";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
@@ -29,6 +31,7 @@ type ComposerState = {
 };
 
 export function DiffViewer({ item }: { item: DiffItem }) {
+  const theme = useThemeStore((s) => s.theme);
   const setDiffActiveFile = useDocumentStore((s) => s.setDiffActiveFile);
   const activePath = item.activeFilePath;
   const activeMeta = item.files.find((f) => f.path === activePath);
@@ -210,83 +213,98 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   };
 
   return (
-    <div className="diff-viewer">
-      <aside className="diff-viewer__files">
-        <div className="diff-viewer__range" title={item.title}>
-          {item.title}
-        </div>
-        <div className="diff-viewer__meta" title={rangeLabel}>
-          {rangeLabel}
-        </div>
-        <div className="files-pane__title">
-          CHANGED FILES · {item.files.length}
-        </div>
-        {item.files.length === 0 ? (
-          <p className="pane-hint">No file changes in this compare.</p>
-        ) : (
-          <ul className="diff-file-list">
-            {item.files.map((f) => (
-              <li key={f.path}>
-                <button
-                  type="button"
-                  className={`diff-file-list__row${
-                    f.path === activePath ? " is-selected" : ""
-                  }`}
-                  onClick={() => setDiffActiveFile(item.id, f.path)}
-                >
-                  <span
-                    className={`diff-file-list__status status-${f.status[0] ?? "M"}`}
+    <div
+      className={`diff-viewer${item.hideFileList ? " diff-viewer--focus" : ""}`}
+    >
+      {item.hideFileList ? null : (
+        <aside className="diff-viewer__files">
+          <div className="diff-viewer__range" title={item.title}>
+            {item.title}
+          </div>
+          <div className="diff-viewer__meta" title={rangeLabel}>
+            {rangeLabel}
+          </div>
+          <div className="files-pane__title">
+            CHANGED FILES · {item.files.length}
+          </div>
+          {item.files.length === 0 ? (
+            <p className="pane-hint">No file changes in this compare.</p>
+          ) : (
+            <ul className="diff-file-list">
+              {item.files.map((f) => (
+                <li key={f.path}>
+                  <button
+                    type="button"
+                    className={`diff-file-list__row${
+                      f.path === activePath ? " is-selected" : ""
+                    }`}
+                    onClick={() => setDiffActiveFile(item.id, f.path)}
                   >
-                    {f.status[0]}
-                  </span>
-                  <span className="diff-file-list__path" title={f.path}>
-                    {f.path}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {activePath && item.head === "worktree" ? (
-          <button
-            type="button"
-            className="btn btn--ghost btn--small diff-open-wt"
-            onClick={() =>
-              void openWorktreeFileFromDiff(item.repoRoot, activePath)
-            }
-          >
-            Open worktree file
-          </button>
-        ) : null}
-      </aside>
+                    <span
+                      className={`diff-file-list__status status-${f.status[0] ?? "M"}`}
+                    >
+                      {f.status[0]}
+                    </span>
+                    <span className="diff-file-list__path" title={f.path}>
+                      {f.path}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {activePath && item.head === "worktree" ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small diff-open-wt"
+              onClick={() =>
+                void openWorktreeFileFromDiff(item.repoRoot, activePath)
+              }
+            >
+              Open worktree file
+            </button>
+          ) : null}
+        </aside>
+      )}
 
       <div className="diff-viewer__main">
         <div className="diff-viewer__toolbar">
-          <div
-            className="diff-viewer__layout-toggle"
-            role="group"
-            aria-label="Diff layout"
-          >
-            <button
-              type="button"
-              className={`diff-viewer__layout-btn${sideBySide ? " is-active" : ""}`}
-              onClick={() => setSideBySide(true)}
-              title="Side-by-side (two columns)"
+          <div className="diff-viewer__toolbar-left">
+            {item.hideFileList && activePath ? (
+              <span className="diff-viewer__focus-title" title={item.title}>
+                {activePath}
+                <span className="diff-viewer__focus-range">
+                  {" "}
+                  · HEAD → worktree
+                </span>
+              </span>
+            ) : null}
+            <div
+              className="diff-viewer__layout-toggle"
+              role="group"
+              aria-label="Diff layout"
             >
-              Side by side
-            </button>
-            <button
-              type="button"
-              className={`diff-viewer__layout-btn${!sideBySide ? " is-active" : ""}`}
-              onClick={() => setSideBySide(false)}
-              title="Inline (single column)"
-            >
-              Inline
-            </button>
+              <button
+                type="button"
+                className={`diff-viewer__layout-btn${sideBySide ? " is-active" : ""}`}
+                onClick={() => setSideBySide(true)}
+                title="Side-by-side (two columns)"
+              >
+                Side by side
+              </button>
+              <button
+                type="button"
+                className={`diff-viewer__layout-btn${!sideBySide ? " is-active" : ""}`}
+                onClick={() => setSideBySide(false)}
+                title="Inline (single column)"
+              >
+                Inline
+              </button>
+            </div>
           </div>
           <span className="diff-viewer__hint">
             {sideBySide
-              ? "Right column · Ctrl/Cmd+M"
+              ? "Right column · Ctrl/Cmd+M · Add comment"
               : "Switch to Side by side to comment"}
           </span>
         </div>
@@ -310,7 +328,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               original={oldText}
               modified={newText}
               language={languageFromPath(activePath)}
-              theme="light"
+              theme={monacoThemeId(theme)}
               keepCurrentOriginalModel={false}
               keepCurrentModifiedModel={false}
               onMount={onDiffMount}
@@ -325,6 +343,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 scrollBeyondLastLine: false,
                 wordWrap: "on",
                 originalEditable: false,
+                renderLineHighlight: "none",
+                selectionHighlight: false,
+                occurrencesHighlight: "off",
+                matchBrackets: "never",
               }}
             />
           )}

@@ -1,3 +1,5 @@
+import { xtermThemeFromCss } from "@/core/theme/theme";
+import { useThemeStore } from "@/features/shell/themeStore";
 import { Icon } from "@/shared/Icon";
 import {
   useCallback,
@@ -29,12 +31,12 @@ export function TerminalPanel() {
   const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
-  const createAgentDefault = useTerminalStore((s) => s.createAgentDefault);
   const closeTab = useTerminalStore((s) => s.closeTab);
   const setActive = useTerminalStore((s) => s.setActive);
   const setMode = useTerminalStore((s) => s.setMode);
   const toggleSessionList = useTerminalStore((s) => s.toggleSessionList);
   const setAgentMenuOpen = useTerminalStore((s) => s.setAgentMenuOpen);
+  const closeAgentMenu = useTerminalStore((s) => s.closeAgentMenu);
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
   const detectAgents = useTerminalStore((s) => s.detectAgents);
   const renameTab = useTerminalStore((s) => s.renameTab);
@@ -62,8 +64,14 @@ export function TerminalPanel() {
       void createShellTab();
       return;
     }
-    void createAgentDefault();
-  }, [workspaceRoot, mode, createShellTab, createAgentDefault]);
+    // Always open the create dialog for a new agent session.
+    setAgentMenuOpen(true);
+  }, [workspaceRoot, mode, createShellTab, setAgentMenuOpen]);
+
+  const onSelectAgentMode = useCallback(() => {
+    setMode("agent");
+    // setMode already opens the dialog when there are zero agent tabs.
+  }, [setMode]);
 
   const onOpenAgent = useCallback(
     (
@@ -118,7 +126,7 @@ export function TerminalPanel() {
               role="tab"
               aria-selected={mode === "agent"}
               className={`terminal-mode-switch__btn${mode === "agent" ? " is-active" : ""}`}
-              onClick={() => setMode("agent")}
+              onClick={onSelectAgentMode}
             >
               Agent
             </button>
@@ -135,13 +143,13 @@ export function TerminalPanel() {
         </div>
       </header>
 
-      {mode === "agent" && agentMenuOpen ? (
+      {agentMenuOpen ? (
         <NewAgentDialog
           profiles={agentProfiles}
           defaultAgentId={defaultAgentId}
           onOpen={onOpenAgent}
           onDetect={() => void detectAgents()}
-          onClose={() => setAgentMenuOpen(false)}
+          onClose={() => closeAgentMenu()}
         />
       ) : null}
 
@@ -167,9 +175,8 @@ export function TerminalPanel() {
               {`$ # Open a workspace to start a shell (cwd = workspace root)`}
             </pre>
           ) : mode === "agent" && modeTabs.length === 0 ? (
-            <pre className="terminal-mock">
-              {`$ # Agent mode — open a detected CLI (Claude, Codex, …)\n$ # Sessions stay alive when you switch back to Terminal`}
-            </pre>
+            // NewAgentDialog covers create flow — no empty mock page.
+            <div className="terminal-panel__body-empty" aria-hidden />
           ) : mode === "terminal" && modeTabs.length === 0 ? (
             <pre className="terminal-mock">$ # Starting shell…</pre>
           ) : (
@@ -300,6 +307,7 @@ function XtermHost({
   active: boolean;
   kind: string;
 }) {
+  const theme = useThemeStore((s) => s.theme);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -315,30 +323,7 @@ function XtermHost({
       fontSize: 12.5,
       fontFamily:
         "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
-      theme: {
-        background: "#fafafa",
-        foreground: "#1a1d23",
-        cursor: "#2563eb",
-        cursorAccent: "#ffffff",
-        selectionBackground: "#cfe0fc",
-        selectionForeground: "#1a1d23",
-        black: "#1a1d23",
-        red: "#b91c1c",
-        green: "#15803d",
-        yellow: "#a16207",
-        blue: "#2563eb",
-        magenta: "#7c3aed",
-        cyan: "#0e7490",
-        white: "#e5e7eb",
-        brightBlack: "#6b7280",
-        brightRed: "#dc2626",
-        brightGreen: "#16a34a",
-        brightYellow: "#ca8a04",
-        brightBlue: "#3b82f6",
-        brightMagenta: "#8b5cf6",
-        brightCyan: "#06b6d4",
-        brightWhite: "#111827",
-      },
+      theme: xtermThemeFromCss(theme),
       allowProposedApi: true,
       windowOptions: {
         setWinLines: false,
@@ -394,6 +379,12 @@ function XtermHost({
       termRef.current = null;
     };
   }, [id, kind, write, resize, applyTitleFromTerm, removeTabLocal]);
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = xtermThemeFromCss(theme);
+  }, [theme]);
+
 
   useEffect(() => {
     if (active) {

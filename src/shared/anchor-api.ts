@@ -2,6 +2,8 @@
 
 export type HostKind = "local" | "wsl" | "ssh";
 
+export type UiTheme = "light" | "dark";
+
 export interface AppVersionInfo {
   app: string;
   electron: string;
@@ -84,6 +86,13 @@ export interface DiffOpenPayload {
   files: DiffFile[];
   /** Current branch at compare time (best-effort). */
   branch?: string | null;
+  /** Prefer this file when opening (defaults to files[0]). */
+  activeFilePath?: string | null;
+  /**
+   * Single-file / focus mode: hide the CHANGED FILES sidebar
+   * (e.g. clicking a row under History → Changes).
+   */
+  hideFileList?: boolean;
 }
 
 export interface FileDiffContent {
@@ -248,6 +257,7 @@ export interface AnchReviewExportPayload {
 export interface AnchorApi {
   shell: {
     getVersion: () => Promise<AppVersionInfo>;
+    menuAction: (action: string) => Promise<boolean>;
     onCommand: (cb: (cmd: { type: string }) => void) => () => void;
   };
   host: {
@@ -401,6 +411,10 @@ export interface AnchorApi {
         kind?: TerminalSessionKind;
       }) => void,
     ) => () => void;
+  };
+  settings: {
+    getTheme: () => Promise<UiTheme>;
+    setTheme: (theme: UiTheme) => Promise<UiTheme>;
   };
   agent: {
     listProfiles: () => Promise<AgentCliProfile[]>;

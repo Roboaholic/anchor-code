@@ -39,6 +39,7 @@ export type OpenItem =
       head: string | "worktree";
       files: DiffFile[];
       activeFilePath: string | null;
+      branch?: string | null;
     };
 
 export interface DocumentState {
@@ -170,6 +171,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       head: payload.head,
       files: payload.files,
       activeFilePath: payload.files[0]?.path ?? null,
+      branch: payload.branch ?? null,
     };
     set((s) => {
       const without = s.openItems.filter((i) => i.id !== id);

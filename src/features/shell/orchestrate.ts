@@ -122,10 +122,12 @@ export async function addCommentFromSelection(input: {
   body: string;
   /** End current session (export) and open a fresh one before saving. */
   forceNewSession?: boolean;
+  /** When set (e.g. from Diff), skip locateGitRoot. */
+  repoRoot?: string;
 }): Promise<void> {
-  const repoRoot = await window.anchor.annotations.locateGitRoot(
-    input.filePath,
-  );
+  const repoRoot =
+    input.repoRoot ??
+    (await window.anchor.annotations.locateGitRoot(input.filePath));
   if (!repoRoot) {
     useAnnotationsStore.setState({
       toast: "File is not inside a git repository",

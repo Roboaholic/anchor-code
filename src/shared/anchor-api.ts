@@ -82,6 +82,8 @@ export interface DiffOpenPayload {
   head: string | "worktree";
   title: string;
   files: DiffFile[];
+  /** Current branch at compare time (best-effort). */
+  branch?: string | null;
 }
 
 export interface FileDiffContent {

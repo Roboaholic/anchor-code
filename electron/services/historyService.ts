@@ -56,6 +56,7 @@ export interface DiffOpenPayload {
   head: string | "worktree";
   title: string;
   files: DiffFile[];
+  branch?: string | null;
 }
 
 export interface FileDiffContent {
@@ -265,6 +266,25 @@ export async function loadRepoStatus(
   return { repoRoot, entries, modified, added, deleted, untracked };
 }
 
+async function resolveBranch(
+  host: HostSession,
+  repoRoot: string,
+): Promise<string | null> {
+  try {
+    const r = await host.run(repoRoot, "git", [
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ]);
+    if (r.code !== 0) return null;
+    const b = r.stdout.trim();
+    if (!b || b === "HEAD") return null;
+    return b;
+  } catch {
+    return null;
+  }
+}
+
 function short(hash: string): string {
   if (hash === "HEAD" || hash === "worktree") return hash;
   return hash.slice(0, 7);
@@ -318,12 +338,14 @@ export async function compareCommits(
     );
   }
   const files = parseNameStatus(result.stdout);
+  const branch = await resolveBranch(host, repoRoot);
   return {
     repoRoot,
     base,
     head,
     title: formatCompareTitle(short(base), head, short(head)),
     files,
+    branch,
   };
 }
 
@@ -351,12 +373,14 @@ export async function compareToWorktree(
   const tracked = parseNameStatus(result.stdout);
   const untracked = await untrackedAsAdded(host, repoRoot);
   const files = mergeDiffFiles(tracked, untracked);
+  const branch = await resolveBranch(host, repoRoot);
   return {
     repoRoot,
     base,
     head: "worktree",
     title: formatCompareTitle(short(base), "worktree"),
     files,
+    branch,
   };
 }
 

@@ -150,11 +150,11 @@ function RepoCard({
   const swap = useHistoryStore((s) => s.swap);
   const refreshStatus = useHistoryStore((s) => s.refreshStatus);
   const removeRecent = useHistoryStore((s) => s.removeRecent);
-
   const dirty = dirtyCount(card);
   const label = selectionLabelForCard(card);
   const canCompare = card.selectedHashes.length > 0 && !card.comparing;
   const entries = statusEntries(card);
+  const selectionFull = card.selectedHashes.length >= 2;
 
   return (
     <div className={`repo-row${card.expanded ? " is-expanded" : ""}`}>
@@ -205,7 +205,7 @@ function RepoCard({
 
       {card.expanded ? (
         <div className="repo-row__body">
-          {/* CHANGES — default open */}
+          {/* CHANGES — default open: file list only */}
           <div className="repo-block">
             <div className="repo-block__head">
               <button
@@ -221,25 +221,16 @@ function RepoCard({
                   Changes{dirty > 0 ? ` · ${dirty}` : ""}
                 </span>
               </button>
-              <div className="repo-block__head-actions">
+              {card.changesOpen ? (
                 <button
                   type="button"
-                  className="btn btn--ghost btn--small"
+                  className="repo-block__text-btn"
                   onClick={() => void refreshStatus(card.root)}
                   title="Refresh working tree status"
                 >
                   Refresh
                 </button>
-                <button
-                  type="button"
-                  className="btn btn--accent btn--small"
-                  disabled={!canCompare}
-                  onClick={() => void openHistoryCompare(card.root)}
-                  title="Start compare from current selection"
-                >
-                  {card.comparing ? "…" : "Compare"}
-                </button>
-              </div>
+              ) : null}
             </div>
             {card.changesOpen ? (
               <div className="repo-block__body">
@@ -249,36 +240,6 @@ function RepoCard({
                 {card.statusState === "loading" ? (
                   <p className="pane-hint">Loading status…</p>
                 ) : null}
-
-                <label
-                  className={`commit-row commit-row--wt${
-                    card.selectedHashes.includes(WORKTREE_SELECTION)
-                      ? " is-selected"
-                      : ""
-                  }${dirty === 0 ? " is-disabled" : ""}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={card.selectedHashes.includes(WORKTREE_SELECTION)}
-                    disabled={dirty === 0}
-                    onChange={() =>
-                      toggleCommit(card.root, WORKTREE_SELECTION)
-                    }
-                  />
-                  <span className="commit-row__hash">wt</span>
-                  <span className="commit-row__subject">
-                    Uncommitted
-                    {dirty > 0 ? ` · ${dirty}` : " · clean"}
-                  </span>
-                  <span className="commit-row__meta">
-                    {card.selectedHashes.includes(WORKTREE_SELECTION)
-                      ? card.selectedHashes.indexOf(WORKTREE_SELECTION) === 0
-                        ? "base"
-                        : "head"
-                      : ""}
-                  </span>
-                </label>
-
                 {entries.length > 0 ? (
                   <ul className="wt-list">
                     {entries.map((e) => (
@@ -307,7 +268,7 @@ function RepoCard({
             ) : null}
           </div>
 
-          {/* HISTORY — default closed */}
+          {/* HISTORY — default closed; selection + uncommitted checkbox */}
           <div className="repo-block">
             <div className="repo-block__head">
               <button
@@ -332,12 +293,13 @@ function RepoCard({
                 ) : null}
 
                 <div className="history-pane__actions">
-                  <div
-                    className="history-pane__label"
-                    title={label ?? undefined}
-                  >
-                    {label ?? "Select range · max 2"}
-                  </div>
+                  {label ? (
+                    <span className="history-pane__label" title={label}>
+                      {label}
+                    </span>
+                  ) : (
+                    <span className="history-pane__label history-pane__label--empty" />
+                  )}
                   <div className="history-pane__btns">
                     <button
                       type="button"
@@ -352,24 +314,75 @@ function RepoCard({
                       className="btn btn--accent btn--small"
                       disabled={!canCompare}
                       onClick={() => void openHistoryCompare(card.root)}
+                      title="Start compare from current selection"
                     >
-                      {card.comparing ? "…" : "Start Compare"}
+                      {card.comparing ? "…" : "Compare"}
                     </button>
                   </div>
                 </div>
-
                 <ul className="commit-list">
+                  <li>
+                    <label
+                      className={`commit-row commit-row--wt${
+                        card.selectedHashes.includes(WORKTREE_SELECTION)
+                          ? " is-selected"
+                          : ""
+                      }${
+                        dirty === 0 ||
+                        (selectionFull &&
+                          !card.selectedHashes.includes(WORKTREE_SELECTION))
+                          ? " is-disabled"
+                          : ""
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={card.selectedHashes.includes(
+                          WORKTREE_SELECTION,
+                        )}
+                        disabled={
+                          dirty === 0 ||
+                          (selectionFull &&
+                            !card.selectedHashes.includes(WORKTREE_SELECTION))
+                        }
+                        onChange={() =>
+                          toggleCommit(card.root, WORKTREE_SELECTION)
+                        }
+                      />
+                      <span className="commit-row__hash">
+                        wt
+                        {card.selectedHashes.includes(WORKTREE_SELECTION) ? (
+                          <span className="commit-row__badge">
+                            {card.selectedHashes.indexOf(WORKTREE_SELECTION) ===
+                            0
+                              ? "base"
+                              : "head"}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="commit-row__subject">
+                        Uncommitted changes
+                        {dirty > 0 ? ` · ${dirty}` : " · clean"}
+                      </span>
+                      <span className="commit-row__meta">now</span>
+                    </label>
+                  </li>
+
                   {card.commits.map((c) => {
                     const checked = card.selectedHashes.includes(c.hash);
                     const order = card.selectedHashes.indexOf(c.hash);
+                    const lockedOut = selectionFull && !checked;
                     return (
                       <li key={c.hash}>
                         <label
-                          className={`commit-row${checked ? " is-selected" : ""}`}
+                          className={`commit-row${checked ? " is-selected" : ""}${
+                            lockedOut ? " is-disabled" : ""
+                          }`}
                         >
                           <input
                             type="checkbox"
                             checked={checked}
+                            disabled={lockedOut}
                             onChange={() => toggleCommit(card.root, c.hash)}
                           />
                           <span className="commit-row__hash">

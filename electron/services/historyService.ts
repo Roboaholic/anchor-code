@@ -17,7 +17,8 @@ import {
 import { HostError } from "../host/types.js";
 
 const LOG_LIMIT = 200;
-const SCAN_DEPTH = 3;
+/** Nested .git under workspace. Path like hardware/ambarella/cv5/repo needs ≥4. */
+const SCAN_DEPTH = 6;
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",

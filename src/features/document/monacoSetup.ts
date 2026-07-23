@@ -21,21 +21,41 @@ function registerAnchorThemes(m: typeof monaco): void {
   m.editor.defineTheme("anchor-dark", {
     base: "vs-dark",
     inherit: true,
-    rules: [
-      { token: "", foreground: "d4d4d4", background: "171718" },
+        rules: [
+      // Default text / identifiers (C functions & user types stay here without LSP)
+      { token: "", foreground: "d4d4d4" },
+      { token: "identifier", foreground: "d4d4d4" },
+      // Comments
       { token: "comment", foreground: "6a9955", fontStyle: "italic" },
+      { token: "comment.doc", foreground: "6a9955", fontStyle: "italic" },
+      // Strings & chars
       { token: "string", foreground: "ce9178" },
       { token: "string.escape", foreground: "d7ba7d" },
+      { token: "string.invalid", foreground: "f44747" },
+      { token: "string.raw", foreground: "ce9178" },
+      { token: "string.raw.begin", foreground: "ce9178" },
+      { token: "string.raw.end", foreground: "ce9178" },
+      // Preprocessor (#define, #if, #include, …) — VS Code purple/magenta
+      { token: "keyword.directive", foreground: "c586c0" },
+      { token: "keyword.directive.include", foreground: "c586c0" },
+      { token: "keyword.directive.include.begin", foreground: "c586c0" },
+      { token: "keyword.directive.include.end", foreground: "ce9178" },
+      // Keywords (if, struct, typedef, return, …) — blue
       { token: "keyword", foreground: "569cd6" },
-      { token: "keyword.control", foreground: "c586c0" },
+      // Numbers
       { token: "number", foreground: "b5cea8" },
-      { token: "regexp", foreground: "d16969" },
+      { token: "number.hex", foreground: "b5cea8" },
+      { token: "number.octal", foreground: "b5cea8" },
+      { token: "number.binary", foreground: "b5cea8" },
+      { token: "number.float", foreground: "b5cea8" },
+      // Types / storage when tagged (other languages)
       { token: "type", foreground: "4ec9b0" },
       { token: "class", foreground: "4ec9b0" },
-      { token: "interface", foreground: "4ec9b0" },
       { token: "struct", foreground: "4ec9b0" },
+      { token: "interface", foreground: "4ec9b0" },
       { token: "enum", foreground: "4ec9b0" },
       { token: "typeParameter", foreground: "4ec9b0" },
+      // Functions when tagged (TS/JS semantic-ish monarch)
       { token: "function", foreground: "dcdcaa" },
       { token: "method", foreground: "dcdcaa" },
       { token: "member", foreground: "dcdcaa" },
@@ -43,17 +63,17 @@ function registerAnchorThemes(m: typeof monaco): void {
       { token: "parameter", foreground: "9cdcfe" },
       { token: "property", foreground: "9cdcfe" },
       { token: "constant", foreground: "4fc1ff" },
-      { token: "operator", foreground: "d4d4d4" },
+      // Punctuation
       { token: "delimiter", foreground: "d4d4d4" },
+      { token: "delimiter.bracket", foreground: "ffd700" },
+      { token: "annotation", foreground: "dcdcaa" },
       { token: "tag", foreground: "569cd6" },
       { token: "attribute.name", foreground: "9cdcfe" },
       { token: "attribute.value", foreground: "ce9178" },
-      { token: "meta.preprocessor", foreground: "c586c0" },
-      { token: "annotation", foreground: "dcdcaa" },
+      { token: "regexp", foreground: "d16969" },
       { token: "emphasis", fontStyle: "italic" },
       { token: "strong", fontStyle: "bold" },
-    ],
-    colors: {
+    ],    colors: {
       // Editor chrome follows shell zinc (not VS Code blue workbench)
       "editor.background": "#171718",
       "editor.foreground": "#d4d4d4",
@@ -120,21 +140,41 @@ function registerAnchorThemes(m: typeof monaco): void {
   m.editor.defineTheme("anchor-dark-modern", {
     base: "vs-dark",
     inherit: true,
-    rules: [
-      { token: "", foreground: "cccccc", background: "1f1f1f" },
+        rules: [
+      // Default text / identifiers (C functions & user types stay here without LSP)
+      { token: "", foreground: "d4d4d4" },
+      { token: "identifier", foreground: "d4d4d4" },
+      // Comments
       { token: "comment", foreground: "6a9955", fontStyle: "italic" },
+      { token: "comment.doc", foreground: "6a9955", fontStyle: "italic" },
+      // Strings & chars
       { token: "string", foreground: "ce9178" },
       { token: "string.escape", foreground: "d7ba7d" },
+      { token: "string.invalid", foreground: "f44747" },
+      { token: "string.raw", foreground: "ce9178" },
+      { token: "string.raw.begin", foreground: "ce9178" },
+      { token: "string.raw.end", foreground: "ce9178" },
+      // Preprocessor (#define, #if, #include, …) — VS Code purple/magenta
+      { token: "keyword.directive", foreground: "c586c0" },
+      { token: "keyword.directive.include", foreground: "c586c0" },
+      { token: "keyword.directive.include.begin", foreground: "c586c0" },
+      { token: "keyword.directive.include.end", foreground: "ce9178" },
+      // Keywords (if, struct, typedef, return, …) — blue
       { token: "keyword", foreground: "569cd6" },
-      { token: "keyword.control", foreground: "c586c0" },
+      // Numbers
       { token: "number", foreground: "b5cea8" },
-      { token: "regexp", foreground: "d16969" },
+      { token: "number.hex", foreground: "b5cea8" },
+      { token: "number.octal", foreground: "b5cea8" },
+      { token: "number.binary", foreground: "b5cea8" },
+      { token: "number.float", foreground: "b5cea8" },
+      // Types / storage when tagged (other languages)
       { token: "type", foreground: "4ec9b0" },
       { token: "class", foreground: "4ec9b0" },
-      { token: "interface", foreground: "4ec9b0" },
       { token: "struct", foreground: "4ec9b0" },
+      { token: "interface", foreground: "4ec9b0" },
       { token: "enum", foreground: "4ec9b0" },
       { token: "typeParameter", foreground: "4ec9b0" },
+      // Functions when tagged (TS/JS semantic-ish monarch)
       { token: "function", foreground: "dcdcaa" },
       { token: "method", foreground: "dcdcaa" },
       { token: "member", foreground: "dcdcaa" },
@@ -142,17 +182,17 @@ function registerAnchorThemes(m: typeof monaco): void {
       { token: "parameter", foreground: "9cdcfe" },
       { token: "property", foreground: "9cdcfe" },
       { token: "constant", foreground: "4fc1ff" },
-      { token: "operator", foreground: "d4d4d4" },
+      // Punctuation
       { token: "delimiter", foreground: "d4d4d4" },
+      { token: "delimiter.bracket", foreground: "ffd700" },
+      { token: "annotation", foreground: "dcdcaa" },
       { token: "tag", foreground: "569cd6" },
       { token: "attribute.name", foreground: "9cdcfe" },
       { token: "attribute.value", foreground: "ce9178" },
-      { token: "meta.preprocessor", foreground: "c586c0" },
-      { token: "annotation", foreground: "dcdcaa" },
+      { token: "regexp", foreground: "d16969" },
       { token: "emphasis", fontStyle: "italic" },
       { token: "strong", fontStyle: "bold" },
-    ],
-    colors: {
+    ],    colors: {
       "editor.background": "#1f1f1f",
       "editor.foreground": "#cccccc",
       "editorLineNumber.foreground": "#6e7681",
@@ -217,39 +257,42 @@ function registerAnchorThemes(m: typeof monaco): void {
   m.editor.defineTheme("anchor-light-modern", {
     base: "vs",
     inherit: true,
-    rules: [
-      { token: "", foreground: "000000", background: "ffffff" },
+        rules: [
+      { token: "", foreground: "000000" },
+      { token: "identifier", foreground: "000000" },
       { token: "comment", foreground: "008000", fontStyle: "italic" },
+      { token: "comment.doc", foreground: "008000", fontStyle: "italic" },
       { token: "string", foreground: "a31515" },
       { token: "string.escape", foreground: "ee0000" },
+      { token: "string.invalid", foreground: "cd3131" },
+      { token: "string.raw", foreground: "a31515" },
+      { token: "keyword.directive", foreground: "af00db" },
+      { token: "keyword.directive.include", foreground: "af00db" },
+      { token: "keyword.directive.include.begin", foreground: "af00db" },
+      { token: "keyword.directive.include.end", foreground: "a31515" },
       { token: "keyword", foreground: "0000ff" },
-      { token: "keyword.control", foreground: "af00db" },
       { token: "number", foreground: "098658" },
-      { token: "regexp", foreground: "811f3f" },
+      { token: "number.hex", foreground: "098658" },
+      { token: "number.octal", foreground: "098658" },
+      { token: "number.binary", foreground: "098658" },
+      { token: "number.float", foreground: "098658" },
       { token: "type", foreground: "267f99" },
       { token: "class", foreground: "267f99" },
-      { token: "interface", foreground: "267f99" },
       { token: "struct", foreground: "267f99" },
-      { token: "enum", foreground: "267f99" },
-      { token: "typeParameter", foreground: "267f99" },
       { token: "function", foreground: "795e26" },
       { token: "method", foreground: "795e26" },
-      { token: "member", foreground: "795e26" },
       { token: "variable", foreground: "001080" },
       { token: "parameter", foreground: "001080" },
       { token: "property", foreground: "001080" },
       { token: "constant", foreground: "0070c1" },
-      { token: "operator", foreground: "000000" },
       { token: "delimiter", foreground: "000000" },
+      { token: "delimiter.bracket", foreground: "0431fa" },
+      { token: "annotation", foreground: "795e26" },
       { token: "tag", foreground: "800000" },
       { token: "attribute.name", foreground: "e50000" },
       { token: "attribute.value", foreground: "0000ff" },
-      { token: "meta.preprocessor", foreground: "af00db" },
-      { token: "annotation", foreground: "795e26" },
-      { token: "emphasis", fontStyle: "italic" },
-      { token: "strong", fontStyle: "bold" },
-    ],
-    colors: {
+      { token: "regexp", foreground: "811f3f" },
+    ],    colors: {
       "editor.background": "#ffffff",
       "editor.foreground": "#3b3b3b",
       "editorLineNumber.foreground": "#6e7681",

@@ -354,7 +354,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 selectionHighlight: false,
                 occurrencesHighlight: "off",
                 matchBrackets: "never",
-                unicodeHighlight: {
+                bracketPairColorization: { enabled: true },
+            guides: { bracketPairs: true },
+            unicodeHighlight: {
                   ambiguousCharacters: false,
                   invisibleCharacters: false,
                   nonBasicASCII: false,

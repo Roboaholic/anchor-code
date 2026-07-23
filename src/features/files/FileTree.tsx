@@ -30,14 +30,14 @@ export function FileTree() {
         <div className="files-pane__actions">
           <button
             type="button"
-            className="btn btn--ghost btn--small"
+            className="btn btn--accent files-pane__open-ws"
             onClick={() =>
               void import("@/features/shell/orchestrate").then((m) =>
                 m.openWorkspaceFromPicker(),
               )
             }
           >
-            <Icon name="folder-opened" className="btn__icon" />
+            <Icon name="folder-opened" className="files-pane__open-ws-icon" />
             Open Workspace
           </button>
         </div>
@@ -47,24 +47,36 @@ export function FileTree() {
         {recent.length > 0 ? (
           <div className="recent-list">
             <div className="files-pane__title">RECENT</div>
-            <ul className="file-tree">
-              {recent.map((r) => (
-                <li key={`${r.hostProfileId}:${r.path}`}>
-                  <button
-                    type="button"
-                    className="file-tree__row"
-                    title={`${r.path} (${r.hostProfileId})`}
-                    onClick={() =>
-                      void openWorkspacePath(r.path, r.hostProfileId)
-                    }
-                  >
-                    <Icon name="folder" className="file-tree__icon" />
-                    <span className="file-tree__name">
-                      {r.path.split(/[/\\]/).filter(Boolean).pop() ?? r.path}
-                    </span>
-                  </button>
-                </li>
-              ))}
+            <ul className="file-tree recent-list__items">
+              {recent.map((r) => {
+                const name =
+                  r.path.split(/[/\\]/).filter(Boolean).pop() ?? r.path;
+                const hostLabel =
+                  r.hostProfileId === "local-default"
+                    ? "local"
+                    : r.hostProfileId === "wsl-default"
+                      ? "wsl"
+                      : r.hostProfileId;
+                return (
+                  <li key={`${r.hostProfileId}:${r.path}`}>
+                    <button
+                      type="button"
+                      className="file-tree__row recent-row"
+                      title={`${r.path} (${hostLabel})`}
+                      onClick={() =>
+                        void openWorkspacePath(r.path, r.hostProfileId)
+                      }
+                    >
+                      <Icon name="folder" className="file-tree__icon" />
+                      <span className="recent-row__text">
+                        <span className="recent-row__name">{name}</span>
+                        <span className="recent-row__path">{r.path}</span>
+                      </span>
+                      <span className="recent-row__host">{hostLabel}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : null}

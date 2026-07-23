@@ -37,7 +37,7 @@ export function HistoryPane() {
   if (!workspaceRoot) {
     return (
       <div className="empty-pane">
-        <h2 className="empty-pane__title">History (Git)</h2>
+        <h2 className="empty-pane__title">History</h2>
         <p className="empty-pane__hint">Open a workspace to discover git roots.</p>
       </div>
     );
@@ -46,7 +46,7 @@ export function HistoryPane() {
   if (discoverStatus === "loading" && repos.length === 0) {
     return (
       <div className="empty-pane">
-        <h2 className="empty-pane__title">History (Git)</h2>
+        <h2 className="empty-pane__title">History</h2>
         <p className="empty-pane__hint">Scanning for repositories…</p>
       </div>
     );
@@ -55,7 +55,7 @@ export function HistoryPane() {
   if (discoverStatus === "error" && repos.length === 0) {
     return (
       <div className="empty-pane">
-        <h2 className="empty-pane__title">History (Git)</h2>
+        <h2 className="empty-pane__title">History</h2>
         <p className="empty-pane__hint pane-hint--error">
           {discoverError ?? "Failed to scan repositories"}
         </p>
@@ -73,7 +73,7 @@ export function HistoryPane() {
   if (repos.length === 0) {
     return (
       <div className="empty-pane">
-        <h2 className="empty-pane__title">History (Git)</h2>
+        <h2 className="empty-pane__title">History</h2>
         <p className="empty-pane__hint">
           No git root found under this workspace. Reading still works.
         </p>

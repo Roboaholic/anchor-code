@@ -402,6 +402,8 @@ export function CodeViewer({
             occurrencesHighlight: "off",
             matchBrackets: "never",
             // Don't flag fullwidth Chinese punctuation (（） etc.) as errors.
+            bracketPairColorization: { enabled: true },
+            guides: { bracketPairs: true },
             unicodeHighlight: {
               ambiguousCharacters: false,
               invisibleCharacters: false,

@@ -9,7 +9,7 @@ import { useShellStore } from "./shellStore";
 const MODES: { id: LeftMode; label: string; icon: CodiconName }[] = [
   { id: "files", label: "FILES", icon: "files" },
   { id: "comments", label: "COMMENTS", icon: "comment-discussion" },
-  { id: "history", label: "HISTORY (GIT)", icon: "history" },
+  { id: "history", label: "HISTORY", icon: "history" },
 ];
 
 export function LeftNav() {

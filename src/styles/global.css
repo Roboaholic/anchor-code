@@ -1045,16 +1045,113 @@ button.search-field:hover {
 }
 
 .document-area__content--fill > .welcome {
-  padding: 28px 36px 48px;
+  padding: 0;
   overflow: auto;
   flex: 1;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-panel);
 }
 
-
-
 .welcome {
-  max-width: 640px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.welcome__inner {
+  width: min(520px, 100%);
+  margin: 0;
+  padding: min(10vh, 72px) 40px 48px;
+}
+
+.welcome__title {
+  margin: 0 0 12px;
+  font-family: "EB Garamond", "Palatino Linotype", "Book Antiqua", Palatino,
+    "Times New Roman", Georgia, "Noto Serif", serif;
+  font-size: clamp(34px, 4.5vw, 44px);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--brand);
+}
+
+.welcome__lead {
+  margin: 0 0 24px;
+  max-width: 36em;
+  font-size: 14.5px;
+  line-height: 1.55;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.welcome__cta {
+  margin: 0 0 28px;
+}
+
+.welcome__cta-btn {
+  height: 36px;
+  padding: 0 14px;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.welcome__cta-icon,
+.welcome__cta-btn .codicon {
+  font-size: 16px !important;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+}
+
+.welcome__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.welcome__steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-muted);
+}
+
+.welcome__step-n {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.welcome__step-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .empty-center {
@@ -1287,8 +1384,90 @@ button.search-field:hover {
 }
 
 .files-pane__actions {
-  padding: 0 12px 8px;
+  padding: 4px 12px 12px;
 }
+
+.files-pane__open-ws {
+  width: 100%;
+  height: 36px;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.files-pane__open-ws-icon {
+  font-size: 18px !important;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+}
+
+.files-pane__open-ws .codicon {
+  font-size: 18px !important;
+}
+
+.recent-list {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.recent-list__items {
+  padding: 0 4px 8px;
+}
+
+.recent-row {
+  align-items: flex-start !important;
+  min-height: 40px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+  gap: 8px !important;
+}
+
+.recent-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.recent-row__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-row__path {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  line-height: 1.3;
+}
+
+.recent-row__host {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+
 
 .welcome__steps {
   margin: 0 0 24px;
@@ -1301,14 +1480,7 @@ button.search-field:hover {
   margin-bottom: 8px;
 }
 
-.welcome__meta {
-  margin: 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
+
 
 /* 鈹€鈹€ Terminal panel (light, matches workbench) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 

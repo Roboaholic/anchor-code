@@ -177,51 +177,63 @@ function ActiveView({
 function WelcomeView() {
   return (
     <article className="welcome">
-      <h1 className="welcome__title">Anchor Code</h1>
-      <p className="welcome__lead">
-        Human-in-the-loop workbench for{" "}
-        <strong>auditing AI coding output</strong> and feeding structured
-        feedback back to AI CLIs — not a general-purpose IDE.
-      </p>
-
-      <p className="welcome__cta">
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={() =>
-            void import("@/features/shell/orchestrate").then((m) =>
-              m.openWorkspaceFromPicker(),
-            )
-          }
-        >
-          <Icon name="folder-opened" className="btn__icon" />
-          Open Workspace
-        </button>
-      </p>
-
-      <ol className="welcome__steps">
-        <li>
-          <strong>Open a workspace</strong> and read code / Markdown.
-        </li>
-        <li>
-          <strong>History</strong> — select two commits (or one vs worktree) and
-          Compare.
-        </li>
-        <li>
-          <strong>Annotate</strong> — select text, Add comment; YAML under{" "}
-          <code>.anchor-code/</code>.
-        </li>
-        <li>
-          <strong>Copy YAML path</strong> into the right terminal for your AI
+      <div className="welcome__inner">
+        <h1 className="welcome__title">Anchor Code</h1>
+        <p className="welcome__lead">
+          Audit AI coding output and send structured feedback back to your AI
           CLI.
-        </li>
-      </ol>
+        </p>
 
-      <p className="welcome__meta">
-        Multi-repo only appears in History. Central pane never switches
-        repositories globally. Run via <code>npm run dev</code> (Electron), not
-        a plain browser tab on localhost.
-      </p>
+        <div className="welcome__cta">
+          <button
+            type="button"
+            className="btn btn--accent welcome__cta-btn"
+            onClick={() =>
+              void import("@/features/shell/orchestrate").then((m) =>
+                m.openWorkspaceFromPicker(),
+              )
+            }
+          >
+            <Icon name="folder-opened" className="welcome__cta-icon" />
+            Open Workspace
+          </button>
+        </div>
+
+        <ol className="welcome__steps">
+          <li>
+            <span className="welcome__step-n" aria-hidden>
+              1
+            </span>
+            <span className="welcome__step-body">
+              Open a workspace and browse code.
+            </span>
+          </li>
+          <li>
+            <span className="welcome__step-n" aria-hidden>
+              2
+            </span>
+            <span className="welcome__step-body">
+              History: pick commits and Compare.
+            </span>
+          </li>
+          <li>
+            <span className="welcome__step-n" aria-hidden>
+              3
+            </span>
+            <span className="welcome__step-body">
+              Select text and add comments.
+            </span>
+          </li>
+          <li>
+            <span className="welcome__step-n" aria-hidden>
+              4
+            </span>
+            <span className="welcome__step-body">
+              Send comments to the agent terminal.
+            </span>
+          </li>
+        </ol>
+      </div>
     </article>
   );
 }

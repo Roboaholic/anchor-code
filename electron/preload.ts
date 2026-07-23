@@ -156,6 +156,8 @@ const anchor = {
   workspace: {
     pickFolder: (): Promise<string | null> =>
       ipcRenderer.invoke("workspace:pickFolder"),
+    pickFile: (): Promise<string | null> =>
+      ipcRenderer.invoke("workspace:pickFile"),
     open: (
       pathOrArgs: string | { path: string; hostProfileId?: string },
     ): Promise<{
@@ -172,6 +174,15 @@ const anchor = {
       ipcRenderer.invoke("workspace:readText", path),
     stat: (path: string): Promise<StatResult> =>
       ipcRenderer.invoke("workspace:stat", path),
+    findFiles: (args?: {
+      root?: string;
+      maxFiles?: number;
+    }): Promise<{
+      root: string;
+      files: string[];
+      truncated: boolean;
+      source?: "git" | "walk";
+    }> => ipcRenderer.invoke("workspace:findFiles", args ?? {}),
   },
   history: {
     discover: (workspaceRoot: string): Promise<RepoInfo[]> =>

@@ -1,3 +1,4 @@
+import { useCallback, useState, type DragEvent } from "react";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 import { CodeViewer } from "./CodeViewer";
@@ -5,50 +6,109 @@ import { DiffViewer } from "./DiffViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { useDocumentStore, type OpenItem } from "./documentStore";
 
+const TAB_DND_MIME = "application/x-anchor-tab-index";
+
 export function DocumentArea() {
   const openItems = useDocumentStore((s) => s.openItems);
   const activeId = useDocumentStore((s) => s.activeId);
   const setActive = useDocumentStore((s) => s.setActive);
   const closeItem = useDocumentStore((s) => s.closeItem);
+  const reorderTabs = useDocumentStore((s) => s.reorderTabs);
   const setMdViewMode = useDocumentStore((s) => s.setMdViewMode);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
 
   const active = openItems.find((i) => i.id === activeId) ?? openItems[0] ?? null;
+
+  const onDragStart = useCallback(
+    (index: number, e: DragEvent<HTMLDivElement>) => {
+      setDragFrom(index);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData(TAB_DND_MIME, String(index));
+      // Fallback for environments that strip custom MIME types
+      e.dataTransfer.setData("text/plain", String(index));
+    },
+    [],
+  );
+
+  const onDragOver = useCallback(
+    (index: number, e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (dragOver !== index) setDragOver(index);
+    },
+    [dragOver],
+  );
+
+  const onDrop = useCallback(
+    (toIndex: number, e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const raw =
+        e.dataTransfer.getData(TAB_DND_MIME) ||
+        e.dataTransfer.getData("text/plain");
+      const fromIndex = Number.parseInt(raw, 10);
+      setDragFrom(null);
+      setDragOver(null);
+      if (Number.isNaN(fromIndex)) return;
+      reorderTabs(fromIndex, toIndex);
+    },
+    [reorderTabs],
+  );
+
+  const onDragEnd = useCallback(() => {
+    setDragFrom(null);
+    setDragOver(null);
+  }, []);
 
   return (
     <section className="document-area">
       <div className="tabs" role="tablist" aria-label="Open items">
-        {openItems.map((item) => (
-          <div
-            key={item.id}
-            className={`tab${item.id === active?.id ? " is-active" : ""}`}
-            role="tab"
-            aria-selected={item.id === active?.id}
-            onClick={() => setActive(item.id)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setActive(item.id);
-              }
-            }}
-            tabIndex={0}
-          >
-            <Icon name={tabIcon(item)} className="tab__icon" />
-            <span className="tab__label" title={itemTitle(item)}>
-              {item.title}
-            </span>
-            <button
-              type="button"
-              className="tab__close"
-              aria-label={`Close ${item.title}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                closeItem(item.id);
+        {openItems.map((item, index) => {
+          const isDragging = dragFrom === index;
+          const isOver = dragOver === index && dragFrom !== null && dragFrom !== index;
+          return (
+            <div
+              key={item.id}
+              className={`tab${item.id === active?.id ? " is-active" : ""}${
+                isDragging ? " is-dragging" : ""
+              }${isOver ? " is-drag-over" : ""}`}
+              role="tab"
+              aria-selected={item.id === active?.id}
+              draggable
+              onDragStart={(e) => onDragStart(index, e)}
+              onDragOver={(e) => onDragOver(index, e)}
+              onDrop={(e) => onDrop(index, e)}
+              onDragEnd={onDragEnd}
+              onClick={() => setActive(item.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActive(item.id);
+                }
               }}
+              tabIndex={0}
+              title={itemTitle(item)}
             >
-              <Icon name="close" />
-            </button>
-          </div>
-        ))}
+              <Icon name={tabIcon(item)} className="tab__icon" />
+              <span className="tab__label" title={itemTitle(item)}>
+                {item.title}
+              </span>
+              <button
+                type="button"
+                className="tab__close"
+                aria-label={`Close ${item.title}`}
+                draggable={false}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeItem(item.id);
+                }}
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       <div className="document-area__content document-area__content--fill">

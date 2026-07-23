@@ -99,10 +99,28 @@ function buildMenu() {
       submenu: [
         {
           label: "Open Workspace…",
-          accelerator: "CmdOrCtrl+O",
+          accelerator: "CmdOrCtrl+Shift+O",
           click: () => {
             mainWindow?.webContents.send("shell:command", {
               type: "openWorkspace",
+            });
+          },
+        },
+        {
+          label: "Go to File…",
+          accelerator: "CmdOrCtrl+P",
+          click: () => {
+            mainWindow?.webContents.send("shell:command", {
+              type: "quickOpen",
+            });
+          },
+        },
+        {
+          label: "Open File…",
+          accelerator: "CmdOrCtrl+O",
+          click: () => {
+            mainWindow?.webContents.send("shell:command", {
+              type: "openFilePath",
             });
           },
         },

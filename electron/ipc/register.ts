@@ -44,6 +44,7 @@ import {
   buildAgentLaunchArgs,
   discoverAgentLaunchOptions,
 } from "../services/agentLaunch.js";
+import { findWorkspaceFiles } from "../services/fileIndex.js";
 import {
   getHostProfile,
   loadSettings,
@@ -373,6 +374,68 @@ export function registerIpc(opts: {
       rethrowIpc(err);
     }
   });
+
+  ipcMain.handle(
+    "workspace:findFiles",
+    async (
+      _evt,
+      args?: { root?: string; maxFiles?: number },
+    ): Promise<{
+      root: string;
+      files: string[];
+      truncated: boolean;
+      source: "git" | "walk";
+    }> => {
+      try {
+        const h = host();
+        const root =
+          (args?.root && typeof args.root === "string" && args.root) ||
+          h.workspaceRoot;
+        if (!root) {
+          throw new HostError("failed", "No workspace open");
+        }
+        return await findWorkspaceFiles(h, root, {
+          maxFiles: args?.maxFiles,
+        });
+      } catch (err) {
+        console.error("[ipc] workspace:findFiles failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:pickFile",
+    async (): Promise<string | null> => {
+      try {
+        const h = host();
+        if (h.kind !== "local") {
+          // Remote/WSL: renderer open-by-path dialog handles free-form paths.
+          throw new HostError(
+            "failed",
+            "Native file picker is only available for Local host",
+          );
+        }
+        const win = getMainWindow();
+        const options: Electron.OpenDialogOptions = {
+          properties: ["openFile"],
+          title: "Open File",
+          buttonLabel: "Open",
+          defaultPath: h.workspaceRoot ?? app.getPath("home") ?? undefined,
+        };
+        const result = win
+          ? await dialog.showOpenDialog(win, options)
+          : await dialog.showOpenDialog(options);
+        if (result.canceled || result.filePaths.length === 0) {
+          return null;
+        }
+        return result.filePaths[0]!;
+      } catch (err) {
+        console.error("[ipc] workspace:pickFile failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
 
   // ── history ────────────────────────────────────────
   ipcMain.handle(

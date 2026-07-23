@@ -243,6 +243,7 @@ export interface AnchorApi {
   };
   workspace: {
     pickFolder: () => Promise<string | null>;
+    pickFile: () => Promise<string | null>;
     open: (
       pathOrArgs: string | { path: string; hostProfileId?: string },
     ) => Promise<{
@@ -255,6 +256,15 @@ export interface AnchorApi {
     listDir: (path: string) => Promise<DirEntry[]>;
     readText: (path: string) => Promise<ReadTextResult>;
     stat: (path: string) => Promise<StatResult>;
+    findFiles: (args?: {
+      root?: string;
+      maxFiles?: number;
+    }) => Promise<{
+      root: string;
+      files: string[];
+      truncated: boolean;
+      source?: "git" | "walk";
+    }>;
   };
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;

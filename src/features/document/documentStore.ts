@@ -55,6 +55,8 @@ export interface DocumentState {
   setDiffActiveFile: (id: string, filePath: string) => void;
   closeItem: (id: string) => void;
   setActive: (id: string) => void;
+  /** Move tab at fromIndex to toIndex (array order = strip order). */
+  reorderTabs: (fromIndex: number, toIndex: number) => void;
   setMdViewMode: (id: string, mode: MdViewMode) => void;
   revealInFile: (path: string, line: number) => void;
   closeAllFiles: () => void;
@@ -201,6 +203,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setActive: (id) => set({ activeId: id }),
+
+  reorderTabs: (fromIndex, toIndex) => {
+    set((s) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= s.openItems.length ||
+        toIndex >= s.openItems.length
+      ) {
+        return s;
+      }
+      const openItems = [...s.openItems];
+      const [moved] = openItems.splice(fromIndex, 1);
+      if (!moved) return s;
+      openItems.splice(toIndex, 0, moved);
+      return { openItems };
+    });
+  },
 
   setMdViewMode: (id, mode) => {
     set((s) => ({

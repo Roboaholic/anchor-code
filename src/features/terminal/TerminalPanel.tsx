@@ -89,39 +89,6 @@ export function TerminalPanel() {
           >
             <Icon name="list-flat" />
           </button>
-          <div
-            className={`terminal-mode-switch terminal-mode-switch--${mode}`}
-            role="tablist"
-            aria-label="Panel mode"
-          >
-            <span className="terminal-mode-switch__thumb" aria-hidden />
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "terminal"}
-              className={`terminal-mode-switch__btn${mode === "terminal" ? " is-active" : ""}`}
-              onClick={() => setMode("terminal")}
-            >
-              Terminal
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "agent"}
-              className={`terminal-mode-switch__btn${mode === "agent" ? " is-active" : ""}`}
-              onClick={() => setMode("agent")}
-            >
-              Agent
-            </button>
-          </div>
-          {activeTab ? (
-            <span className="terminal-panel__active-title" title={activeTab.title}>
-              {activeTab.title}
-              {activeTab.status === "exited" ? " · exited" : ""}
-            </span>
-          ) : null}
-        </div>
-        <div className="terminal-panel__header-right">
           <button
             type="button"
             className="terminal-add-btn"
@@ -132,6 +99,39 @@ export function TerminalPanel() {
           >
             <Icon name="add" />
           </button>
+          {activeTab ? (
+            <span className="terminal-panel__active-title" title={activeTab.title}>
+              {activeTab.title}
+              {activeTab.status === "exited" ? " · exited" : ""}
+            </span>
+          ) : null}
+        </div>
+        <div className="terminal-panel__header-right">
+          <div
+            className={`terminal-mode-switch terminal-mode-switch--${mode}`}
+            role="tablist"
+            aria-label="Panel mode"
+          >
+            <span className="terminal-mode-switch__thumb" aria-hidden />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "agent"}
+              className={`terminal-mode-switch__btn${mode === "agent" ? " is-active" : ""}`}
+              onClick={() => setMode("agent")}
+            >
+              Agent
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "terminal"}
+              className={`terminal-mode-switch__btn${mode === "terminal" ? " is-active" : ""}`}
+              onClick={() => setMode("terminal")}
+            >
+              Terminal
+            </button>
+          </div>
         </div>
       </header>
 

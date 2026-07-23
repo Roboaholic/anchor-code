@@ -8,22 +8,27 @@ import { DocumentArea } from "@/features/document/DocumentArea";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { LeftNav } from "./LeftNav";
+import { QuickOpenPalette, invalidateFileIndexCache } from "./QuickOpen";
 import { TerminalPanel } from "./TerminalPanel";
 import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
 import { openWorkspaceWithHost } from "./orchestrate";
+
 export function Shell() {
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
   const openWorkspaceDialog = useShellStore((s) => s.openWorkspaceDialog);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
+  const openPalette = useShellStore((s) => s.openPalette);
+  const closePalette = useShellStore((s) => s.closePalette);
+  const palette = useShellStore((s) => s.palette);
   const loadRecent = useWorkspaceStore((s) => s.loadRecent);
+
   useEffect(() => {
     let cancelled = false;
     async function loadVersion() {
       try {
         if (!window.anchor?.shell?.getVersion) {
-          // Visible signal when preload failed (e.g. .mjs + require mismatch).
           setVersionLabel("no IPC bridge");
           console.error(
             "[shell] window.anchor is missing. Preload did not inject the bridge. Restart via `npm run dev` (Electron window, not a browser tab on :5173).",
@@ -48,6 +53,10 @@ export function Shell() {
       window.anchor?.shell?.onCommand?.((cmd) => {
         if (cmd.type === "openWorkspace") {
           void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
+        } else if (cmd.type === "quickOpen") {
+          openPalette("quickOpen");
+        } else if (cmd.type === "openFilePath") {
+          openPalette("openPath");
         }
       }) ?? (() => undefined);
 
@@ -55,7 +64,53 @@ export function Shell() {
       cancelled = true;
       off();
     };
-  }, [setVersionLabel, loadRecent]);
+  }, [setVersionLabel, loadRecent, openPalette]);
+
+  // Renderer fallback shortcuts (menu accelerators also send shell:command).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.altKey) return;
+      const key = e.key.toLowerCase();
+      // Don't steal when typing in real inputs inside dialogs we don't own —
+      // palette owns its own Esc; still allow reopen while closed.
+      if (key === "p" && !e.shiftKey) {
+        e.preventDefault();
+        openPalette("quickOpen");
+        return;
+      }
+      if (key === "o" && !e.shiftKey) {
+        e.preventDefault();
+        openPalette("openPath");
+        return;
+      }
+      if (key === "k" && !e.shiftKey) {
+        e.preventDefault();
+        openPalette("quickOpen");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openPalette]);
+
+  // Drop file index when workspace changes.
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  useEffect(() => {
+    invalidateFileIndexCache();
+  }, [workspaceRoot]);
+
+  // Esc closes palette if focus left the dialog.
+  useEffect(() => {
+    if (!palette) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closePalette();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [palette, closePalette]);
 
   return (
     <div className="shell">
@@ -90,6 +145,8 @@ export function Shell() {
           void openWorkspaceWithHost(result);
         }}
       />
+
+      <QuickOpenPalette />
     </div>
   );
 }

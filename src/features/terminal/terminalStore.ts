@@ -83,7 +83,7 @@ function pickActive(
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
   activeByMode: { terminal: null, agent: null },
-  mode: "terminal",
+  mode: "agent",
   sessionListOpen: readSessionListOpen(),
   error: null,
   workspaceCwd: null,
@@ -104,7 +104,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaceCwd: cwd,
         tabs: [tab],
         activeByMode: { terminal: tab.id, agent: null },
-        mode: "terminal",
+        // Agent-first UI: keep a ready shell tab but land on Agent mode.
+        mode: "agent",
         error: null,
         agentMenuOpen: false,
       });
@@ -115,6 +116,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaceCwd: cwd,
         tabs: [],
         activeByMode: { terminal: null, agent: null },
+        mode: "agent",
         error: err instanceof Error ? err.message : String(err),
       });
     }

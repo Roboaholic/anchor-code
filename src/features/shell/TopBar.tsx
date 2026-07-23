@@ -5,6 +5,7 @@ export function TopBar() {
   const toggleTerminal = useShellStore((s) => s.toggleTerminal);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const versionLabel = useShellStore((s) => s.versionLabel);
+  const openPalette = useShellStore((s) => s.openPalette);
 
   return (
     <header className="topbar">
@@ -16,13 +17,18 @@ export function TopBar() {
       </div>
 
       <div className="topbar__center">
-        <div className="search-field" title="Placeholder — later slice">
+        <button
+          type="button"
+          className="search-field"
+          title="Go to File (Ctrl+P)"
+          onClick={() => openPalette("quickOpen")}
+        >
           <Icon name="search" className="search-field__icon" />
           <span className="search-field__placeholder">
-            Search files, symbols, or commands…
+            Search files in workspace…
           </span>
-          <kbd className="search-field__kbd">⌘K</kbd>
-        </div>
+          <kbd className="search-field__kbd">Ctrl+P</kbd>
+        </button>
       </div>
 
       <div className="topbar__right">

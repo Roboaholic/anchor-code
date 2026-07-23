@@ -65,6 +65,12 @@ export interface PtyHandle {
 export interface PtySpawnOptions {
   command?: string;
   args?: string[];
+  /**
+   * Extra env for the child process / login shell.
+   * On WSL/SSH these are exported inside bash before `exec`.
+   * Values must never include secrets from the app — only host-local paths/flags.
+   */
+  env?: Record<string, string>;
 }
 
 export interface HostSession {

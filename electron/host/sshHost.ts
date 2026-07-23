@@ -309,7 +309,7 @@ export class SshHostSession implements HostSession {
     cwd: string,
     cols: number,
     rows: number,
-    opts?: { command?: string; args?: string[] },
+    opts?: { command?: string; args?: string[]; env?: Record<string, string> },
   ): Promise<PtyHandle> {
     const client = await this.ensureConnected();
     const safeCwd = hostNormalize("ssh", cwd || this.workspaceRoot || "~");
@@ -339,6 +339,12 @@ export class SshHostSession implements HostSession {
     // cd into workspace after shell starts, then optional agent CLI.
     if (safeCwd && safeCwd !== "~") {
       channel.write(`cd ${shellQuote(safeCwd)}\n`);
+    }
+    if (opts?.env) {
+      for (const [k, v] of Object.entries(opts.env)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+        channel.write(`export ${k}=${shellQuote(v)}\n`);
+      }
     }
     if (opts?.command) {
       const parts = [opts.command, ...(opts.args ?? [])].map(shellQuote);

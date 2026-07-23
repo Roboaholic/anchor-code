@@ -42,11 +42,18 @@ export interface TerminalState {
   toggleSessionList: () => void;
   setSessionListOpen: (open: boolean) => void;
   createShellTab: () => Promise<void>;
-  createAgentTab: (profile: AgentCliProfile) => Promise<void>;
+  createAgentTab: (
+    profile: AgentCliProfile,
+    launch?: { model?: string; effort?: string; title?: string },
+  ) => Promise<void>;
   createAgentDefault: () => Promise<void>;
   closeTab: (id: string) => Promise<void>;
+  /** Drop tab after process exit without kill (already dead). */
+  removeTabLocal: (id: string) => void;
   setActive: (id: string) => void;
   renameTab: (id: string, title: string) => Promise<void>;
+  applyTitleFromTerm: (id: string, title: string) => void;
+  applyAgentTopicFromLine: (id: string, line: string) => void;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   loadAgentProfiles: () => Promise<void>;
@@ -102,7 +109,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         agentMenuOpen: false,
       });
       void get().loadAgentProfiles();
-      // Detect once per workspace open so "found" badges stay fresh.
       void get().detectAgents();
     } catch (err) {
       set({
@@ -162,22 +168,48 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  createAgentTab: async (profile) => {
+  createAgentTab: async (profile, launch) => {
     const cwd =
       get().workspaceCwd ??
       (await window.anchor.host.getInfo()).workspaceRoot ??
       undefined;
     try {
-      const tab = await window.anchor.terminal.create({
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const taskTitle = launch?.title?.trim();
+      const baseName = profile.name.trim() || profile.id;
+      const fallbackTitle = [baseName, launch?.model, launch?.effort, `${hh}:${mm}`]
+        .filter(Boolean)
+        .join(" · ");
+      const title = taskTitle || fallbackTitle;
+
+      const extra =
+        (await window.anchor.agent.buildLaunchArgs({
+          profileId: profile.id,
+          model: launch?.model,
+          effort: launch?.effort,
+          prompt: taskTitle,
+        })) ?? [];
+
+      let tab = await window.anchor.terminal.create({
         cwd: cwd ?? undefined,
         cols: 80,
         rows: 24,
         kind: "agent",
         command: profile.command,
-        args: profile.args ?? [],
-        title: profile.name,
+        args: [...(profile.args ?? []), ...extra],
+        title,
         agentId: profile.id,
       });
+      if (taskTitle) {
+        try {
+          tab = await window.anchor.terminal.rename(tab.id, taskTitle);
+        } catch {
+          tab = { ...tab, title: taskTitle, titleSource: "user" };
+        }
+      }
+
       set((s) => ({
         tabs: [...s.tabs, tab],
         mode: "agent",
@@ -187,6 +219,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         defaultAgentId: profile.id,
       }));
       void window.anchor.agent.setDefaultId(profile.id);
+      try {
+        localStorage.setItem("anchor.agent.lastProfileId", profile.id);
+        localStorage.setItem(
+          `anchor.agent.launch.${profile.id}`,
+          JSON.stringify({
+            model: launch?.model ?? null,
+            effort: launch?.effort ?? null,
+          }),
+        );
+      } catch {
+        // ignore
+      }
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : String(err),
@@ -199,12 +243,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (get().agentProfiles.length === 0) {
       await get().loadAgentProfiles();
     }
-    // Always show picker so user can open another session of any agent.
     set({ agentMenuOpen: true });
   },
 
   closeTab: async (id) => {
-    await window.anchor.terminal.kill(id);
+    try {
+      await window.anchor.terminal.kill(id);
+    } catch {
+      // already dead
+    }
+    get().removeTabLocal(id);
+  },
+
+  removeTabLocal: (id) => {
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const closed = s.tabs.find((t) => t.id === id);
@@ -240,6 +291,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  },
+
+  applyTitleFromTerm: (id, title) => {
+    void window.anchor.terminal.applyTitle(id, title).then((info) => {
+      set((s) => ({
+        tabs: s.tabs.map((t) => (t.id === id ? info : t)),
+      }));
+    });
+  },
+
+  applyAgentTopicFromLine: (id, line) => {
+    void window.anchor.terminal.applyAgentTopic(id, line).then((info) => {
+      set((s) => ({
+        tabs: s.tabs.map((t) => (t.id === id ? info : t)),
+      }));
+    });
   },
 
   write: (id, data) => {
@@ -311,6 +378,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 }));
+
+// Push title updates from main (agent TUI topic scrape via PTY output).
+if (typeof window !== "undefined" && window.anchor?.terminal?.onTitle) {
+  window.anchor.terminal.onTitle(({ id, info }) => {
+    useTerminalStore.setState((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? info : t)),
+    }));
+  });
+}
 
 export function sessionsForMode(
   tabs: TerminalTabInfo[],

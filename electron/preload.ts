@@ -93,6 +93,7 @@ export interface FileDiffContent {
 }
 
 export type TerminalSessionKind = "shell" | "agent";
+export type TerminalTitleSource = "default" | "user" | "inferred";
 
 export interface TerminalTabInfo {
   id: string;
@@ -101,6 +102,7 @@ export interface TerminalTabInfo {
   status: "running" | "exited";
   kind: TerminalSessionKind;
   agentId?: string;
+  titleSource?: TerminalTitleSource;
 }
 
 export interface AgentCliProfile {
@@ -265,6 +267,10 @@ const anchor = {
     list: (): Promise<TerminalTabInfo[]> => ipcRenderer.invoke("terminal:list"),
     rename: (id: string, title: string): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:rename", { id, title }),
+    applyTitle: (id: string, title: string): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("terminal:applyTitle", { id, title }),
+    applyAgentTopic: (id: string, line: string): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("terminal:applyAgentTopic", { id, line }),
     write: (id: string, data: string): Promise<void> =>
       ipcRenderer.invoke("terminal:write", { id, data }),
     resize: (id: string, cols: number, rows: number): Promise<void> =>
@@ -280,12 +286,30 @@ const anchor = {
       ipcRenderer.on("terminal:data", listener);
       return () => ipcRenderer.removeListener("terminal:data", listener);
     },
-    onExit: (
-      cb: (payload: { id: string; exitCode: number }) => void,
+    onTitle: (
+      cb: (payload: { id: string; info: TerminalTabInfo }) => void,
     ) => {
       const listener = (
         _e: IpcRendererEvent,
-        payload: { id: string; exitCode: number },
+        payload: { id: string; info: TerminalTabInfo },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:title", listener);
+      return () => ipcRenderer.removeListener("terminal:title", listener);
+    },
+    onExit: (
+      cb: (payload: {
+        id: string;
+        exitCode: number;
+        kind?: TerminalSessionKind;
+      }) => void,
+    ) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: {
+          id: string;
+          exitCode: number;
+          kind?: TerminalSessionKind;
+        },
       ) => cb(payload);
       ipcRenderer.on("terminal:exit", listener);
       return () => ipcRenderer.removeListener("terminal:exit", listener);
@@ -304,6 +328,21 @@ const anchor = {
       ipcRenderer.invoke("agent:getDefaultId"),
     setDefaultId: (id: string | null | undefined): Promise<void> =>
       ipcRenderer.invoke("agent:setDefaultId", id),
+    discoverLaunch: (
+      profileId: string | { profileId: string; force?: boolean },
+    ) =>
+      ipcRenderer.invoke(
+        "agent:discoverLaunch",
+        typeof profileId === "string"
+          ? { profileId, force: false }
+          : profileId,
+      ),
+    buildLaunchArgs: (args: {
+      profileId: string;
+      model?: string;
+      effort?: string;
+      prompt?: string;
+    }) => ipcRenderer.invoke("agent:buildLaunchArgs", args),
   },
 };
 

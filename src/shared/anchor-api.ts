@@ -92,6 +92,7 @@ export interface FileDiffContent {
 }
 
 export type TerminalSessionKind = "shell" | "agent";
+export type TerminalTitleSource = "default" | "user" | "inferred";
 
 export interface TerminalTabInfo {
   id: string;
@@ -100,6 +101,29 @@ export interface TerminalTabInfo {
   status: "running" | "exited";
   kind: TerminalSessionKind;
   agentId?: string;
+  titleSource?: TerminalTitleSource;
+}
+
+export interface AgentModelOption {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort?: string;
+  hidden?: boolean;
+}
+
+export interface AgentLaunchDiscovery {
+  profileId: string;
+  supportsModel: boolean;
+  supportsEffort: boolean;
+  models: AgentModelOption[];
+  defaultModel?: string;
+  defaultEffort?: string;
+  configHome?: string;
+  source?: string;
+  error?: string;
+  fetchedAt?: string;
+  cached?: boolean;
 }
 
 export interface AgentCliProfile {
@@ -311,6 +335,8 @@ export interface AnchorApi {
     }) => Promise<TerminalTabInfo>;
     list: () => Promise<TerminalTabInfo[]>;
     rename: (id: string, title: string) => Promise<TerminalTabInfo>;
+    applyTitle: (id: string, title: string) => Promise<TerminalTabInfo>;
+    applyAgentTopic: (id: string, line: string) => Promise<TerminalTabInfo>;
     write: (id: string, data: string) => Promise<void>;
     resize: (id: string, cols: number, rows: number) => Promise<void>;
     kill: (id: string) => Promise<void>;
@@ -318,8 +344,15 @@ export interface AnchorApi {
     onData: (
       cb: (payload: { id: string; data: string }) => void,
     ) => () => void;
+    onTitle: (
+      cb: (payload: { id: string; info: TerminalTabInfo }) => void,
+    ) => () => void;
     onExit: (
-      cb: (payload: { id: string; exitCode: number }) => void,
+      cb: (payload: {
+        id: string;
+        exitCode: number;
+        kind?: TerminalSessionKind;
+      }) => void,
     ) => () => void;
   };
   agent: {
@@ -329,5 +362,14 @@ export interface AnchorApi {
     upsertProfile: (profile: AgentCliProfile) => Promise<AgentCliProfile[]>;
     getDefaultId: () => Promise<string | undefined>;
     setDefaultId: (id: string | null | undefined) => Promise<void>;
+    discoverLaunch: (
+      profileId: string | { profileId: string; force?: boolean },
+    ) => Promise<AgentLaunchDiscovery>;
+    buildLaunchArgs: (args: {
+      profileId: string;
+      model?: string;
+      effort?: string;
+      prompt?: string;
+    }) => Promise<string[]>;
   };
 }

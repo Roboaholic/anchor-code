@@ -157,8 +157,7 @@ export class WslHostSession implements HostSession {
   }
 
   /**
-   * Run a command inside WSL.
-   * Uses `wsl.exe … -- command args` (command runs in WSL).
+   * Run a command inside WSL via login shell (PATH + env from profile).
    */
   async run(
     cwd: string,
@@ -167,13 +166,15 @@ export class WslHostSession implements HostSession {
   ): Promise<RunResult> {
     const wsl = this.resolveWslExe();
     const safeCwd = hostNormalize("wsl", cwd || "/");
+    const cmdline = posixShellCommand(command, args);
     const wslArgs = [
       ...this.wslBaseArgs(),
       "--cd",
       safeCwd,
       "--",
-      command,
-      ...args,
+      "bash",
+      "-lc",
+      cmdline,
     ];
     return spawnCapture(wsl, wslArgs);
   }
@@ -339,7 +340,7 @@ export class WslHostSession implements HostSession {
     cwd: string,
     cols: number,
     rows: number,
-    opts?: { command?: string; args?: string[] },
+    opts?: { command?: string; args?: string[]; env?: Record<string, string> },
   ): Promise<PtyHandle> {
     if (process.platform !== "win32") {
       throw new HostError(
@@ -354,10 +355,26 @@ export class WslHostSession implements HostSession {
       "--cd",
       safeCwd,
     ];
-    // Interactive shell by default; agent CLI: wsl … --cd dir -- cmd args
     if (opts?.command) {
-      args.push("--", opts.command, ...(opts.args ?? []));
+      // Login shell so PATH (~/.local/bin) and profile env are available.
+      // Bare `wsl -- cmd` skips that → command not found / missing keys.
+      const cmdline = posixShellCommand(opts.command, opts.args ?? []);
+      const exports = posixExportEnv(opts.env);
+      const body = exports
+        ? `${exports}; exec ${cmdline}`
+        : `exec ${cmdline}`;
+      args.push("--", "bash", "-lc", body);
+    } else if (opts?.env && Object.keys(opts.env).length) {
+      // Rare: default shell with env exports.
+      args.push(
+        "--",
+        "bash",
+        "-lc",
+        `${posixExportEnv(opts.env)}; exec bash -l`,
+      );
     }
+    // Prefer a clean env for wsl.exe: Windows process.env often injects empty
+    // or wrong API keys that shadow the Linux login environment.
     const { handle } = await spawnLocalPty(
       process.env.USERPROFILE || "C:\\",
       cols,
@@ -366,13 +383,11 @@ export class WslHostSession implements HostSession {
         shell: wsl,
         args,
         env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              (e): e is [string, string] => typeof e[1] === "string",
-            ),
-          ),
+          SystemRoot: process.env.SystemRoot || "C:\\Windows",
+          PATH: process.env.PATH || "",
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
+          WSLENV: process.env.WSLENV || "",
         },
       },
     );
@@ -396,6 +411,32 @@ export class WslHostSession implements HostSession {
     this.openPtys.clear();
     this.workspaceRoot = null;
   }
+}
+
+/** Quote argv for `bash -lc` so prompts with spaces stay one argument. */
+export function posixShellCommand(command: string, args: string[]): string {
+  const parts = [command, ...args].map((p) => {
+    if (p === "") return "''";
+    if (/^[A-Za-z0-9_./:=@%+-]+$/.test(p)) return p;
+    return `'${p.replace(/'/g, `'\\''`)}'`;
+  });
+  return parts.join(" ");
+}
+
+/** `export KEY='val'; ...` for bash -lc; empty if no env. */
+export function posixExportEnv(env?: Record<string, string>): string {
+  if (!env) return "";
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+    if (typeof v !== "string") continue;
+    parts.push(`export ${k}=${shellSingleQuote(v)}`);
+  }
+  return parts.join("; ");
+}
+
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function spawnCapture(command: string, args: string[]): Promise<RunResult> {

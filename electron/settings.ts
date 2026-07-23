@@ -50,6 +50,11 @@ export interface AppSettings {
   agentProfiles?: AgentCliProfile[];
   /** Default agent id for Agent mode "+". */
   defaultAgentId?: string;
+  /**
+   * Persisted model/effort discovery per host+profile.
+   * Key: `${hostKind}:${hostProfileId}:${agentId}`
+   */
+  agentLaunchCache?: Record<string, unknown>;
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -70,6 +75,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastHostProfileId:
     process.platform === "win32" ? "wsl-default" : "local-default",
   agentProfiles: [],
+  agentLaunchCache: {},
   ui: { terminalVisible: true },
 };
 
@@ -107,6 +113,7 @@ export async function loadSettings(): Promise<AppSettings> {
         parsed.lastHostProfileId ?? DEFAULT_SETTINGS.lastHostProfileId,
       agentProfiles: parsed.agentProfiles ?? [],
       defaultAgentId: parsed.defaultAgentId,
+      agentLaunchCache: parsed.agentLaunchCache ?? {},
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {

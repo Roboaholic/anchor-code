@@ -41,6 +41,10 @@ import {
   upsertAgentProfile,
 } from "../services/agentCli.js";
 import {
+  buildAgentLaunchArgs,
+  discoverAgentLaunchOptions,
+} from "../services/agentLaunch.js";
+import {
   getHostProfile,
   loadSettings,
   pushRecentWorkspace,
@@ -702,6 +706,28 @@ export function registerIpc(opts: {
 
   ipcMain.handle("terminal:list", async () => terminal.list());
 
+
+  ipcMain.handle(
+    "terminal:applyTitle",
+    async (_evt, args: { id: string; title: string }) => {
+      const info = terminal.applyDynamicTitle(args.id, args.title);
+      if (!info) {
+        throw new HostError("not_found", `Terminal not found: ${args.id}`);
+      }
+      return info;
+    },
+  );
+
+  ipcMain.handle(
+    "terminal:applyAgentTopic",
+    async (_evt, args: { id: string; line: string }) => {
+      const info = terminal.applyAgentTopicFromInput(args.id, args.line);
+      if (!info) {
+        throw new HostError("not_found", `Terminal not found: ${args.id}`);
+      }
+      return info;
+    },
+  );
   ipcMain.handle(
     "terminal:rename",
     async (_evt, args: { id: string; title: string }) => {
@@ -792,6 +818,51 @@ export function registerIpc(opts: {
     async (_evt, id: string | null | undefined) => {
       try {
         await setDefaultAgentId(id ?? undefined);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "agent:discoverLaunch",
+    async (
+      _evt,
+      args: string | { profileId: string; force?: boolean },
+    ) => {
+      try {
+        const profileId =
+          typeof args === "string" ? args : args?.profileId;
+        const force = typeof args === "string" ? false : !!args?.force;
+        if (!profileId || typeof profileId !== "string") {
+          throw new HostError("failed", "profileId required");
+        }
+        // force: discover bypasses memory/disk and rewrites settings.json.
+        // Do not call clear() here — its async wipe races the write.
+        return await discoverAgentLaunchOptions(host(), profileId, { force });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "agent:buildLaunchArgs",
+    async (
+      _evt,
+      args: {
+        profileId: string;
+        model?: string;
+        effort?: string;
+        prompt?: string;
+      },
+    ) => {
+      try {
+        return buildAgentLaunchArgs(args.profileId, {
+          model: args.model,
+          effort: args.effort,
+          prompt: args.prompt,
+        });
       } catch (err) {
         rethrowIpc(err);
       }

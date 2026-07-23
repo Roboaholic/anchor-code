@@ -16,6 +16,7 @@ import {
 } from "./terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { AgentCliProfile } from "@/shared/anchor-api";
+import { NewAgentDialog } from "./NewAgentDialog";
 
 export function TerminalPanel() {
   const tabs = useTerminalStore((s) => s.tabs);
@@ -25,7 +26,7 @@ export function TerminalPanel() {
   const error = useTerminalStore((s) => s.error);
   const agentProfiles = useTerminalStore((s) => s.agentProfiles);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
-  const addCustomAgent = useTerminalStore((s) => s.addCustomAgent);
+  const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
   const createAgentDefault = useTerminalStore((s) => s.createAgentDefault);
@@ -64,9 +65,12 @@ export function TerminalPanel() {
     void createAgentDefault();
   }, [workspaceRoot, mode, createShellTab, createAgentDefault]);
 
-  const onPickAgent = useCallback(
-    (p: AgentCliProfile) => {
-      void createAgentTab(p);
+  const onOpenAgent = useCallback(
+    (
+      p: AgentCliProfile,
+      launch: { model?: string; effort?: string; title?: string },
+    ) => {
+      void createAgentTab(p, launch);
     },
     [createAgentTab],
   );
@@ -118,32 +122,28 @@ export function TerminalPanel() {
           ) : null}
         </div>
         <div className="terminal-panel__header-right">
-          <div className="terminal-add-wrap">
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label={mode === "agent" ? "New agent session" : "New terminal"}
-              title={mode === "agent" ? "New agent CLI" : "New shell"}
-              onClick={onAdd}
-              disabled={!workspaceRoot}
-            >
-              <Icon name="add" />
-            </button>
-            {mode === "agent" && agentMenuOpen ? (
-              <AgentPicker
-                profiles={agentProfiles}
-                onPick={onPickAgent}
-                onDetect={() => void detectAgents()}
-                onAddCustom={async (input) => {
-                  const p = await addCustomAgent(input);
-                  if (p) onPickAgent(p);
-                }}
-                onClose={() => setAgentMenuOpen(false)}
-              />
-            ) : null}
-          </div>
+          <button
+            type="button"
+            className="terminal-add-btn"
+            aria-label={mode === "agent" ? "New agent session" : "New terminal"}
+            title={mode === "agent" ? "New agent session" : "New shell"}
+            onClick={onAdd}
+            disabled={!workspaceRoot}
+          >
+            <Icon name="add" />
+          </button>
         </div>
       </header>
+
+      {mode === "agent" && agentMenuOpen ? (
+        <NewAgentDialog
+          profiles={agentProfiles}
+          defaultAgentId={defaultAgentId}
+          onOpen={onOpenAgent}
+          onDetect={() => void detectAgents()}
+          onClose={() => setAgentMenuOpen(false)}
+        />
+      ) : null}
 
       <div className="terminal-panel__main">
         {sessionListOpen ? (
@@ -178,6 +178,7 @@ export function TerminalPanel() {
               <XtermHost
                 key={t.id}
                 id={t.id}
+                kind={t.kind ?? "shell"}
                 active={t.id === activeTabId && modeOfVisible(t.kind) === mode}
               />
             ))
@@ -290,145 +291,22 @@ function SessionRail({
   );
 }
 
-function AgentPicker({
-  profiles,
-  onPick,
-  onDetect,
-  onAddCustom,
-  onClose,
+function XtermHost({
+  id,
+  active,
+  kind,
 }: {
-  profiles: AgentCliProfile[];
-  onPick: (p: AgentCliProfile) => void;
-  onDetect: () => void;
-  onAddCustom: (input: {
-    name: string;
-    command: string;
-    args?: string[];
-  }) => Promise<void>;
-  onClose: () => void;
+  id: string;
+  active: boolean;
+  kind: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [showCustom, setShowCustom] = useState(false);
-  const [name, setName] = useState("");
-  const [command, setCommand] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [onClose]);
-
-  const enabled = profiles.filter((p) => p.enabled !== false);
-
-  const submitCustom = async () => {
-    if (!command.trim() || saving) return;
-    setSaving(true);
-    try {
-      await onAddCustom({
-        name: name.trim() || command.trim(),
-        command: command.trim(),
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="agent-picker" ref={ref} role="menu">
-      <div className="agent-picker__head">
-        <span>Open agent CLI</span>
-        <button type="button" className="btn btn--ghost btn--small" onClick={onDetect}>
-          Detect
-        </button>
-      </div>
-      {enabled.length === 0 ? (
-        <div className="agent-picker__empty muted">No profiles</div>
-      ) : (
-        <ul className="agent-picker__list">
-          {enabled.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                role="menuitem"
-                className="agent-picker__item"
-                onClick={() => onPick(p)}
-              >
-                <span className="agent-picker__name">{p.name}</span>
-                <span className="agent-picker__meta">
-                  <code>{p.command}</code>
-                  {p.detected ? (
-                    <span className="agent-picker__badge">found</span>
-                  ) : (
-                    <span className="agent-picker__badge agent-picker__badge--miss">
-                      ?
-                    </span>
-                  )}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="agent-picker__footer">
-        {showCustom ? (
-          <div className="agent-picker__custom">
-            <input
-              className="agent-picker__input"
-              placeholder="Display name (optional)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <input
-              className="agent-picker__input agent-picker__input--mono"
-              placeholder="command (e.g. claude)"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitCustom();
-              }}
-              autoFocus
-            />
-            <div className="agent-picker__custom-actions">
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                onClick={() => setShowCustom(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary btn--small"
-                disabled={!command.trim() || saving}
-                onClick={() => void submitCustom()}
-              >
-                Add & open
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="agent-picker__add-custom"
-            onClick={() => setShowCustom(true)}
-          >
-            + Custom command…
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function XtermHost({ id, active }: { id: string; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const write = useTerminalStore((s) => s.write);
   const resize = useTerminalStore((s) => s.resize);
+  const applyTitleFromTerm = useTerminalStore((s) => s.applyTitleFromTerm);
+  const removeTabLocal = useTerminalStore((s) => s.removeTabLocal);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -462,6 +340,9 @@ function XtermHost({ id, active }: { id: string; active: boolean }) {
         brightWhite: "#111827",
       },
       allowProposedApi: true,
+      windowOptions: {
+        setWinLines: false,
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -477,12 +358,22 @@ function XtermHost({ id, active }: { id: string; active: boolean }) {
       if (payload.id === id) term.write(payload.data);
     });
     const offExit = window.anchor.terminal.onExit((payload) => {
-      if (payload.id === id) {
-        term.writeln(`\r\n[process exited: ${payload.exitCode}]`);
+      if (payload.id !== id) return;
+      term.writeln(`\r\n[process exited: ${payload.exitCode}]`);
+      // Agent: user quit → remove session tag.
+      if (kind === "agent" || payload.kind === "agent") {
+        window.setTimeout(() => removeTabLocal(id), 80);
       }
     });
 
     term.onData((data) => write(id, data));
+
+    // Shell only: OSC window title → cwd basename.
+    if (kind !== "agent") {
+      term.onTitleChange((title) => {
+        if (title?.trim()) applyTitleFromTerm(id, title);
+      });
+    }
 
     const ro = new ResizeObserver(() => {
       try {
@@ -502,7 +393,7 @@ function XtermHost({ id, active }: { id: string; active: boolean }) {
       term.dispose();
       termRef.current = null;
     };
-  }, [id, write, resize]);
+  }, [id, kind, write, resize, applyTitleFromTerm, removeTabLocal]);
 
   useEffect(() => {
     if (active) {

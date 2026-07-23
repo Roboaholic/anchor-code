@@ -189,6 +189,14 @@ const anchor = {
       ipcRenderer.invoke("history:discover", workspaceRoot),
     loadLog: (repoRoot: string): Promise<CommitRow[]> =>
       ipcRenderer.invoke("history:loadLog", repoRoot),
+    status: (repoRoot: string): Promise<{
+      repoRoot: string;
+      entries: { path: string; status: string; code: string }[];
+      modified: number;
+      added: number;
+      deleted: number;
+      untracked: number;
+    }> => ipcRenderer.invoke("history:status", repoRoot),
     compare: (args: {
       repoRoot: string;
       base: string;
@@ -202,6 +210,22 @@ const anchor = {
       status: string;
     }): Promise<FileDiffContent> =>
       ipcRenderer.invoke("history:getFileDiff", args),
+    getRecentCompares: (workspaceRoot: string) =>
+      ipcRenderer.invoke("history:getRecentCompares", workspaceRoot),
+    pushRecentCompare: (args: {
+      workspaceRoot: string;
+      entry: {
+        id: string;
+        repoRoot: string;
+        repoName: string;
+        base: string;
+        head: string | "worktree";
+        label: string;
+        createdAt: string;
+      };
+    }) => ipcRenderer.invoke("history:pushRecentCompare", args),
+    removeRecentCompare: (args: { workspaceRoot: string; id: string }) =>
+      ipcRenderer.invoke("history:removeRecentCompare", args),
   },
   annotations: {
     locateGitRoot: (filePath: string): Promise<string | null> =>

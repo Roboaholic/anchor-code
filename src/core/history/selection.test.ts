@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  WORKTREE_SELECTION,
   compareLabel,
+  resolveCompareRange,
   swapSelection,
   toggleCommitSelection,
 } from "./selection";
@@ -58,7 +60,34 @@ describe("compareLabel", () => {
     expect(compareLabel(["abcdef"], shortOf)).toBe("abc → worktree");
   });
 
+  it("shows HEAD → worktree for uncommitted alone", () => {
+    expect(compareLabel([WORKTREE_SELECTION], shortOf)).toBe("HEAD → worktree");
+  });
+
   it("returns null when empty", () => {
     expect(compareLabel([], shortOf)).toBeNull();
+  });
+});
+
+describe("resolveCompareRange", () => {
+  it("maps worktree alone to HEAD → worktree", () => {
+    expect(resolveCompareRange([WORKTREE_SELECTION])).toEqual({
+      base: "HEAD",
+      head: "worktree",
+    });
+  });
+
+  it("maps commit + worktree", () => {
+    expect(resolveCompareRange(["aaa", WORKTREE_SELECTION])).toEqual({
+      base: "aaa",
+      head: "worktree",
+    });
+  });
+
+  it("maps two commits", () => {
+    expect(resolveCompareRange(["aaa", "bbb"])).toEqual({
+      base: "aaa",
+      head: "bbb",
+    });
   });
 });

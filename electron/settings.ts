@@ -41,6 +41,16 @@ export interface AgentCliProfile {
   enabled?: boolean;
 }
 
+export interface HistoryCompareEntry {
+  id: string;
+  repoRoot: string;
+  repoName: string;
+  base: string;
+  head: string | "worktree";
+  label: string;
+  createdAt: string;
+}
+
 export interface AppSettings {
   recentWorkspaces: RecentWorkspace[];
   hostProfiles: HostProfile[];
@@ -55,6 +65,11 @@ export interface AppSettings {
    * Key: `${hostKind}:${hostProfileId}:${agentId}`
    */
   agentLaunchCache?: Record<string, unknown>;
+  /**
+   * Recent compares per workspace root → list of entries (each entry has repoRoot).
+   * Key: workspace absolute path.
+   */
+  historyRecentCompares?: Record<string, HistoryCompareEntry[]>;
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -76,6 +91,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     process.platform === "win32" ? "wsl-default" : "local-default",
   agentProfiles: [],
   agentLaunchCache: {},
+  historyRecentCompares: {},
   ui: { terminalVisible: true },
 };
 
@@ -114,6 +130,7 @@ export async function loadSettings(): Promise<AppSettings> {
       agentProfiles: parsed.agentProfiles ?? [],
       defaultAgentId: parsed.defaultAgentId,
       agentLaunchCache: parsed.agentLaunchCache ?? {},
+      historyRecentCompares: parsed.historyRecentCompares ?? {},
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {
@@ -164,4 +181,51 @@ export async function upsertHostProfile(
   }
   await saveSettings(settings);
   return settings.hostProfiles;
+}
+
+const MAX_RECENT_COMPARES_PER_REPO = 15;
+
+export async function getHistoryRecentCompares(
+  workspaceRoot: string,
+): Promise<HistoryCompareEntry[]> {
+  const settings = await loadSettings();
+  return settings.historyRecentCompares?.[workspaceRoot] ?? [];
+}
+
+export async function pushHistoryRecentCompare(
+  workspaceRoot: string,
+  entry: HistoryCompareEntry,
+): Promise<HistoryCompareEntry[]> {
+  const settings = await loadSettings();
+  const all = { ...(settings.historyRecentCompares ?? {}) };
+  // Keep per-repo lists: filter workspace list then re-group… simpler: store flat list per workspace, filter by repoRoot when reading.
+  const list = all[workspaceRoot] ?? [];
+  // Dedupe by id within this repo's entries only for cap: keep global workspace list ordered, cap per repoRoot.
+  const without = list.filter((e) => e.id !== entry.id);
+  const next = [entry, ...without];
+  // Cap each repo independently while preserving overall order
+  const counts = new Map<string, number>();
+  const capped: HistoryCompareEntry[] = [];
+  for (const e of next) {
+    const n = counts.get(e.repoRoot) ?? 0;
+    if (n >= MAX_RECENT_COMPARES_PER_REPO) continue;
+    counts.set(e.repoRoot, n + 1);
+    capped.push(e);
+  }
+  all[workspaceRoot] = capped;
+  settings.historyRecentCompares = all;
+  await saveSettings(settings);
+  return capped;
+}
+
+export async function removeHistoryRecentCompare(
+  workspaceRoot: string,
+  id: string,
+): Promise<HistoryCompareEntry[]> {
+  const settings = await loadSettings();
+  const all = { ...(settings.historyRecentCompares ?? {}) };
+  all[workspaceRoot] = (all[workspaceRoot] ?? []).filter((e) => e.id !== id);
+  settings.historyRecentCompares = all;
+  await saveSettings(settings);
+  return all[workspaceRoot] ?? [];
 }

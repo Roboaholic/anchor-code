@@ -10,6 +10,7 @@ import {
   discoverRepos,
   getFileDiff,
   loadLog,
+  loadRepoStatus,
 } from "./historyService.js";
 
 function git(cwd: string, args: string[]) {
@@ -114,5 +115,30 @@ describe("historyService (integration, temp git repo)", () => {
     );
     expect(diff.oldText).toContain("n = 2");
     expect(diff.newText).toContain("n = 3");
+  });
+
+  it("loads porcelain status and includes untracked in worktree compare", async () => {
+    await fs.writeFile(path.join(root, "scratch.tmp"), "hi\n", "utf8");
+    const status = await loadRepoStatus(host, root);
+    expect(status.entries.some((e) => e.path === "app.ts")).toBe(true);
+    expect(status.entries.some((e) => e.path === "scratch.tmp" && e.status === "?")).toBe(
+      true,
+    );
+    expect(status.untracked).toBeGreaterThanOrEqual(1);
+
+    const payload = await compareToWorktree(host, root, "HEAD");
+    expect(payload.files.some((f) => f.path === "scratch.tmp" && f.status === "?")).toBe(
+      true,
+    );
+    const diff = await getFileDiff(
+      host,
+      root,
+      "HEAD",
+      "worktree",
+      "scratch.tmp",
+      "?",
+    );
+    expect(diff.oldText).toBe("");
+    expect(diff.newText).toContain("hi");
   });
 });

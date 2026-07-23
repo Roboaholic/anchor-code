@@ -30,6 +30,7 @@ import {
   discoverRepos,
   getFileDiff,
   loadLog,
+  loadRepoStatus,
 } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import {
@@ -46,10 +47,14 @@ import {
 } from "../services/agentLaunch.js";
 import { findWorkspaceFiles } from "../services/fileIndex.js";
 import {
+  getHistoryRecentCompares,
   getHostProfile,
   loadSettings,
+  pushHistoryRecentCompare,
   pushRecentWorkspace,
+  removeHistoryRecentCompare,
   upsertHostProfile,
+  type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
 } from "../settings.js";
@@ -456,7 +461,6 @@ export function registerIpc(opts: {
       rethrowIpc(err);
     }
   });
-
   ipcMain.handle(
     "history:compare",
     async (
@@ -504,6 +508,56 @@ export function registerIpc(opts: {
           args.path,
           args.status,
         );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:status",
+    async (_evt, repoRoot: string) => {
+      try {
+        return await loadRepoStatus(host(), repoRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:getRecentCompares",
+    async (_evt, workspaceRoot: string): Promise<HistoryCompareEntry[]> => {
+      try {
+        return await getHistoryRecentCompares(workspaceRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:pushRecentCompare",
+    async (
+      _evt,
+      args: { workspaceRoot: string; entry: HistoryCompareEntry },
+    ): Promise<HistoryCompareEntry[]> => {
+      try {
+        return await pushHistoryRecentCompare(args.workspaceRoot, args.entry);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:removeRecentCompare",
+    async (
+      _evt,
+      args: { workspaceRoot: string; id: string },
+    ): Promise<HistoryCompareEntry[]> => {
+      try {
+        return await removeHistoryRecentCompare(args.workspaceRoot, args.id);
       } catch (err) {
         rethrowIpc(err);
       }

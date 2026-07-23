@@ -53,7 +53,12 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   return (
     <div className="diff-viewer">
       <aside className="diff-viewer__files">
-        <div className="files-pane__title">CHANGED FILES</div>
+        <div className="diff-viewer__range" title={item.title}>
+          {item.title}
+        </div>
+        <div className="files-pane__title">
+          CHANGED FILES · {item.files.length}
+        </div>
         {item.files.length === 0 ? (
           <p className="pane-hint">No file changes in this compare.</p>
         ) : (
@@ -67,7 +72,11 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   }`}
                   onClick={() => setDiffActiveFile(item.id, f.path)}
                 >
-                  <span className="diff-file-list__status">{f.status[0]}</span>
+                  <span
+                    className={`diff-file-list__status status-${f.status[0] ?? "M"}`}
+                  >
+                    {f.status[0]}
+                  </span>
                   <span className="diff-file-list__path" title={f.path}>
                     {f.path}
                   </span>

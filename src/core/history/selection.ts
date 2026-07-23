@@ -1,5 +1,8 @@
 /** Pure dual-select rules for History compare (testable without host). */
 
+/** Sentinel id for “Uncommitted changes” (worktree). */
+export const WORKTREE_SELECTION = "__worktree__";
+
 export type ToggleResult =
   | { ok: true; selectedHashes: string[] }
   | { ok: false; selectedHashes: string[]; reason: string };
@@ -35,11 +38,41 @@ export function compareLabel(
   selectedHashes: string[],
   shortOf: (hash: string) => string,
 ): string | null {
-  if (selectedHashes.length === 2) {
-    return `${shortOf(selectedHashes[0]!)} → ${shortOf(selectedHashes[1]!)}`;
-  }
+  if (selectedHashes.length === 0) return null;
+  const labelOf = (h: string) =>
+    h === WORKTREE_SELECTION ? "worktree" : shortOf(h);
   if (selectedHashes.length === 1) {
-    return `${shortOf(selectedHashes[0]!)} → worktree`;
+    const only = selectedHashes[0]!;
+    if (only === WORKTREE_SELECTION) return "HEAD → worktree";
+    return `${labelOf(only)} → worktree`;
   }
-  return null;
+  const a = selectedHashes[0]!;
+  const b = selectedHashes[1]!;
+  // Worktree always as head side for a readable range
+  if (a === WORKTREE_SELECTION && b !== WORKTREE_SELECTION) {
+    return `${labelOf(b)} → worktree`;
+  }
+  if (b === WORKTREE_SELECTION) {
+    return `${labelOf(a)} → worktree`;
+  }
+  return `${labelOf(a)} → ${labelOf(b)}`;
+}
+
+/** Resolve selection into base/head for compare IPC. */
+export function resolveCompareRange(selectedHashes: string[]): {
+  base: string;
+  head: string | "worktree";
+} | null {
+  if (selectedHashes.length === 0) return null;
+  if (selectedHashes.length === 1) {
+    const only = selectedHashes[0]!;
+    if (only === WORKTREE_SELECTION) return { base: "HEAD", head: "worktree" };
+    return { base: only, head: "worktree" };
+  }
+  const a = selectedHashes[0]!;
+  const b = selectedHashes[1]!;
+  if (a === WORKTREE_SELECTION && b === WORKTREE_SELECTION) return null;
+  if (a === WORKTREE_SELECTION) return { base: b, head: "worktree" };
+  if (b === WORKTREE_SELECTION) return { base: a, head: "worktree" };
+  return { base: a, head: b };
 }

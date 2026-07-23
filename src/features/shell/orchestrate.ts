@@ -79,8 +79,18 @@ export async function openFileFromTree(path: string): Promise<void> {
   }
 }
 
-export async function runHistoryCompare(): Promise<void> {
-  const payload = await useHistoryStore.getState().runCompare();
+/** Explicit Start Compare — never auto-focus middle on selection alone. */
+export async function openHistoryCompare(repoRoot: string): Promise<void> {
+  const payload = await useHistoryStore.getState().runCompare(repoRoot);
+  if (payload) {
+    useDocumentStore.getState().openDiff(payload);
+  }
+}
+
+export async function openHistoryRecent(
+  entry: import("@/shared/anchor-api").HistoryCompareEntry,
+): Promise<void> {
+  const payload = await useHistoryStore.getState().openRecentCompare(entry);
   if (payload) {
     useDocumentStore.getState().openDiff(payload);
   }

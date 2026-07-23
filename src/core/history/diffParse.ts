@@ -35,6 +35,7 @@ export function formatCompareTitle(
   head: string | "worktree",
   headShort?: string,
 ): string {
-  if (head === "worktree") return `${baseShort} → worktree`;
-  return `${baseShort} → ${headShort ?? head.slice(0, 7)}`;
+  const base = baseShort === "HEAD" ? "HEAD" : baseShort;
+  if (head === "worktree") return `${base} → worktree`;
+  return `${base} → ${headShort ?? head.slice(0, 7)}`;
 }

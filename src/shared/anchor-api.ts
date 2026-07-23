@@ -91,6 +91,31 @@ export interface FileDiffContent {
   status: string;
 }
 
+export interface StatusEntry {
+  path: string;
+  status: string;
+  code: string;
+}
+
+export interface RepoStatus {
+  repoRoot: string;
+  entries: StatusEntry[];
+  modified: number;
+  added: number;
+  deleted: number;
+  untracked: number;
+}
+
+export interface HistoryCompareEntry {
+  id: string;
+  repoRoot: string;
+  repoName: string;
+  base: string;
+  head: string | "worktree";
+  label: string;
+  createdAt: string;
+}
+
 export type TerminalSessionKind = "shell" | "agent";
 export type TerminalTitleSource = "default" | "user" | "inferred";
 
@@ -269,6 +294,7 @@ export interface AnchorApi {
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
     loadLog: (repoRoot: string) => Promise<CommitRow[]>;
+    status: (repoRoot: string) => Promise<RepoStatus>;
     compare: (args: {
       repoRoot: string;
       base: string;
@@ -281,6 +307,15 @@ export interface AnchorApi {
       path: string;
       status: string;
     }) => Promise<FileDiffContent>;
+    getRecentCompares: (workspaceRoot: string) => Promise<HistoryCompareEntry[]>;
+    pushRecentCompare: (args: {
+      workspaceRoot: string;
+      entry: HistoryCompareEntry;
+    }) => Promise<HistoryCompareEntry[]>;
+    removeRecentCompare: (args: {
+      workspaceRoot: string;
+      id: string;
+    }) => Promise<HistoryCompareEntry[]>;
   };
   annotations: {
     locateGitRoot: (filePath: string) => Promise<string | null>;

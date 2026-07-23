@@ -2,23 +2,44 @@ import type { UiTheme } from "@/shared/anchor-api";
 
 export type { UiTheme };
 
+export const UI_THEMES: UiTheme[] = ["light", "light-modern", "dark", "dark-modern"];
+
+/** Shared monospace stack for CodeViewer + DiffViewer (must stay identical). */
+export const EDITOR_FONT_FAMILY =
+  "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, 'Courier New', monospace";
+
+export const EDITOR_FONT_SIZE = 13;
+export const EDITOR_LINE_HEIGHT = 20;
+
 export function normalizeTheme(value: unknown): UiTheme {
-  return value === "dark" ? "dark" : "light";
+  if (
+    value === "dark" ||
+    value === "dark-modern" ||
+    value === "light" ||
+    value === "light-modern"
+  ) {
+    return value;
+  }
+  return "light";
+}
+
+export function isDarkTheme(theme: UiTheme): boolean {
+  return theme === "dark" || theme === "dark-modern";
 }
 
 /** Apply theme to documentElement for CSS variables / color-scheme. */
 export function applyDocumentTheme(theme: UiTheme): void {
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root.style.colorScheme = theme;
+  root.style.colorScheme = isDarkTheme(theme) ? "dark" : "light";
 }
 
-/**
- * Monaco theme ids registered in monacoSetup (neutral zinc + warm sand).
- * Falls back to built-ins only if custom registration failed.
- */
+/** Monaco theme ids registered in monacoSetup. */
 export function monacoThemeId(theme: UiTheme): string {
-  return theme === "dark" ? "anchor-dark" : "anchor-light";
+  if (theme === "dark-modern") return "anchor-dark-modern";
+  if (theme === "dark") return "anchor-dark";
+  if (theme === "light-modern") return "anchor-light-modern";
+  return "anchor-light";
 }
 
 const XTERM_LIGHT: Record<string, string> = {
@@ -46,6 +67,31 @@ const XTERM_LIGHT: Record<string, string> = {
   brightWhite: "#1c1b19",
 };
 
+const XTERM_LIGHT_MODERN: Record<string, string> = {
+  background: "#ffffff",
+  foreground: "#3b3b3b",
+  cursor: "#000000",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#add6ff",
+  selectionForeground: "#3b3b3b",
+  black: "#000000",
+  red: "#cd3131",
+  green: "#00bc00",
+  yellow: "#949800",
+  blue: "#0451a5",
+  magenta: "#bc05bc",
+  cyan: "#0598bc",
+  white: "#555555",
+  brightBlack: "#666666",
+  brightRed: "#cd3131",
+  brightGreen: "#14ce14",
+  brightYellow: "#b5ba00",
+  brightBlue: "#0451a5",
+  brightMagenta: "#bc05bc",
+  brightCyan: "#0598bc",
+  brightWhite: "#a5a5a5",
+};
+
 const XTERM_DARK: Record<string, string> = {
   background: "#101011",
   foreground: "#ececec",
@@ -71,9 +117,41 @@ const XTERM_DARK: Record<string, string> = {
   brightWhite: "#f5f5f5",
 };
 
+const XTERM_DARK_MODERN: Record<string, string> = {
+  background: "#1f1f1f",
+  foreground: "#cccccc",
+  cursor: "#aeafad",
+  cursorAccent: "#1f1f1f",
+  selectionBackground: "#264f78",
+  selectionForeground: "#cccccc",
+  black: "#000000",
+  red: "#cd3131",
+  green: "#0dbc79",
+  yellow: "#e5e510",
+  blue: "#2472c8",
+  magenta: "#bc3fbc",
+  cyan: "#11a8cd",
+  white: "#e5e5e5",
+  brightBlack: "#666666",
+  brightRed: "#f14c4c",
+  brightGreen: "#23d18b",
+  brightYellow: "#f5f543",
+  brightBlue: "#3b8eea",
+  brightMagenta: "#d670d6",
+  brightCyan: "#29b8db",
+  brightWhite: "#e5e5e5",
+};
+
+function xtermFallback(theme: UiTheme): Record<string, string> {
+  if (theme === "dark-modern") return XTERM_DARK_MODERN;
+  if (theme === "dark") return XTERM_DARK;
+  if (theme === "light-modern") return XTERM_LIGHT_MODERN;
+  return XTERM_LIGHT;
+}
+
 /** xterm.js ITheme derived from current CSS variables (or static fallbacks). */
 export function xtermThemeFromCss(theme: UiTheme): Record<string, string> {
-  const fallback = theme === "dark" ? XTERM_DARK : XTERM_LIGHT;
+  const fallback = xtermFallback(theme);
   if (typeof document === "undefined") return { ...fallback };
   const cs = getComputedStyle(document.documentElement);
   const read = (name: string, fb: string) => {
@@ -96,7 +174,7 @@ export function xtermThemeFromCss(theme: UiTheme): Record<string, string> {
 export function resolveInitialTheme(): UiTheme {
   try {
     const stored = localStorage.getItem("anchor.theme");
-    if (stored === "dark" || stored === "light") return stored;
+    return normalizeTheme(stored);
   } catch {
     // ignore
   }
@@ -113,5 +191,8 @@ export function cacheThemeLocally(theme: UiTheme): void {
 
 /** Accent for Monaco decorations (matches CSS --accent). */
 export function accentHex(theme: UiTheme): string {
-  return theme === "dark" ? "#d2b48c" : "#8a6a2f";
+  if (theme === "dark-modern") return "#3794ff";
+  if (theme === "light-modern") return "#005fb8";
+  if (theme === "dark") return "#d2b48c";
+  return "#8a6a2f";
 }

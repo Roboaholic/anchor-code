@@ -36,7 +36,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     applyDocumentTheme(get().theme);
     try {
       const fromMain = await window.anchor?.settings?.getTheme?.();
-      if (fromMain === "light" || fromMain === "dark") {
+      if (
+        fromMain === "light" ||
+        fromMain === "light-modern" ||
+        fromMain === "dark" ||
+        fromMain === "dark-modern"
+      ) {
         get().applyTheme(fromMain);
       }
     } catch {
@@ -50,7 +55,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     get().applyTheme(next);
     try {
       const saved = await window.anchor?.settings?.setTheme?.(next);
-      if (saved === "light" || saved === "dark") {
+      if (
+        saved === "light" ||
+        saved === "light-modern" ||
+        saved === "dark" ||
+        saved === "dark-modern"
+      ) {
         get().applyTheme(saved);
       }
     } catch {

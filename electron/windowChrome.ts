@@ -5,14 +5,27 @@ import type { UiTheme } from "./settings.js";
 export const MENUBAR_OVERLAY_HEIGHT = 32;
 
 /**
- * Caption overlay must match --bg-panel exactly so the top row is one surface
- * (no darker strip behind minimize/maximize/close).
+ * Caption overlay must match --bg-panel exactly so the top row is one surface.
  */
 export function titleBarOverlayFor(theme: UiTheme): Electron.TitleBarOverlay {
+  if (theme === "dark-modern") {
+    return {
+      color: "#1f1f1f",
+      symbolColor: "#cccccc",
+      height: MENUBAR_OVERLAY_HEIGHT,
+    };
+  }
   if (theme === "dark") {
     return {
       color: "#171718",
       symbolColor: "#ececec",
+      height: MENUBAR_OVERLAY_HEIGHT,
+    };
+  }
+  if (theme === "light-modern") {
+    return {
+      color: "#ffffff",
+      symbolColor: "#3b3b3b",
       height: MENUBAR_OVERLAY_HEIGHT,
     };
   }
@@ -24,7 +37,10 @@ export function titleBarOverlayFor(theme: UiTheme): Electron.TitleBarOverlay {
 }
 
 export function shellBackground(theme: UiTheme): string {
-  return theme === "dark" ? "#101011" : "#f4f3f1";
+  if (theme === "dark-modern") return "#181818";
+  if (theme === "dark") return "#101011";
+  if (theme === "light-modern") return "#f3f3f3";
+  return "#f4f3f1";
 }
 
 export function applyWindowChromeTheme(

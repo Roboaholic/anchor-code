@@ -2,7 +2,7 @@
 
 export type HostKind = "local" | "wsl" | "ssh";
 
-export type UiTheme = "light" | "dark";
+export type UiTheme = "light" | "light-modern" | "dark" | "dark-modern";
 
 export interface AppVersionInfo {
   app: string;

@@ -1,4 +1,10 @@
-import { accentHex, monacoThemeId } from "@/core/theme/theme";
+import {
+  accentHex,
+  EDITOR_FONT_FAMILY,
+  EDITOR_FONT_SIZE,
+  EDITOR_LINE_HEIGHT,
+  monacoThemeId,
+} from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
@@ -385,10 +391,9 @@ export function CodeViewer({
             readOnly: true,
             domReadOnly: true,
             minimap: { enabled: false },
-            fontSize: 13,
-            lineHeight: 20,
-            fontFamily:
-              "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
+            fontSize: EDITOR_FONT_SIZE,
+            lineHeight: EDITOR_LINE_HEIGHT,
+            fontFamily: EDITOR_FONT_FAMILY,
             scrollBeyondLastLine: false,
             wordWrap: "on",
             // No current-line flash on single click; double-click still selects word.
@@ -396,6 +401,14 @@ export function CodeViewer({
             selectionHighlight: false,
             occurrencesHighlight: "off",
             matchBrackets: "never",
+            // Don't flag fullwidth Chinese punctuation (（） etc.) as errors.
+            unicodeHighlight: {
+              ambiguousCharacters: false,
+              invisibleCharacters: false,
+              nonBasicASCII: false,
+              includeComments: false,
+              includeStrings: false,
+            },
             padding: { top: 12, bottom: 12 },
             automaticLayout: true,
             contextmenu: true,

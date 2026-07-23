@@ -75,7 +75,7 @@ export interface AppSettings {
     leftWidth?: number;
     rightWidth?: number;
     /** Workbench color theme. Default light. */
-    theme?: "light" | "dark";
+    theme?: "light" | "light-modern" | "dark" | "dark-modern";
   };
 }
 
@@ -232,10 +232,18 @@ export async function removeHistoryRecentCompare(
   return all[workspaceRoot] ?? [];
 }
 
-export type UiTheme = "light" | "dark";
+export type UiTheme = "light" | "light-modern" | "dark" | "dark-modern";
 
 export function normalizeTheme(value: unknown): UiTheme {
-  return value === "dark" ? "dark" : "light";
+  if (
+    value === "dark" ||
+    value === "dark-modern" ||
+    value === "light" ||
+    value === "light-modern"
+  ) {
+    return value;
+  }
+  return "light";
 }
 
 export async function getUiTheme(): Promise<UiTheme> {

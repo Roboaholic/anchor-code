@@ -353,9 +353,11 @@ const anchor = {
     },
   },
   settings: {
-    getTheme: (): Promise<"light" | "dark"> =>
+    getTheme: (): Promise<"light" | "light-modern" | "dark" | "dark-modern"> =>
       ipcRenderer.invoke("settings:getTheme"),
-    setTheme: (theme: "light" | "dark"): Promise<"light" | "dark"> =>
+    setTheme: (
+      theme: "light" | "light-modern" | "dark" | "dark-modern",
+    ): Promise<"light" | "light-modern" | "dark" | "dark-modern"> =>
       ipcRenderer.invoke("settings:setTheme", theme),
   },
   agent: {

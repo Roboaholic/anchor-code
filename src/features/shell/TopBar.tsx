@@ -17,9 +17,19 @@ const THEME_OPTIONS: Array<{
     description: "Warm paper panels for daytime reading.",
   },
   {
+    id: "light-modern",
+    label: "Light Modern",
+    description: "VS Code Light Modern workbench and blue accents.",
+  },
+  {
     id: "dark",
     label: "Dark",
-    description: "Neutral charcoal shell and editors.",
+    description: "Neutral charcoal shell with warm sand accents.",
+  },
+  {
+    id: "dark-modern",
+    label: "Dark Modern",
+    description: "VS Code Dark Modern workbench and blue accents.",
   },
 ];
 

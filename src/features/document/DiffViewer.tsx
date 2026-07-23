@@ -13,7 +13,12 @@ import {
 import type { OpenItem } from "./documentStore";
 import { useDocumentStore } from "./documentStore";
 import { useThemeStore } from "@/features/shell/themeStore";
-import { monacoThemeId } from "@/core/theme/theme";
+import {
+  EDITOR_FONT_FAMILY,
+  EDITOR_FONT_SIZE,
+  EDITOR_LINE_HEIGHT,
+  monacoThemeId,
+} from "@/core/theme/theme";
 import "./monacoSetup";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
@@ -338,7 +343,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 renderSideBySideInlineBreakpoint: sideBySide ? 0 : 1e9,
                 useInlineViewWhenSpaceIsLimited: !sideBySide,
                 minimap: { enabled: false },
-                fontSize: 12.5,
+                fontSize: EDITOR_FONT_SIZE,
+                lineHeight: EDITOR_LINE_HEIGHT,
+                fontFamily: EDITOR_FONT_FAMILY,
                 automaticLayout: true,
                 scrollBeyondLastLine: false,
                 wordWrap: "on",
@@ -347,6 +354,13 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 selectionHighlight: false,
                 occurrencesHighlight: "off",
                 matchBrackets: "never",
+                unicodeHighlight: {
+                  ambiguousCharacters: false,
+                  invisibleCharacters: false,
+                  nonBasicASCII: false,
+                  includeComments: false,
+                  includeStrings: false,
+                },
               }}
             />
           )}

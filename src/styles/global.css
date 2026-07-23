@@ -63,9 +63,65 @@
   --left-footer-h: 36px;
 }
 
+
+:root[data-theme="light-modern"] {
+  color-scheme: light;
+  /* VS Code Light Modern workbench */
+  --bg: #f3f3f3;
+  --bg-panel: #ffffff;
+  --bg-muted: #f0f0f0;
+  --bg-hover: #e8e8e8;
+  --bg-active: #e8e8e8;
+  --border: #e5e5e5;
+  --border-strong: #cecece;
+  --text: #3b3b3b;
+  --text-secondary: #616161;
+  --text-muted: #8b8b8b;
+  --accent: #005fb8;
+  --accent-soft: #e5f1fb;
+  --accent-border: #90c2f9;
+  --accent-border-strong: #005fb8;
+  --accent-hover: #d6ebff;
+  --danger: #a1260d;
+  --danger-bg: #fce4e4;
+  --danger-border: #f14c4c;
+  --warn: #bf8803;
+  --warn-bg: #fff4ce;
+  --warn-border: #bf8803;
+  --warn-strong: #9d7400;
+  --ok: #388a34;
+  --ok-bg: #e5f5e5;
+  --ok-border: #388a34;
+  --ok-strong: #388a34;
+  --ok-dot: #388a34;
+  --chip-discuss-bg: #e5f1fb;
+  --chip-discuss-fg: #005fb8;
+  --chip-modify-bg: #fff4ce;
+  --chip-modify-fg: #9d7400;
+  --chip-closed-bg: #e8e8e8;
+  --chip-closed-fg: #616161;
+  --overlay: rgba(0, 0, 0, 0.32);
+  --tab-chip: rgba(0, 0, 0, 0.04);
+  --field-well: #f3f3f3;
+  --brand: #3b3b3b;
+  --terminal-bg: #ffffff;
+  --terminal-fg: #3b3b3b;
+  --terminal-border: #e5e5e5;
+  --terminal-muted: #8b8b8b;
+  --terminal-tab-bg: #f3f3f3;
+  --terminal-tab-active: #ffffff;
+  --terminal-selection: #add6ff;
+  --terminal-cursor: #000000;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 12px 40px rgba(0, 0, 0, 0.14);
+  --shadow-toolbar: 0 3px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
-  /* Neutral zinc charcoal — surfaces share one gray ladder, no blue cast */
+  /* Neutral zinc charcoal shell (UI) — editor syntax is separate */
   --bg: #101011;
   --bg-panel: #171718;
   --bg-muted: #1e1e20;
@@ -76,7 +132,7 @@
   --text: #ececec;
   --text-secondary: #a8a8ad;
   --text-muted: #78787e;
-  /* Warm sand accent for selection / badges / focus */
+  /* Warm sand accent — keep orange/sand highlights */
   --accent: #d2b48c;
   --accent-soft: #2a261c;
   --accent-border: #6b5a3a;
@@ -118,6 +174,62 @@
   --shadow-toolbar: 0 3px 4px -2px rgba(0, 0, 0, 0.5);
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
+
+:root[data-theme="dark-modern"] {
+  color-scheme: dark;
+  /* VS Code Dark Modern workbench */
+  --bg: #181818;
+  --bg-panel: #1f1f1f;
+  --bg-muted: #2b2b2b;
+  --bg-hover: #2a2d2e;
+  --bg-active: #04395e;
+  --border: #2b2b2b;
+  --border-strong: #3c3c3c;
+  --text: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-muted: #6e6e6e;
+  --accent: #3794ff;
+  --accent-soft: #094771;
+  --accent-border: #264f78;
+  --accent-border-strong: #3794ff;
+  --accent-hover: #0e639c;
+  --danger: #f14c4c;
+  --danger-bg: #5a1d1d;
+  --danger-border: #be1100;
+  --warn: #cca700;
+  --warn-bg: #5a4e00;
+  --warn-border: #bf8803;
+  --warn-strong: #cca700;
+  --ok: #89d185;
+  --ok-bg: #1e3a1e;
+  --ok-border: #388a34;
+  --ok-strong: #89d185;
+  --ok-dot: #89d185;
+  --chip-discuss-bg: #264f78;
+  --chip-discuss-fg: #9cdcfe;
+  --chip-modify-bg: #5a4e00;
+  --chip-modify-fg: #e2c08d;
+  --chip-closed-bg: #3c3c3c;
+  --chip-closed-fg: #cccccc;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --tab-chip: rgba(255, 255, 255, 0.04);
+  --field-well: #181818;
+  --brand: #cccccc;
+  --terminal-bg: #1f1f1f;
+  --terminal-fg: #cccccc;
+  --terminal-border: #2b2b2b;
+  --terminal-muted: #6e6e6e;
+  --terminal-tab-bg: #181818;
+  --terminal-tab-active: #1f1f1f;
+  --terminal-selection: #264f78;
+  --terminal-cursor: #aeafad;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --shadow-toolbar: 0 3px 4px -2px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
 
 *,
 *::before,
@@ -779,17 +891,20 @@ button.search-field:hover {
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 34px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border);
-  /* Darker than panel so inactive tabs / labels stay readable */
-  background: var(--bg-muted);
+  height: 36px;
+  padding: 3px 8px 0;
+  /* Seam as background line (last 1px). Tabs stay top-aligned. */
+  border-bottom: none;
+  background:
+    linear-gradient(var(--border), var(--border)) left bottom / 100% 1px no-repeat,
+    var(--bg-muted);
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  /* Never show a native scrollbar under the strip (Windows classic arrows). */
   scrollbar-width: none;
   -ms-overflow-style: none;
+  position: relative;
+  z-index: 1;
 }
 
 .tabs::-webkit-scrollbar {
@@ -802,8 +917,13 @@ button.search-field:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  /* Fill strip under top padding; tops aligned to each other */
+  height: calc(100% - 0px);
+  /* Optical: leave a hair of strip above the tab caps */
+  margin-top: 0;
+  box-sizing: border-box;
   padding: 0 8px 0 10px;
+  padding-bottom: 1px; /* reserve seam row for inactive tabs */
   border-radius: var(--radius) var(--radius) 0 0;
   color: var(--text-muted);
   font-size: 12.5px;
@@ -812,13 +932,14 @@ button.search-field:hover {
   max-width: 180px;
   border: 1px solid transparent;
   border-bottom: none;
-  /* Soft chip on muted strip — distinct from active white panel */
   background: var(--tab-chip);
+  background-clip: padding-box;
   position: relative;
-  top: 1px; /* sit on the strip border */
   margin: 0;
+  top: 0;
   cursor: grab;
   user-select: none;
+  z-index: 0;
 }
 
 .tab:hover:not(.is-active) {
@@ -830,10 +951,24 @@ button.search-field:hover {
 .tab.is-active {
   background: var(--bg-panel);
   color: var(--text);
-  border-color: var(--border);
-  border-bottom: 1px solid var(--bg-panel);
-  z-index: 1;
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  /* Same height as other tabs — tops stay aligned */
+  padding-bottom: 1px;
+  z-index: 2;
+  box-shadow: none;
+}
+
+/* Cover the 1px seam under the active tab only (inside the strip, no height jump) */
+.tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--bg-panel);
+  pointer-events: none;
 }
 
 .tab.is-dragging {
@@ -888,7 +1023,7 @@ button.search-field:hover {
   width: 28px;
   justify-content: center;
   color: var(--text-muted);
-  top: 1px;
+  top: 0;
 }
 
 .document-area__content {
@@ -897,9 +1032,9 @@ button.search-field:hover {
   overflow: auto;
   padding: 28px 36px 48px;
   background: var(--bg-panel);
-  /* flush with tab strip 鈥?no extra top border / gap */
   margin-top: 0;
   border-top: none;
+  box-shadow: none;
 }
 
 .document-area__content--fill {
@@ -914,6 +1049,8 @@ button.search-field:hover {
   overflow: auto;
   flex: 1;
 }
+
+
 
 .welcome {
   max-width: 640px;
@@ -1190,24 +1327,30 @@ button.search-field:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  height: 36px;
-  padding: 0 8px 0 6px;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px 0 8px;
   border-bottom: 1px solid var(--terminal-border);
   background: var(--bg-panel);
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .terminal-panel__header-left,
 .terminal-panel__header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .terminal-panel__header-left {
-  flex: 1;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.terminal-panel__header-right {
+  flex: 0 0 auto;
 }
 
 .terminal-panel__title {
@@ -1223,7 +1366,9 @@ button.search-field:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40%;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: min(180px, 36%);
 }
 
 .terminal-mode-switch {
@@ -1237,6 +1382,7 @@ button.search-field:hover {
   border: 1px solid var(--border);
   flex-shrink: 0;
   isolation: isolate;
+  min-width: 148px;
 }
 
 /* Sliding elevated pill — Agent is first column, Terminal second */
@@ -1265,9 +1411,9 @@ button.search-field:hover {
 .terminal-mode-switch__btn {
   position: relative;
   z-index: 1;
-  height: 22px;
-  min-width: 64px;
-  padding: 0 10px;
+  height: 24px;
+  min-width: 72px;
+  padding: 0 12px;
   border: none;
   border-radius: calc(var(--radius) - 2px);
   background: transparent;
@@ -3233,8 +3379,9 @@ select.field__input {
 /* ── New agent session modal ───────────────────────── */
 
 .modal--agent-new {
-  width: min(440px, calc(100vw - 32px));
-  gap: 14px;
+  width: min(480px, calc(100vw - 32px));
+  gap: 16px;
+  padding: 16px 18px 18px;
 }
 
 .agent-new__task {
@@ -3274,10 +3421,16 @@ select.field__input {
 .agent-new__grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 12px;
 }
 
 @media (min-width: 420px) {
+  .agent-new__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 560px) {
   .agent-new__grid {
     grid-template-columns: 1fr 1fr 1fr;
   }
@@ -3669,6 +3822,10 @@ select.field__input {
 
 .topbar-settings__swatch--light {
   background: linear-gradient(135deg, #f4f3f1 45%, #faf9f7 45%);
+}
+
+.topbar-settings__swatch--light-modern {
+  background: linear-gradient(135deg, #f3f3f3 45%, #ffffff 45%);
 }
 
 .topbar-settings__swatch--dark {

@@ -691,7 +691,7 @@ button.search-field:hover {
   border-radius: var(--radius);
   border: 1px solid transparent;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--text-secondary);
   text-align: left;
@@ -754,7 +754,7 @@ button.search-field:hover {
 .files-pane__title {
   padding: 4px 12px 8px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
@@ -1048,8 +1048,7 @@ button.search-field:hover {
   padding: 0;
   overflow: auto;
   flex: 1;
-  display: flex;
-  justify-content: center;
+  display: block;
   background: var(--bg-panel);
 }
 
@@ -1057,101 +1056,140 @@ button.search-field:hover {
   width: 100%;
   max-width: none;
   margin: 0;
-  display: flex;
-  justify-content: center;
+  display: block;
 }
 
 .welcome__inner {
-  width: min(520px, 100%);
+  width: min(640px, calc(100% - 96px));
+  max-width: 640px;
   margin: 0;
-  padding: min(10vh, 72px) 40px 48px;
+  padding: min(10vh, 72px) 0 56px 48px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.welcome__title,
+.welcome__lead,
+.welcome__cta,
+.welcome__steps {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  box-sizing: border-box;
 }
 
 .welcome__title {
-  margin: 0 0 12px;
+  margin: 0 0 18px;
   font-family: "EB Garamond", "Palatino Linotype", "Book Antiqua", Palatino,
     "Times New Roman", Georgia, "Noto Serif", serif;
-  font-size: clamp(34px, 4.5vw, 44px);
-  font-weight: 400;
-  letter-spacing: -0.015em;
-  line-height: 1.15;
+  font-size: clamp(44px, 5.5vw, 58px) !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.01em;
+  line-height: 1.08 !important;
   color: var(--brand);
+  font-synthesis: none;
+  border-bottom: none !important;
+  padding-bottom: 0 !important;
 }
 
 .welcome__lead {
-  margin: 0 0 24px;
-  max-width: 36em;
-  font-size: 14.5px;
-  line-height: 1.55;
+  margin: 0 0 32px;
+  font-size: 15px;
+  line-height: 1.6;
   font-weight: 400;
   color: var(--text-secondary);
 }
 
 .welcome__cta {
-  margin: 0 0 28px;
+  margin: 0 0 40px;
+  display: block;
+  width: 100%;
 }
 
+.welcome .btn.welcome__cta-btn,
 .welcome__cta-btn {
-  height: 36px;
-  padding: 0 14px;
-  gap: 8px;
-  font-size: 13px;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-wrap: nowrap !important;
+  width: fit-content !important;
+  max-width: 100%;
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  padding: 0 18px !important;
+  gap: 10px !important;
+  font-size: 13.5px;
   font-weight: 600;
+  white-space: nowrap !important;
+  box-sizing: border-box;
+}
+
+.welcome__cta > .btn {
+  width: fit-content !important;
 }
 
 .welcome__cta-icon,
 .welcome__cta-btn .codicon {
-  font-size: 16px !important;
-  width: 16px;
-  height: 16px;
-  line-height: 1;
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  font-size: 17px !important;
+  width: 17px !important;
+  height: 17px !important;
+  line-height: 1 !important;
+  margin: 0 !important;
 }
 
 .welcome__steps {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  padding-inline-start: 0 !important;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .welcome__steps li {
-  display: flex;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  column-gap: 14px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-muted);
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
 }
 
 .welcome__step-n {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1;
   color: var(--accent);
   background: var(--bg-panel);
   border: 1px solid var(--border);
+  box-sizing: border-box;
 }
 
 .welcome__step-body {
-  flex: 1;
   min-width: 0;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 13.5px;
+  line-height: 1.45;
   font-weight: 400;
   color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .empty-center {
@@ -1360,28 +1398,9 @@ button.search-field:hover {
   color: var(--accent);
 }
 
-.welcome__title {
-  margin: 0 0 12px;
-  font-size: 28px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
 
-.welcome__lead {
-  margin: 0 0 20px;
-  font-size: 14.5px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
 
-.welcome__cta {
-  margin: 0 0 24px;
-}
 
-.welcome__cta .btn {
-  height: 32px;
-  padding: 0 12px;
-}
 
 .files-pane__actions {
   padding: 4px 12px 12px;
@@ -1476,9 +1495,6 @@ button.search-field:hover {
   line-height: 1.7;
 }
 
-.welcome__steps li {
-  margin-bottom: 8px;
-}
 
 
 
@@ -2102,8 +2118,10 @@ button.search-field:hover {
 
 .history-pane__toolbar .files-pane__title {
   font-size: 10px;
+  font-weight: 500;
   letter-spacing: 0.05em;
   line-height: 1;
+  color: var(--text-muted);
 }
 
 .history-pane__toolbar .btn {
@@ -2199,8 +2217,8 @@ button.search-field:hover {
 
 .repo-row.is-expanded > .repo-row__header {
   background: var(--bg-panel);
-  /* Shadow only under the repo bar to separate nested sections */
-  box-shadow: var(--shadow-toolbar);
+  box-shadow: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   position: relative;
   z-index: 1;
 }
@@ -2215,11 +2233,17 @@ button.search-field:hover {
 .repo-row__name {
   flex: 1;
   min-width: 0;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 12px;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.repo-row.is-expanded > .repo-row__header .repo-row__name {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .repo-row__meta {
@@ -2229,11 +2253,14 @@ button.search-field:hover {
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent);
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .repo-row__count {
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .repo-row__count.is-muted {
@@ -2241,11 +2268,10 @@ button.search-field:hover {
   font-weight: 400;
 }
 
-/* Nested sections: keep prior indent structure; light gray only for contrast */
+/* Nested sections */
 .repo-row__body {
   padding: 0 0 2px;
   margin: 0;
-  /* Soft wash — lighter than --bg-muted so it stays subtle */
   background: color-mix(in srgb, var(--bg-panel) 78%, var(--bg-muted) 22%);
 }
 
@@ -2257,6 +2283,7 @@ button.search-field:hover {
   box-shadow: none;
   overflow: visible;
 }
+
 .repo-block + .repo-block {
   margin-top: 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, var(--bg-panel));
@@ -2268,7 +2295,6 @@ button.search-field:hover {
   justify-content: space-between;
   gap: 6px;
   min-height: 22px;
-  /* Indent under repo name (past chevron) */
   padding: 0 10px 0 30px;
   background: transparent;
   border-bottom: none;
@@ -2276,8 +2302,8 @@ button.search-field:hover {
 
 .repo-block__title {
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -2385,7 +2411,7 @@ button.search-field:hover {
 .diff-file-list__status {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--accent);
 }
 
@@ -2495,7 +2521,7 @@ button.search-field:hover {
 .diff-file-list__status {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--accent);
 }
 

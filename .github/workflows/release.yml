@@ -51,26 +51,12 @@ jobs:
           - os: windows-latest
             platform: win
             pack: pack:win
-            artifacts: |
-              release/*.exe
-              release/*.blockmap
-              release/latest.yml
           - os: macos-latest
             platform: mac
             pack: pack:mac
-            # apple silicon runner produces arm64; x64 via electron-builder arch list
-            artifacts: |
-              release/*.dmg
-              release/*.zip
-              release/*.blockmap
-              release/latest-mac.yml
           - os: ubuntu-latest
             platform: linux
             pack: pack:linux
-            artifacts: |
-              release/*.AppImage
-              release/*.deb
-              release/latest-linux.yml
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -107,14 +93,41 @@ jobs:
         shell: bash
         run: |
           ls -la release || true
-          find release -maxdepth 2 -type f | sort || true
+          find release -maxdepth 3 -type f | sort || true
+
+      # Only ship installers — not ConPTY helpers like OpenConsole.exe that break gh-release uploads.
+      - name: Stage installers for upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staged
+          shopt -s nullglob
+          case "${{ matrix.platform }}" in
+            win)
+              for f in release/Anchor*.exe release/*.blockmap release/latest.yml; do
+                [ -f "$f" ] && cp -v "$f" staged/
+              done
+              ;;
+            mac)
+              for f in release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml; do
+                [ -f "$f" ] && cp -v "$f" staged/
+              done
+              ;;
+            linux)
+              for f in release/*.AppImage release/*.deb release/latest-linux.yml; do
+                [ -f "$f" ] && cp -v "$f" staged/
+              done
+              ;;
+          esac
+          echo "--- staged ---"
+          ls -la staged
+          test "$(find staged -type f | wc -l)" -gt 0
 
       - name: Upload artifacts to job
         uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.platform }}
-          path: |
-            release/*
+          path: staged/*
           if-no-files-found: error
           retention-days: 14
 
@@ -139,12 +152,6 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
-            dist-packages/**/*.exe
-            dist-packages/**/*.blockmap
-            dist-packages/**/*.dmg
-            dist-packages/**/*.zip
-            dist-packages/**/*.AppImage
-            dist-packages/**/*.deb
-            dist-packages/**/latest*.yml
+            dist-packages/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

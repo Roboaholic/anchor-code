@@ -17,74 +17,55 @@ import {
   type RightTermMode,
 } from "./terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import type { AgentCliProfile } from "@/shared/anchor-api";
-import { NewAgentDialog } from "./NewAgentDialog";
 
-export function TerminalPanel() {
+export function TerminalPanel({ mode }: { mode: RightTermMode }) {
+  // Guard: never fall through to the other mode if prop is missing after HMR.
+  const panelMode: RightTermMode = mode === "agent" ? "agent" : "terminal";
   const tabs = useTerminalStore((s) => s.tabs);
-  const mode = useTerminalStore((s) => s.mode);
   const activeByMode = useTerminalStore((s) => s.activeByMode);
   const sessionListOpen = useTerminalStore((s) => s.sessionListOpen);
   const error = useTerminalStore((s) => s.error);
-  const agentProfiles = useTerminalStore((s) => s.agentProfiles);
-  const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
-  const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
-  const createAgentTab = useTerminalStore((s) => s.createAgentTab);
   const closeTab = useTerminalStore((s) => s.closeTab);
   const setActive = useTerminalStore((s) => s.setActive);
-  const setMode = useTerminalStore((s) => s.setMode);
   const toggleSessionList = useTerminalStore((s) => s.toggleSessionList);
   const setAgentMenuOpen = useTerminalStore((s) => s.setAgentMenuOpen);
-  const closeAgentMenu = useTerminalStore((s) => s.closeAgentMenu);
-  const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
-  const detectAgents = useTerminalStore((s) => s.detectAgents);
   const renameTab = useTerminalStore((s) => s.renameTab);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const resetForWorkspace = useTerminalStore((s) => s.resetForWorkspace);
 
-  const activeTabId = activeByMode[mode];
-  const modeTabs = sessionsForMode(tabs, mode);
+  const activeTabId = activeByMode[panelMode];
+  const modeTabs = sessionsForMode(tabs, panelMode);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const isAgent = panelMode === "agent";
 
-  // Ensure at least one shell when workspace open
+  // Ensure at least one shell when workspace open (owned by terminal panel).
   useEffect(() => {
+    if (panelMode !== "terminal") return;
     if (workspaceRoot && tabs.length === 0 && !error) {
       void resetForWorkspace(workspaceRoot);
     }
-  }, [workspaceRoot, tabs.length, error, resetForWorkspace]);
-
-  useEffect(() => {
-    void loadAgentProfiles();
-  }, [loadAgentProfiles, workspaceRoot]);
+  }, [panelMode, workspaceRoot, tabs.length, error, resetForWorkspace]);
 
   const onAdd = useCallback(() => {
     if (!workspaceRoot) return;
-    if (mode === "terminal") {
+    if (panelMode === "terminal") {
       void createShellTab();
       return;
     }
-    // Always open the create dialog for a new agent session.
+    // New agent dialog is hosted globally (Shell) — open without remounting rail.
     setAgentMenuOpen(true);
-  }, [workspaceRoot, mode, createShellTab, setAgentMenuOpen]);
+  }, [workspaceRoot, panelMode, createShellTab, setAgentMenuOpen]);
 
-  const onSelectAgentMode = useCallback(() => {
-    setMode("agent");
-    // setMode already opens the dialog when there are zero agent tabs.
-  }, [setMode]);
-
-  const onOpenAgent = useCallback(
-    (
-      p: AgentCliProfile,
-      launch: { model?: string; effort?: string; title?: string },
-    ) => {
-      void createAgentTab(p, launch);
-    },
-    [createAgentTab],
-  );
+  const placementClass = isAgent
+    ? "terminal-panel--side"
+    : "terminal-panel--bottom";
 
   return (
-    <aside className="terminal-panel">
+    <aside
+      className={`terminal-panel ${placementClass}`}
+      aria-label={isAgent ? "Agent panel" : "Terminal panel"}
+    >
       <header className="terminal-panel__header">
         <div className="terminal-panel__header-left">
           <button
@@ -100,13 +81,16 @@ export function TerminalPanel() {
           <button
             type="button"
             className="terminal-add-btn"
-            aria-label={mode === "agent" ? "New agent session" : "New terminal"}
-            title={mode === "agent" ? "New agent session" : "New shell"}
+            aria-label={isAgent ? "New agent session" : "New terminal"}
+            title={isAgent ? "New agent session" : "New shell"}
             onClick={onAdd}
             disabled={!workspaceRoot}
           >
             <Icon name="add" />
           </button>
+          <span className="terminal-panel__title">
+            {isAgent ? "AGENT" : "TERMINAL"}
+          </span>
           {activeTab ? (
             <span className="terminal-panel__active-title" title={activeTab.title}>
               {activeTab.title}
@@ -114,49 +98,12 @@ export function TerminalPanel() {
             </span>
           ) : null}
         </div>
-        <div className="terminal-panel__header-right">
-          <div
-            className={`terminal-mode-switch terminal-mode-switch--${mode}`}
-            role="tablist"
-            aria-label="Panel mode"
-          >
-            <span className="terminal-mode-switch__thumb" aria-hidden />
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "agent"}
-              className={`terminal-mode-switch__btn${mode === "agent" ? " is-active" : ""}`}
-              onClick={onSelectAgentMode}
-            >
-              Agent
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "terminal"}
-              className={`terminal-mode-switch__btn${mode === "terminal" ? " is-active" : ""}`}
-              onClick={() => setMode("terminal")}
-            >
-              Terminal
-            </button>
-          </div>
-        </div>
       </header>
-
-      {agentMenuOpen ? (
-        <NewAgentDialog
-          profiles={agentProfiles}
-          defaultAgentId={defaultAgentId}
-          onOpen={onOpenAgent}
-          onDetect={() => void detectAgents()}
-          onClose={() => closeAgentMenu()}
-        />
-      ) : null}
 
       <div className="terminal-panel__main">
         {sessionListOpen ? (
           <SessionRail
-            mode={mode}
+            mode={panelMode}
             tabs={modeTabs}
             activeTabId={activeTabId}
             onSelect={setActive}
@@ -174,19 +121,18 @@ export function TerminalPanel() {
             <pre className="terminal-mock">
               {`$ # Open a workspace to start a shell (cwd = workspace root)`}
             </pre>
-          ) : mode === "agent" && modeTabs.length === 0 ? (
-            // NewAgentDialog covers create flow — no empty mock page.
+          ) : isAgent && modeTabs.length === 0 ? (
+            // NewAgentDialog covers the create flow when agentMenuOpen.
             <div className="terminal-panel__body-empty" aria-hidden />
-          ) : mode === "terminal" && modeTabs.length === 0 ? (
+          ) : !isAgent && modeTabs.length === 0 ? (
             <pre className="terminal-mock">$ # Starting shell…</pre>
           ) : (
-            // Keep ALL sessions mounted for scrollback + keep-alive across modes.
-            tabs.map((t) => (
+            modeTabs.map((t) => (
               <XtermHost
                 key={t.id}
                 id={t.id}
                 kind={t.kind ?? "shell"}
-                active={t.id === activeTabId && modeOfVisible(t.kind) === mode}
+                active={t.id === activeTabId}
               />
             ))
           )}
@@ -194,10 +140,6 @@ export function TerminalPanel() {
       </div>
     </aside>
   );
-}
-
-function modeOfVisible(kind: string | undefined): RightTermMode {
-  return kind === "agent" ? "agent" : "terminal";
 }
 
 function SessionRail({

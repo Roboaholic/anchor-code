@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/shared/Icon";
 import type { UiTheme } from "@/shared/anchor-api";
+import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
 import { useShellStore } from "./shellStore";
@@ -34,7 +35,8 @@ const THEME_OPTIONS: Array<{
 ];
 
 export function TopBar() {
-  const toggleTerminal = useShellStore((s) => s.toggleTerminal);
+  const agentVisible = useShellStore((s) => s.agentVisible);
+  const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
   const versionLabel = useShellStore((s) => s.versionLabel);
   const openPalette = useShellStore((s) => s.openPalette);
@@ -89,6 +91,45 @@ export function TopBar() {
     tipTimerRef.current = setTimeout(() => setRightRailTip(false), 3200);
   };
 
+  /**
+   * Agent button:
+   * - No sessions yet → open create dialog only (side rail stays closed until confirm).
+   * - Has sessions → toggle the side rail.
+   */
+  const toggleAgentPanel = () => {
+    if (!workspaceRoot) {
+      showRightRailTip();
+      return;
+    }
+    setRightRailTip(false);
+
+    const tabs = useTerminalStore.getState().tabs;
+    const hasAgent = tabs.some((t) => (t.kind ?? "shell") === "agent");
+    const { agentVisible } = useShellStore.getState();
+
+    if (!hasAgent) {
+      // Dialog only — rail opens after the user confirms a new session.
+      if (useTerminalStore.getState().agentMenuOpen) {
+        useTerminalStore.getState().closeAgentMenu();
+      } else {
+        void useTerminalStore.getState().loadAgentProfiles();
+        useTerminalStore.getState().setAgentMenuOpen(true);
+      }
+      return;
+    }
+
+    useShellStore.setState({ agentVisible: !agentVisible });
+  };
+
+  const toggleTerminalPanel = () => {
+    if (!workspaceRoot) {
+      showRightRailTip();
+      return;
+    }
+    setRightRailTip(false);
+    useShellStore.setState((s) => ({ terminalVisible: !s.terminalVisible }));
+  };
+
   return (
     <header className="chrome">
       {/* Row 1: app menus (fused, not OS title strip) */}
@@ -128,101 +169,102 @@ export function TopBar() {
             </span>
           ) : null}
 
-          <div className="topbar__menu" ref={menuRef}>
-            <button
-              type="button"
-              className={`btn btn--ghost btn--icon topbar__rail-btn${settingsOpen ? " is-active" : ""}`}
-              onClick={() => setSettingsOpen(!settingsOpen)}
-              aria-expanded={settingsOpen}
-              aria-haspopup="dialog"
-              aria-controls="topbar-settings-panel"
-              aria-label="Settings"
-              title="Settings"
-            >
-              <Icon name="settings-gear" className="btn__icon" />
-            </button>
-            {settingsOpen ? (
-              <div
-                id="topbar-settings-panel"
-                className="topbar-settings"
-                role="dialog"
-                aria-label="Settings"
-              >
-                <div className="topbar-settings__head">
-                  <span className="topbar-settings__title">Appearance</span>
-                </div>
-                <div
-                  className="topbar-settings__themes"
-                  role="radiogroup"
-                  aria-label="Theme"
-                >
-                  {THEME_OPTIONS.map((opt) => {
-                    const active = theme === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        className={`topbar-settings__card${active ? " is-active" : ""}`}
-                        onClick={() => void setTheme(opt.id)}
-                      >
-                        <span
-                          className={`topbar-settings__swatch topbar-settings__swatch--${opt.id}`}
-                          aria-hidden
-                        />
-                        <span className="topbar-settings__meta">
-                          <span className="topbar-settings__label">
-                            {opt.label}
-                          </span>
-                          <span className="topbar-settings__hint">
-                            {opt.description}
-                          </span>
-                        </span>
-                        {active ? (
-                          <span className="topbar-settings__check" aria-hidden>
-                            ✓
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
+          {/* Settings / Agent / Terminal — one rail, equal spacing, mode-btn highlight */}
           <div className="topbar__right-rail" ref={rightRailRef}>
+            <div className="topbar__menu" ref={menuRef}>
+              <button
+                type="button"
+                className={`topbar__rail-btn${settingsOpen ? " is-active" : ""}`}
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                aria-expanded={settingsOpen}
+                aria-haspopup="dialog"
+                aria-controls="topbar-settings-panel"
+                aria-label="Settings"
+                title="Settings"
+              >
+                <Icon name="settings-gear" className="topbar__rail-btn-icon" />
+              </button>
+              {settingsOpen ? (
+                <div
+                  id="topbar-settings-panel"
+                  className="topbar-settings"
+                  role="dialog"
+                  aria-label="Settings"
+                >
+                  <div className="topbar-settings__head">
+                    <span className="topbar-settings__title">Appearance</span>
+                  </div>
+                  <div
+                    className="topbar-settings__themes"
+                    role="radiogroup"
+                    aria-label="Theme"
+                  >
+                    {THEME_OPTIONS.map((opt) => {
+                      const active = theme === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          className={`topbar-settings__card${active ? " is-active" : ""}`}
+                          onClick={() => void setTheme(opt.id)}
+                        >
+                          <span
+                            className={`topbar-settings__swatch topbar-settings__swatch--${opt.id}`}
+                            aria-hidden
+                          />
+                          <span className="topbar-settings__meta">
+                            <span className="topbar-settings__label">
+                              {opt.label}
+                            </span>
+                            <span className="topbar-settings__hint">
+                              {opt.description}
+                            </span>
+                          </span>
+                          {active ? (
+                            <span className="topbar-settings__check" aria-hidden>
+                              ✓
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <button
               type="button"
-              className={`btn btn--ghost btn--icon topbar__rail-btn${terminalVisible && workspaceRoot ? " is-active" : ""}`}
-              onClick={() => {
-                if (!workspaceRoot) {
-                  showRightRailTip();
-                  return;
-                }
-                setRightRailTip(false);
-                toggleTerminal();
-              }}
+              className={`topbar__rail-btn${(agentVisible || agentMenuOpen) && workspaceRoot ? " is-active" : ""}`}
+              onClick={toggleAgentPanel}
+              aria-pressed={Boolean(workspaceRoot && (agentVisible || agentMenuOpen))}
+              aria-label="Toggle agent panel"
+              title={
+                workspaceRoot ? "Toggle agent panel" : "Open a workspace first"
+              }
+            >
+              <Icon name="robot" className="topbar__rail-btn-icon" />
+            </button>
+            <button
+              type="button"
+              className={`topbar__rail-btn${terminalVisible && workspaceRoot ? " is-active" : ""}`}
+              onClick={toggleTerminalPanel}
               aria-pressed={Boolean(workspaceRoot && terminalVisible)}
-              aria-label="Toggle right sidebar"
+              aria-label="Toggle terminal panel"
               title={
                 workspaceRoot
-                  ? "Toggle right sidebar"
+                  ? "Toggle terminal panel"
                   : "Open a workspace first"
               }
             >
-              <Icon name="layout-sidebar-right" className="btn__icon" />
+              <Icon name="terminal" className="topbar__rail-btn-icon" />
             </button>
             {rightRailTip && !workspaceRoot ? (
-              <div
-                className="topbar-tip"
-                role="status"
-                aria-live="polite"
-              >
+              <div className="topbar-tip" role="status" aria-live="polite">
                 <p className="topbar-tip__text">
-                  Open a workspace first to use the right sidebar (terminal &amp;
-                  agent).
+                  Open a workspace first to use agent and terminal panels.
                 </p>
                 <button
                   type="button"

@@ -3,7 +3,8 @@ import {
   commentBodyForDisplay,
   rejoinDiffCommentBody,
 } from "@/core/history/diffComment";
-import type { CommentRecord } from "@/shared/anchor-api";
+import { Icon } from "@/shared/Icon";
+import type { CommentMessage, CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
 
 export type BubbleMode = "view" | "edit" | "reply";
@@ -41,9 +42,9 @@ export function CommentBubble({
   onClose,
   onMutated,
 }: CommentBubbleProps) {
-  const sessions = useAnnotationsStore((s) => s.sessions);
   const rootRef = useRef<HTMLDivElement>(null);
   const threads = [comment, ...relatedComments];
+  const multi = threads.length > 1;
 
   // Capture phase: Monaco stops propagation on editor clicks, so bubble-phase
   // document listeners never see them.
@@ -73,42 +74,37 @@ export function CommentBubble({
   return (
     <div
       ref={rootRef}
-      className={`anno-bubble${threads.length > 1 ? " has-overlap" : ""}`}
+      className="anno-bubble"
       style={{ left, top }}
       role="dialog"
-      aria-label={`${threads.length} annotation${threads.length === 1 ? "" : "s"}`}
+      aria-label={multi ? `${threads.length} overlapping comments` : "Comment"}
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="anno-bubble__header">
-        <span className="anno-bubble__count">
-          {threads.length === 1 ? "Comment" : `${threads.length} overlapping comments`}
-        </span>
-        <button
-          type="button"
-          className="icon-btn anno-bubble__close"
-          title="Close"
-          aria-label="Close annotations"
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
+      {multi ? (
+        <div className="anno-bubble__header">
+          <span className="anno-bubble__count">{threads.length} comments</span>
+          <button
+            type="button"
+            className="icon-btn anno-bubble__close"
+            title="Close"
+            aria-label="Close annotations"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+      ) : null}
       <div className="anno-bubble__threads">
-        {threads.map((thread, threadIndex) => {
-          const owner = sessions.find((session) =>
-            session.comments.some((candidate) => candidate.id === thread.id),
-          );
-          return (
-            <BubbleThread
-              key={thread.id}
-              thread={thread}
-              ownerLabel={owner?.title ?? "Session"}
-              selected={threadIndex === 0}
-              onMutated={onMutated}
-            />
-          );
-        })}
+        {threads.map((thread, threadIndex) => (
+          <BubbleThread
+            key={thread.id}
+            thread={thread}
+            showClose={!multi && threadIndex === 0}
+            onClose={onClose}
+            onMutated={onMutated}
+          />
+        ))}
       </div>
     </div>
   );
@@ -116,30 +112,40 @@ export function CommentBubble({
 
 function BubbleThread({
   thread,
-  ownerLabel,
-  selected,
+  showClose,
+  onClose,
   onMutated,
 }: {
   thread: CommentRecord;
-  ownerLabel: string;
-  selected: boolean;
+  showClose: boolean;
+  onClose: () => void;
   onMutated?: () => void;
 }) {
   const setStatus = useAnnotationsStore((s) => s.setStatus);
   const reply = useAnnotationsStore((s) => s.reply);
   const editComment = useAnnotationsStore((s) => s.editComment);
   const deleteComment = useAnnotationsStore((s) => s.deleteComment);
-  const [mode, setMode] = useState<BubbleMode>("view");
+
+  const primary = thread.messages[0];
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
+    null,
+  );
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Keep selection / edit targets valid after mutations.
   useEffect(() => {
-    if (mode === "edit") {
-      setDraft(commentBodyForDisplay(thread.messages[0]?.body ?? ""));
-    } else if (mode === "reply") {
+    const ids = new Set(thread.messages.map((m) => m.id));
+    if (selectedMessageId && !ids.has(selectedMessageId)) {
+      setSelectedMessageId(null);
+    }
+    if (editingMessageId && !ids.has(editingMessageId)) {
+      setEditingMessageId(null);
       setDraft("");
     }
-  }, [mode, thread.id]);
+  }, [thread.messages, selectedMessageId, editingMessageId]);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -151,15 +157,52 @@ function BubbleThread({
     }
   };
 
+  const selectMessage = (messageId: string) => {
+    setSelectedMessageId((current) => {
+      if (current === messageId) return current;
+      setEditingMessageId(null);
+      setDraft("");
+      return messageId;
+    });
+  };
+
+  const toggleReply = () => {
+    setReplying((open) => {
+      if (open) {
+        setDraft("");
+        return false;
+      }
+      setEditingMessageId(null);
+      setDraft("");
+      return true;
+    });
+  };
+
+  const toggleEdit = (message: CommentMessage) => {
+    setSelectedMessageId(message.id);
+    setReplying(false);
+    setEditingMessageId((current) => {
+      if (current === message.id) {
+        setDraft("");
+        return null;
+      }
+      setDraft(commentBodyForDisplay(message.body));
+      return message.id;
+    });
+  };
+
   const submitEdit = () => {
-    if (!draft.trim()) return;
+    if (!draft.trim() || !editingMessageId) return;
+    const message = thread.messages.find((m) => m.id === editingMessageId);
+    if (!message) return;
     void run(async () => {
-      const original = thread.messages[0]?.body ?? "";
-      await editComment(
-        thread.id,
-        rejoinDiffCommentBody(original, draft.trim()),
-      );
-      setMode("view");
+      const body =
+        message.id === primary?.id
+          ? rejoinDiffCommentBody(message.body, draft.trim())
+          : draft.trim();
+      await editComment(thread.id, body, message.id);
+      setEditingMessageId(null);
+      setDraft("");
     });
   };
 
@@ -167,12 +210,12 @@ function BubbleThread({
     if (!draft.trim()) return;
     void run(async () => {
       await reply(thread.id, draft.trim());
-      setMode("view");
+      setReplying(false);
       setDraft("");
     });
   };
 
-  const onDelete = () => {
+  const onDeleteThread = () => {
     if (!window.confirm("Delete this comment thread permanently?")) return;
     void run(async () => {
       await deleteComment(thread.id);
@@ -181,90 +224,68 @@ function BubbleThread({
 
   return (
     <section
-      className={`anno-bubble__thread${selected ? " is-selected" : ""}`}
-      aria-label={`${ownerLabel} comment`}
+      className="anno-bubble__thread"
+      aria-label={`${primary?.author || "unknown"} comment`}
     >
-      <div className="anno-bubble__thread-head">
-        <span className="anno-bubble__thread-meta">{ownerLabel}</span>
-        {selected ? (
-          <span className="anno-bubble__selected-label">selected</span>
-        ) : null}
-      </div>
-      <div className="anno-bubble__toolbar">
+      <div className="anno-bubble__bar">
+        <span className="anno-bubble__hint">
+          {primary?.author || "unknown"}
+        </span>
         <div className="anno-bubble__actions">
           <button
             type="button"
-            className="btn btn--ghost btn--small"
+            className={`icon-btn icon-btn--xs${replying ? " is-active" : ""}`}
             disabled={busy}
-            onClick={() => setMode((value) => (value === "reply" ? "view" : "reply"))}
+            title="Reply"
+            aria-label="Reply"
+            onClick={toggleReply}
           >
-            Reply
+            <Icon name="comment-discussion" />
           </button>
+          <select
+            className="anno-bubble__status"
+            value={thread.status}
+            disabled={busy}
+            title="Review status"
+            aria-label="Review status"
+            onChange={(e) =>
+              void run(async () => {
+                await setStatus(
+                  thread.id,
+                  e.target.value as CommentRecord["status"],
+                );
+              })
+            }
+          >
+            <option value="discussing">discussing</option>
+            <option value="need_modify">need_modify</option>
+            <option value="closed">closed</option>
+          </select>
           <button
             type="button"
-            className="btn btn--ghost btn--small"
+            className="icon-btn icon-btn--xs"
             disabled={busy}
-            onClick={() => setMode((value) => (value === "edit" ? "view" : "edit"))}
+            title="Delete thread"
+            aria-label="Delete thread"
+            onClick={onDeleteThread}
           >
-            Edit
+            <Icon name="trash" />
           </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--small"
-            disabled={busy}
-            onClick={onDelete}
-          >
-            Delete
-          </button>
+          {showClose ? (
+            <button
+              type="button"
+              className="icon-btn icon-btn--xs anno-bubble__close"
+              title="Close"
+              aria-label="Close annotation"
+              onClick={onClose}
+            >
+              <Icon name="close" />
+            </button>
+          ) : null}
         </div>
-        <select
-          className="anno-bubble__status"
-          value={thread.status}
-          disabled={busy}
-          title="Review status"
-          onChange={(e) =>
-            void run(async () => {
-              await setStatus(
-                thread.id,
-                e.target.value as CommentRecord["status"],
-              );
-            })
-          }
-        >
-          <option value="discussing">discussing</option>
-          <option value="need_modify">need_modify</option>
-          <option value="closed">closed</option>
-        </select>
       </div>
 
-      <div className="anno-bubble__messages">
-        {thread.messages.map((message, index) => (
-          <div key={message.id} className="anno-bubble__msg">
-            <div className="anno-bubble__msg-head">
-              <code>{message.author || "unknown"}</code>
-              <span className="anno-bubble__msg-tag">
-                {index === 0 ? "primary" : "reply"}
-              </span>
-            </div>
-            <div className="anno-bubble__msg-body">
-              {commentBodyForDisplay(message.body) || "(empty)"}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {mode === "edit" ? (
-        <BubbleEditor
-          value={draft}
-          rows={3}
-          busy={busy}
-          submitLabel="Save"
-          onChange={setDraft}
-          onCancel={() => setMode("view")}
-          onSubmit={submitEdit}
-        />
-      ) : null}
-      {mode === "reply" ? (
+      {replying ? (
         <BubbleEditor
           value={draft}
           rows={2}
@@ -272,10 +293,84 @@ function BubbleThread({
           submitLabel="Reply"
           placeholder="Reply…"
           onChange={setDraft}
-          onCancel={() => setMode("view")}
+          onCancel={() => {
+            setReplying(false);
+            setDraft("");
+          }}
           onSubmit={submitReply}
         />
       ) : null}
+
+      <div className="anno-bubble__messages">
+        {thread.messages.map((message, index) => {
+          const selected = selectedMessageId === message.id;
+          const editingHere = editingMessageId === message.id;
+          return (
+            <div
+              key={message.id}
+              className={`anno-bubble__msg${index > 0 ? " is-reply" : ""}${selected ? " is-selected" : ""}`}
+            >
+              <button
+                type="button"
+                className="anno-bubble__msg-select"
+                onClick={() => selectMessage(message.id)}
+                aria-pressed={selected}
+              >
+                <div className="anno-bubble__msg-head">
+                  <span className="anno-bubble__msg-author">
+                    {message.author || "unknown"}
+                  </span>
+                  {index > 0 ? (
+                    <span className="anno-bubble__msg-tag">reply</span>
+                  ) : null}
+                  {selected ? (
+                    <span
+                      className="anno-bubble__msg-edit-slot"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className={`icon-btn icon-btn--xs anno-bubble__msg-edit${editingHere ? " is-active" : ""}`}
+                        disabled={busy}
+                        title="Edit this message"
+                        aria-label="Edit this message"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleEdit(message);
+                        }}
+                      >
+                        <Icon name="edit" />
+                      </button>
+                    </span>
+                  ) : null}
+                </div>
+
+                {editingHere ? null : (
+                  <div className="anno-bubble__msg-body">
+                    {commentBodyForDisplay(message.body) || "(empty)"}
+                  </div>
+                )}
+              </button>
+
+              {editingHere ? (
+                <BubbleEditor
+                  value={draft}
+                  rows={3}
+                  busy={busy}
+                  submitLabel="Save"
+                  onChange={setDraft}
+                  onCancel={() => {
+                    setEditingMessageId(null);
+                    setDraft("");
+                  }}
+                  onSubmit={submitEdit}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -300,7 +395,11 @@ function BubbleEditor({
   onSubmit: () => void;
 }) {
   return (
-    <div className="anno-bubble__editor">
+    <div
+      className="anno-bubble__editor"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       <textarea
         className="anno-bubble__textarea"
         rows={rows}

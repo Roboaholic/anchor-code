@@ -8,7 +8,9 @@ export interface ShellState {
   leftMode: LeftMode;
   /** Files / Comments / History sidebar. */
   leftVisible: boolean;
-  /** Right rail (terminal + agent). */
+  /** Right rail — agent sessions. */
+  agentVisible: boolean;
+  /** Bottom panel — shell terminals. */
   terminalVisible: boolean;
   versionLabel: string | null;
   openWorkspaceDialog: boolean;
@@ -17,6 +19,8 @@ export interface ShellState {
   setLeftMode: (mode: LeftMode) => void;
   toggleLeft: () => void;
   setLeftVisible: (visible: boolean) => void;
+  toggleAgent: () => void;
+  setAgentVisible: (visible: boolean) => void;
   toggleTerminal: () => void;
   setTerminalVisible: (visible: boolean) => void;
   setVersionLabel: (label: string | null) => void;
@@ -29,6 +33,7 @@ export const useShellStore = create<ShellState>((set) => ({
   leftMode: "files",
   leftVisible: true,
   /** Closed until a workspace is open (user can then toggle). */
+  agentVisible: false,
   terminalVisible: false,
   versionLabel: null,
   openWorkspaceDialog: false,
@@ -36,6 +41,8 @@ export const useShellStore = create<ShellState>((set) => ({
   setLeftMode: (mode) => set({ leftMode: mode }),
   toggleLeft: () => set((s) => ({ leftVisible: !s.leftVisible })),
   setLeftVisible: (visible) => set({ leftVisible: visible }),
+  toggleAgent: () => set((s) => ({ agentVisible: !s.agentVisible })),
+  setAgentVisible: (visible) => set({ agentVisible: visible }),
   toggleTerminal: () =>
     set((s) => ({ terminalVisible: !s.terminalVisible })),
   setTerminalVisible: (visible) => set({ terminalVisible: visible }),

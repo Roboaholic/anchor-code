@@ -53,7 +53,8 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
   useDocumentStore.getState().closeAllFiles();
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
-  // Right rail stays closed until the user toggles it (now allowed).
+  // Agent / terminal panels stay closed until the user toggles them.
+  useShellStore.getState().setAgentVisible(false);
   useShellStore.getState().setTerminalVisible(false);
   // History / terminal must not block a successful workspace open.
   try {

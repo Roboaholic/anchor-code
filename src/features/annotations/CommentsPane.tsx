@@ -8,7 +8,11 @@ import { useAnnotationsStore } from "./annotationsStore";
 import { useDocumentStore } from "@/features/document/documentStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useEffect, useState } from "react";
-import type { CommentRecord, SessionRecord } from "@/shared/anchor-api";
+import type {
+  CommentMessage,
+  CommentRecord,
+  SessionRecord,
+} from "@/shared/anchor-api";
 
 export function CommentsPane() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
@@ -33,7 +37,7 @@ export function CommentsPane() {
   const deleteComment = useAnnotationsStore((s) => s.deleteComment);
   const clearToast = useAnnotationsStore((s) => s.clearToast);
 
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
@@ -97,27 +101,40 @@ export function CommentsPane() {
     await useAnnotationsStore.getState().restoreSession(session.id);
   };
 
-  const startEdit = (c: CommentRecord) => {
-    const primary = commentBodyForDisplay(c.messages[0]?.body ?? "");
-    setEditingId(c.id);
-    setEditBody(primary);
+  const messageKey = (commentId: string, messageId: string) =>
+    `${commentId}:${messageId}`;
+
+  const startEdit = (comment: CommentRecord, message: CommentMessage) => {
+    setEditingKey(messageKey(comment.id, message.id));
+    setEditBody(commentBodyForDisplay(message.body));
     setReplyingId(null);
   };
 
-  const submitEdit = async (session: SessionRecord, commentId: string) => {
+  const cancelEdit = () => {
+    setEditingKey(null);
+    setEditBody("");
+  };
+
+  const submitEdit = async (
+    session: SessionRecord,
+    comment: CommentRecord,
+    message: CommentMessage,
+  ) => {
     if (!editBody.trim()) return;
     await ensureWritable(session);
     const live =
       useAnnotationsStore.getState().sessions.find((s) => s.id === session.id) ??
       session;
+    const liveComment = live.comments.find((c) => c.id === comment.id);
     const original =
-      live.comments.find((c) => c.id === commentId)?.messages[0]?.body ?? "";
-    await editComment(
-      commentId,
-      rejoinDiffCommentBody(original, editBody.trim()),
-    );
-    setEditingId(null);
-    setEditBody("");
+      liveComment?.messages.find((m) => m.id === message.id)?.body ??
+      message.body;
+    const isPrimary = liveComment?.messages[0]?.id === message.id;
+    const body = isPrimary
+      ? rejoinDiffCommentBody(original, editBody.trim())
+      : editBody.trim();
+    await editComment(comment.id, body, message.id);
+    cancelEdit();
   };
 
   const submitReply = async (session: SessionRecord, commentId: string) => {
@@ -261,14 +278,90 @@ export function CommentsPane() {
                     ) : (
                       <ul className="comment-list">
                         {session.comments.map((c) => {
-                          const lastBody =
-                            c.messages[c.messages.length - 1]?.body ?? "";
-                          const preview = commentBodyForDisplay(lastBody)
-                            .replace(/\s+/g, " ")
-                            .trim()
-                            .slice(0, 120);
-                          const isEditing = editingId === c.id;
+                          const primary = c.messages[0];
+                          const replies = c.messages.slice(1);
                           const isReplying = replyingId === c.id;
+                          const renderMessage = (
+                            message: CommentMessage | undefined,
+                            kind: "primary" | "reply",
+                          ) => {
+                            if (!message) return null;
+                            const key = messageKey(c.id, message.id);
+                            const editingHere = editingKey === key;
+                            return (
+                              <div
+                                key={message.id}
+                                className={`comment-card__msg${
+                                  kind === "reply"
+                                    ? " comment-card__msg--reply"
+                                    : ""
+                                }${editingHere ? " is-editing" : ""}`}
+                              >
+                                <div className="comment-card__msg-head">
+                                  <span className="comment-card__msg-author">
+                                    {message.author || "unknown"}
+                                  </span>
+                                  {kind === "reply" ? (
+                                    <span className="comment-card__msg-tag">
+                                      reply
+                                    </span>
+                                  ) : (
+                                    <span className="comment-card__msg-tag">
+                                      comment
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn btn--ghost btn--small comment-card__msg-edit"
+                                    onClick={() => startEdit(c, message)}
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                                {editingHere ? (
+                                  <div className="comment-card__editor">
+                                    <textarea
+                                      className="comment-card__textarea"
+                                      value={editBody}
+                                      onChange={(e) =>
+                                        setEditBody(e.target.value)
+                                      }
+                                      rows={3}
+                                      aria-label={
+                                        kind === "reply"
+                                          ? "Edit reply"
+                                          : "Edit comment"
+                                      }
+                                    />
+                                    <div className="comment-card__editor-actions">
+                                      <button
+                                        type="button"
+                                        className="btn btn--primary btn--small"
+                                        onClick={() =>
+                                          void submitEdit(session, c, message)
+                                        }
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn--ghost btn--small"
+                                        onClick={cancelEdit}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="comment-card__msg-body">
+                                    {commentBodyForDisplay(message.body) ||
+                                      "(empty)"}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          };
+
                           return (
                             <li key={c.id} className="comment-card">
                               <button
@@ -286,47 +379,14 @@ export function CommentsPane() {
                                     {c.status}
                                   </span>
                                 </span>
-                                <span className="comment-card__preview">
-                                  {preview || "(empty)"}
-                                </span>
-                                {c.messages.length > 1 ? (
-                                  <span className="comment-card__replies">
-                                    {c.messages.length} messages
-                                  </span>
-                                ) : null}
                               </button>
 
-                              {isEditing ? (
-                                <div className="comment-card__editor">
-                                  <textarea
-                                    className="comment-card__textarea"
-                                    value={editBody}
-                                    onChange={(e) => setEditBody(e.target.value)}
-                                    rows={3}
-                                  />
-                                  <div className="comment-card__editor-actions">
-                                    <button
-                                      type="button"
-                                      className="btn btn--primary btn--small"
-                                      onClick={() =>
-                                        void submitEdit(session, c.id)
-                                      }
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn--ghost btn--small"
-                                      onClick={() => {
-                                        setEditingId(null);
-                                        setEditBody("");
-                                      }}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : null}
+                              <div className="comment-card__thread">
+                                {renderMessage(primary, "primary")}
+                                {replies.map((message) =>
+                                  renderMessage(message, "reply"),
+                                )}
+                              </div>
 
                               {isReplying ? (
                                 <div className="comment-card__editor">
@@ -387,17 +447,10 @@ export function CommentsPane() {
                                   <button
                                     type="button"
                                     className="btn btn--ghost btn--small"
-                                    onClick={() => startEdit(c)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn--ghost btn--small"
                                     onClick={() => {
                                       setReplyingId(c.id);
                                       setReplyBody("");
-                                      setEditingId(null);
+                                      cancelEdit();
                                     }}
                                   >
                                     Reply

@@ -136,7 +136,7 @@
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "icon": "build/icon.png"
+      "icon": "build/icon.icns"
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"

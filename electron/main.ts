@@ -50,12 +50,28 @@ function createWindow(theme: UiTheme) {
 
   const isMac = process.platform === "darwin";
 
+  const iconPath = path.join(
+    process.env.VITE_PUBLIC || path.join(__dirname, "../public"),
+    process.platform === "win32" ? "favicon.ico" : "icon-512.png",
+  );
+  // Prefer packaged build icons when present
+  const buildIcon =
+    process.platform === "win32"
+      ? path.join(__dirname, "../build/icon.ico")
+      : path.join(__dirname, "../build/icon.png");
+  const resolvedIcon = fs.existsSync(buildIcon)
+    ? buildIcon
+    : fs.existsSync(iconPath)
+      ? iconPath
+      : undefined;
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 960,
     minHeight: 600,
     title: "Anchor Code",
+    ...(resolvedIcon ? { icon: resolvedIcon } : {}),
     backgroundColor: shellBackground(theme),
     // Single chrome row: no OS title strip + separate menu row.
     // macOS: traffic lights inset into the topbar; Windows: overlay caption buttons.

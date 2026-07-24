@@ -1,6 +1,6 @@
 {
   "name": "anchor-code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Human-in-the-loop workbench for auditing AI coding output and feeding structured feedback back to AI CLIs.",
   "private": true,
   "type": "module",
@@ -21,7 +21,8 @@
     "pack:win:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
     "pack:mac": "npm run build && electron-builder --mac --publish never",
     "pack:linux": "npm run build && electron-builder --linux --x64 --publish never",
-    "pack": "npm run build && electron-builder --publish never"
+    "pack": "npm run build && electron-builder --publish never",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@fontsource/eb-garamond": "^5.3.0",
@@ -101,7 +102,8 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -133,7 +135,8 @@
       ],
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "icon": "build/icon.png"
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
@@ -155,7 +158,9 @@
         }
       ],
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-      "maintainer": "Roboaholic"
-    }
+      "maintainer": "Roboaholic",
+      "icon": "build/icons"
+    },
+    "icon": "build/icon.png"
   }
 }

@@ -137,10 +137,34 @@ async function commandExistsOnHost(
     }
   }
 
-  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const cwd =
+    host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
   try {
     if (host.kind === "local" && process.platform === "win32") {
-      const r = await host.run(cwd, "cmd.exe", ["/d", "/s", "/c", `where ${cmd}`]);
+      // Known user install dirs (often missing from Electron PATH).
+      const home = process.env.USERPROFILE || process.env.HOME || "";
+      const known = [
+        home ? `${home}\\.grok\\bin\\${cmd}.exe` : "",
+        home ? `${home}\\.local\\bin\\${cmd}.exe` : "",
+        home ? `${home}\\AppData\\Local\\omp\\${cmd}.exe` : "",
+        home ? `${home}\\AppData\\Roaming\\npm\\${cmd}.cmd` : "",
+        process.env.LOCALAPPDATA
+          ? `${process.env.LOCALAPPDATA}\\Programs\\OpenAI\\Codex\\bin\\${cmd}.exe`
+          : "",
+      ].filter(Boolean);
+      for (const p of known) {
+        try {
+          if (await host.exists(p)) return true;
+        } catch {
+          // continue
+        }
+      }
+      const r = await host.run(cwd, "cmd.exe", [
+        "/d",
+        "/s",
+        "/c",
+        `where ${cmd}`,
+      ]);
       return r.code === 0 && r.stdout.trim().length > 0;
     }
     // POSIX / WSL / SSH

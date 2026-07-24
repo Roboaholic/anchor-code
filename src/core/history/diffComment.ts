@@ -30,6 +30,61 @@ export function buildDiffCommentPrefix(opts: {
   ].join("\n");
 }
 
+/**
+ * Split a stored comment body into optional machine prefix + human text.
+ * Prefix is kept in YAML for AI; UI should show `text` only.
+ */
+export function parseDiffCommentBody(body: string): {
+  prefix: string;
+  text: string;
+} {
+  const raw = body ?? "";
+  const normalized = raw.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("[diff context]\n") && normalized !== "[diff context]") {
+    return { prefix: "", text: raw };
+  }
+  const lines = normalized.split("\n");
+  let i = 1;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (line === "") {
+      i += 1;
+      break;
+    }
+    if (/^(branch|base|head|file):\s/.test(line)) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  const prefixLines = lines.slice(0, i);
+  const text = lines.slice(i).join("\n");
+  // Rebuild prefix with trailing newline so `${prefix}${text}` round-trips.
+  const prefix =
+    prefixLines.length === 0
+      ? ""
+      : `${prefixLines.join("\n")}${prefixLines[prefixLines.length - 1] === "" ? "" : "\n"}`;
+  return { prefix, text };
+}
+
+/** Human-visible comment text (drops leading [diff context] block). */
+export function commentBodyForDisplay(body: string): string {
+  return parseDiffCommentBody(body).text;
+}
+
+/**
+ * When editing a primary message, keep any existing diff-context prefix.
+ */
+export function rejoinDiffCommentBody(
+  originalBody: string,
+  nextText: string,
+): string {
+  const { prefix } = parseDiffCommentBody(originalBody);
+  const text = nextText.replace(/\r\n/g, "\n");
+  if (!prefix) return text;
+  return `${prefix}${text}`;
+}
+
 /** Whether a commit/worktree row is locked out when selection is full. */
 export function isSelectionLockedOut(
   selectedIds: string[],

@@ -180,10 +180,27 @@ export async function addCommentFromSelection(input: {
   });
 }
 
-export async function jumpToComment(comment: CommentRecord): Promise<void> {
-  const repoRoot = useAnnotationsStore.getState().repoRoot;
+/**
+ * Open a sidebar comment's file and focus its session decorations.
+ * The session id is supplied by the sidebar to avoid ambiguous/racy lookup.
+ */
+export async function jumpToComment(
+  comment: CommentRecord,
+  sessionId?: string,
+): Promise<void> {
+  const ann = useAnnotationsStore.getState();
+  const repoRoot = ann.repoRoot;
   if (!repoRoot) return;
-  const abs = joinPath(repoRoot, comment.target.file_path);
+
+  const ownerId =
+    sessionId ??
+    ann.sessions.find((s) => s.comments.some((c) => c.id === comment.id))?.id;
+  if (ownerId) {
+    // Keep the owning session expanded in the sidebar.
+    useAnnotationsStore.getState().setExpandedSession(ownerId);
+  }
+
+  const abs = joinPath(repoRoot, comment.target.file_path).replace(/\\/g, "/");
   const workspaceRoot = useWorkspaceStore.getState().workspaceRoot;
   let revealLine = comment.target.start_line;
   try {
@@ -199,11 +216,16 @@ export async function jumpToComment(comment: CommentRecord): Promise<void> {
     path: abs,
     workspaceRoot,
     revealLine,
+    focusCommentId: comment.id,
   });
   // For markdown, switch to raw for line reveal + annotation visibility
   const item = useDocumentStore
     .getState()
-    .openItems.find((i) => i.kind === "file" && i.path === abs);
+    .openItems.find(
+      (i) =>
+        i.kind === "file" &&
+        i.path.replace(/\\/g, "/") === abs.replace(/\\/g, "/"),
+    );
   if (item && item.kind === "file" && item.isMarkdown) {
     useDocumentStore.getState().setMdViewMode(item.id, "raw");
   }

@@ -12,17 +12,40 @@ export interface StatusEntry {
   code: string;
 }
 
+export interface BranchTracking {
+  /** Commits ahead of upstream; null if no upstream / not reported. */
+  ahead: number | null;
+  /** Commits behind upstream; null if no upstream / not reported. */
+  behind: number | null;
+  /** Short branch label from `##` line when present. */
+  branch: string | null;
+}
+
 /**
  * Parse porcelain v1 lines:
  * - XY PATH
  * - XY ORIG -> PATH  (rename/copy)
  * - ?? PATH
+ * Optional leading `## branch...upstream [ahead N, behind M]` when `-b` is used.
  */
 export function parsePorcelainStatus(stdout: string): StatusEntry[] {
+  return parsePorcelainStatusDetailed(stdout).entries;
+}
+
+export function parsePorcelainStatusDetailed(stdout: string): {
+  entries: StatusEntry[];
+  tracking: BranchTracking;
+} {
   const out: StatusEntry[] = [];
+  let tracking: BranchTracking = { ahead: null, behind: null, branch: null };
   for (const raw of stdout.split("\n")) {
     const line = raw.replace(/\r$/, "");
     if (!line) continue;
+    // Branch header from `git status -b --porcelain`
+    if (line.startsWith("## ")) {
+      tracking = parseBranchHeader(line.slice(3));
+      continue;
+    }
     // Untracked
     if (line.startsWith("?? ")) {
       const p = line.slice(3).trim();
@@ -44,7 +67,39 @@ export function parsePorcelainStatus(stdout: string): StatusEntry[] {
   }
   // Stable: path then code
   out.sort((a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code));
-  return out;
+  return { entries: out, tracking };
+}
+
+/**
+ * `main...origin/main [ahead 2, behind 1]`
+ * `main...origin/main [ahead 3]`
+ * `main...origin/main`
+ * `main`
+ * `HEAD (no branch)`
+ */
+export function parseBranchHeader(header: string): BranchTracking {
+  const h = header.trim();
+  let ahead: number | null = null;
+  let behind: number | null = null;
+  const ab = h.match(/\[([^\]]+)\]/);
+  if (ab) {
+    const body = ab[1]!;
+    const a = body.match(/ahead\s+(\d+)/i);
+    const b = body.match(/behind\s+(\d+)/i);
+    if (a) ahead = Number.parseInt(a[1]!, 10);
+    if (b) behind = Number.parseInt(b[1]!, 10);
+    // When tracking exists but only one side is listed, the other is 0.
+    if (ahead !== null && behind === null) behind = 0;
+    if (behind !== null && ahead === null) ahead = 0;
+  } else if (h.includes("...")) {
+    // Upstream configured and in sync — git omits the bracket.
+    ahead = 0;
+    behind = 0;
+  }
+  const branchPart = h.split("...")[0]?.replace(/\s*\[.*$/, "").trim() ?? "";
+  const branch =
+    !branchPart || branchPart === "HEAD (no branch)" ? null : branchPart;
+  return { ahead, behind, branch };
 }
 
 function unquotePath(p: string): string {

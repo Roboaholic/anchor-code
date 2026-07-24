@@ -112,14 +112,25 @@ export function DocumentArea() {
       </div>
 
       <div className="document-area__content document-area__content--fill">
-        {active ? (
-          <ActiveView
-            item={active}
-            onMdMode={(mode) => {
-              if (active.kind === "file") setMdViewMode(active.id, mode);
-            }}
-          />
-        ) : null}
+        {openItems.map((item) => {
+          const isActive = item.id === active?.id;
+          return (
+            <div
+              key={item.id}
+              className={`document-area__pane${isActive ? " is-active" : ""}`}
+              // Keep inactive tabs mounted so DiffViewer does not re-fetch on switch.
+              hidden={!isActive}
+              aria-hidden={!isActive}
+            >
+              <ActiveView
+                item={item}
+                onMdMode={(mode) => {
+                  if (item.kind === "file") setMdViewMode(item.id, mode);
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -158,6 +169,8 @@ function ActiveView({
         mode={item.mdViewMode}
         onModeChange={onMdMode}
         revealLine={item.revealLine}
+        focusCommentId={item.focusCommentId}
+        revealNonce={item.revealNonce}
       />
     );
   }
@@ -169,6 +182,8 @@ function ActiveView({
       language={item.language}
       truncated={item.truncated}
       revealLine={item.revealLine}
+      focusCommentId={item.focusCommentId}
+      revealNonce={item.revealNonce}
       kind="source"
     />
   );
@@ -183,21 +198,6 @@ function WelcomeView() {
           Audit AI coding output and send structured feedback back to your AI
           CLI.
         </p>
-
-        <div className="welcome__cta">
-          <button
-            type="button"
-            className="btn btn--accent welcome__cta-btn"
-            onClick={() =>
-              void import("@/features/shell/orchestrate").then((m) =>
-                m.openWorkspaceFromPicker(),
-              )
-            }
-          >
-            <Icon name="folder-opened" className="welcome__cta-icon" />
-            Open Workspace
-          </button>
-        </div>
 
         <ol className="welcome__steps">
           <li>

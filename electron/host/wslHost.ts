@@ -158,11 +158,19 @@ export class WslHostSession implements HostSession {
 
   /**
    * Run a command inside WSL via login shell (PATH + env from profile).
+   * Default 45s timeout so a hung `git status` cannot wedge the host forever.
+   *
+   * NOTE: the command + args are passed through `posixShellCommand` into one
+   * `bash -lc '<script>'` string, so scripts containing `'`, `;`, `()`, `$var`,
+   * or `{} -exec` are mangled by the double-shell quoting layer. For anything
+   * non-trivial, pass the script via `opts.stdin` and invoke `bash -s` — that
+   * bypasses the `-lc` quoting layer entirely and handles symlinks/parens.
    */
   async run(
     cwd: string,
     command: string,
     args: string[],
+    opts?: { timeoutMs?: number; stdin?: string },
   ): Promise<RunResult> {
     const wsl = this.resolveWslExe();
     const safeCwd = hostNormalize("wsl", cwd || "/");
@@ -176,7 +184,7 @@ export class WslHostSession implements HostSession {
       "-lc",
       cmdline,
     ];
-    return spawnCapture(wsl, wslArgs);
+    return spawnCapture(wsl, wslArgs, opts?.timeoutMs ?? 45_000, opts?.stdin);
   }
 
   async readFile(filePath: string): Promise<string> {
@@ -439,15 +447,47 @@ function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-function spawnCapture(command: string, args: string[]): Promise<RunResult> {
+function spawnCapture(
+  command: string,
+  args: string[],
+  timeoutMs = 0,
+  stdin?: string,
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       shell: false,
       windowsHide: true,
-      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
+        reject(
+          new HostError(
+            "timeout",
+            `Command timed out after ${Math.round(timeoutMs / 1000)}s: ${command} ${args.slice(0, 4).join(" ")}…`,
+          ),
+        );
+      }, timeoutMs);
+    }
+
+    if (stdin !== undefined) {
+      child.stdin?.on("error", () => {
+        // ignore — EPIPE if child exits before reading stdin
+      });
+      child.stdin?.end(stdin);
+    }
+
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
@@ -455,15 +495,17 @@ function spawnCapture(command: string, args: string[]): Promise<RunResult> {
       stderr += chunk.toString("utf8");
     });
     child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       reject(
-        new HostError(
-          "failed",
-          `Failed to run ${command}`,
-          err.message,
-        ),
+        new HostError("failed", `Failed to run ${command}`, err.message),
       );
     });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({
         stdout,
         stderr,

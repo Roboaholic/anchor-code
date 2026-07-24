@@ -155,6 +155,7 @@ export class SshHostSession implements HostSession {
     cwd: string,
     command: string,
     args: string[],
+    opts?: { timeoutMs?: number; stdin?: string },
   ): Promise<RunResult> {
     const client = await this.ensureConnected();
     const safeCwd = hostNormalize("ssh", cwd || "/");
@@ -162,9 +163,33 @@ export class SshHostSession implements HostSession {
       .map((a) => shellQuote(a))
       .join(" ");
     const remote = `cd ${shellQuote(safeCwd)} && ${quoted}`;
+    const timeoutMs = opts?.timeoutMs ?? 45_000;
     return new Promise((resolve, reject) => {
-      client.exec(remote, (err, stream) => {
-        if (err || !stream) {
+      let settled = false;
+      let stream: ClientChannel | null = null;
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              try {
+                stream?.close();
+              } catch {
+                // ignore
+              }
+              reject(
+                new HostError(
+                  "timeout",
+                  `Command timed out after ${Math.round(timeoutMs / 1000)}s: ${command}`,
+                ),
+              );
+            }, timeoutMs)
+          : undefined;
+      client.exec(remote, (err, s) => {
+        if (err || !s) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           reject(
             new HostError(
               "failed",
@@ -174,25 +199,39 @@ export class SshHostSession implements HostSession {
           );
           return;
         }
+        stream = s;
         let stdout = "";
         let stderr = "";
-        stream
-          .on("data", (chunk: Buffer) => {
-            stdout += chunk.toString("utf8");
-          })
-          .stderr.on("data", (chunk: Buffer) => {
-            stderr += chunk.toString("utf8");
-          });
-        stream.on("close", (code: number | null) => {
+        s.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        }).stderr.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString("utf8");
+        });
+        s.on("close", (code: number | null) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           resolve({
             stdout,
             stderr,
             code: code ?? 1,
           });
         });
-        stream.on("error", (e: Error) => {
+        s.on("error", (e: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           reject(new HostError("failed", `SSH stream error: ${e.message}`));
         });
+        if (opts?.stdin !== undefined) {
+          // Feed stdin then signal EOF so `bash -s` / `read` loops terminate.
+          s.write(opts.stdin);
+          try {
+            s.end();
+          } catch {
+            // ignore — some shells close early
+          }
+        }
       });
     });
   }

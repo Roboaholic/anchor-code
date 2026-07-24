@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  commentBodyForDisplay,
+  rejoinDiffCommentBody,
+} from "@/core/history/diffComment";
 import type { CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
 
 export type BubbleMode = "view" | "edit" | "reply";
 
 export interface CommentBubbleProps {
+  /** The annotation whose toolbar actions are active. */
   comment: CommentRecord;
+  /** Other annotation threads hit at the same source position. */
+  relatedComments?: CommentRecord[];
   left: number;
   top: number;
   onClose: () => void;
@@ -28,28 +35,15 @@ function isInsideBubbleOrSelect(
 
 export function CommentBubble({
   comment,
+  relatedComments = [],
   left,
   top,
   onClose,
   onMutated,
 }: CommentBubbleProps) {
-  const setStatus = useAnnotationsStore((s) => s.setStatus);
-  const reply = useAnnotationsStore((s) => s.reply);
-  const editComment = useAnnotationsStore((s) => s.editComment);
-  const deleteComment = useAnnotationsStore((s) => s.deleteComment);
+  const sessions = useAnnotationsStore((s) => s.sessions);
   const rootRef = useRef<HTMLDivElement>(null);
-
-  const [mode, setMode] = useState<BubbleMode>("view");
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (mode === "edit") {
-      setDraft(comment.messages[0]?.body ?? "");
-    } else if (mode === "reply") {
-      setDraft("");
-    }
-  }, [mode, comment.id]);
+  const threads = [comment, ...relatedComments];
 
   // Capture phase: Monaco stops propagation on editor clicks, so bubble-phase
   // document listeners never see them.
@@ -76,6 +70,77 @@ export function CommentBubble({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  return (
+    <div
+      ref={rootRef}
+      className={`anno-bubble${threads.length > 1 ? " has-overlap" : ""}`}
+      style={{ left, top }}
+      role="dialog"
+      aria-label={`${threads.length} annotation${threads.length === 1 ? "" : "s"}`}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="anno-bubble__header">
+        <span className="anno-bubble__count">
+          {threads.length === 1 ? "Comment" : `${threads.length} overlapping comments`}
+        </span>
+        <button
+          type="button"
+          className="icon-btn anno-bubble__close"
+          title="Close"
+          aria-label="Close annotations"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </div>
+      <div className="anno-bubble__threads">
+        {threads.map((thread, threadIndex) => {
+          const owner = sessions.find((session) =>
+            session.comments.some((candidate) => candidate.id === thread.id),
+          );
+          return (
+            <BubbleThread
+              key={thread.id}
+              thread={thread}
+              ownerLabel={owner?.title ?? "Session"}
+              selected={threadIndex === 0}
+              onMutated={onMutated}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BubbleThread({
+  thread,
+  ownerLabel,
+  selected,
+  onMutated,
+}: {
+  thread: CommentRecord;
+  ownerLabel: string;
+  selected: boolean;
+  onMutated?: () => void;
+}) {
+  const setStatus = useAnnotationsStore((s) => s.setStatus);
+  const reply = useAnnotationsStore((s) => s.reply);
+  const editComment = useAnnotationsStore((s) => s.editComment);
+  const deleteComment = useAnnotationsStore((s) => s.deleteComment);
+  const [mode, setMode] = useState<BubbleMode>("view");
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (mode === "edit") {
+      setDraft(commentBodyForDisplay(thread.messages[0]?.body ?? ""));
+    } else if (mode === "reply") {
+      setDraft("");
+    }
+  }, [mode, thread.id]);
+
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -89,7 +154,11 @@ export function CommentBubble({
   const submitEdit = () => {
     if (!draft.trim()) return;
     void run(async () => {
-      await editComment(comment.id, draft.trim());
+      const original = thread.messages[0]?.body ?? "";
+      await editComment(
+        thread.id,
+        rejoinDiffCommentBody(original, draft.trim()),
+      );
       setMode("view");
     });
   };
@@ -97,7 +166,7 @@ export function CommentBubble({
   const submitReply = () => {
     if (!draft.trim()) return;
     void run(async () => {
-      await reply(comment.id, draft.trim());
+      await reply(thread.id, draft.trim());
       setMode("view");
       setDraft("");
     });
@@ -106,30 +175,28 @@ export function CommentBubble({
   const onDelete = () => {
     if (!window.confirm("Delete this comment thread permanently?")) return;
     void run(async () => {
-      await deleteComment(comment.id);
-      onClose();
+      await deleteComment(thread.id);
     });
   };
 
   return (
-    <div
-      ref={rootRef}
-      className="anno-bubble"
-      style={{ left, top }}
-      role="dialog"
-      aria-label="Annotation"
-      // Keep bubble interactions from falling through to the editor under it.
-      onMouseDown={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
+    <section
+      className={`anno-bubble__thread${selected ? " is-selected" : ""}`}
+      aria-label={`${ownerLabel} comment`}
     >
+      <div className="anno-bubble__thread-head">
+        <span className="anno-bubble__thread-meta">{ownerLabel}</span>
+        {selected ? (
+          <span className="anno-bubble__selected-label">selected</span>
+        ) : null}
+      </div>
       <div className="anno-bubble__toolbar">
         <div className="anno-bubble__actions">
           <button
             type="button"
             className="btn btn--ghost btn--small"
             disabled={busy}
-            title="Reply"
-            onClick={() => setMode((m) => (m === "reply" ? "view" : "reply"))}
+            onClick={() => setMode((value) => (value === "reply" ? "view" : "reply"))}
           >
             Reply
           </button>
@@ -137,8 +204,7 @@ export function CommentBubble({
             type="button"
             className="btn btn--ghost btn--small"
             disabled={busy}
-            title="Edit primary comment"
-            onClick={() => setMode((m) => (m === "edit" ? "view" : "edit"))}
+            onClick={() => setMode((value) => (value === "edit" ? "view" : "edit"))}
           >
             Edit
           </button>
@@ -146,7 +212,6 @@ export function CommentBubble({
             type="button"
             className="btn btn--ghost btn--small"
             disabled={busy}
-            title="Delete thread"
             onClick={onDelete}
           >
             Delete
@@ -154,13 +219,13 @@ export function CommentBubble({
         </div>
         <select
           className="anno-bubble__status"
-          value={comment.status}
+          value={thread.status}
           disabled={busy}
           title="Review status"
           onChange={(e) =>
             void run(async () => {
               await setStatus(
-                comment.id,
+                thread.id,
                 e.target.value as CommentRecord["status"],
               );
             })
@@ -170,95 +235,97 @@ export function CommentBubble({
           <option value="need_modify">need_modify</option>
           <option value="closed">closed</option>
         </select>
-        <button
-          type="button"
-          className="icon-btn anno-bubble__close"
-          title="Close"
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="anno-bubble__meta">
-        <span className="anno-bubble__path">
-          {comment.target.file_path}:{comment.target.start_line}
-        </span>
-        <span className={`chip chip--${comment.status}`}>{comment.status}</span>
       </div>
 
       <div className="anno-bubble__messages">
-        {comment.messages.map((m, i) => (
-          <div key={m.id} className="anno-bubble__msg">
+        {thread.messages.map((message, index) => (
+          <div key={message.id} className="anno-bubble__msg">
             <div className="anno-bubble__msg-head">
-              <code>{m.author || "unknown"}</code>
+              <code>{message.author || "unknown"}</code>
               <span className="anno-bubble__msg-tag">
-                {i === 0 ? "primary" : "reply"}
+                {index === 0 ? "primary" : "reply"}
               </span>
             </div>
-            <div className="anno-bubble__msg-body">{m.body}</div>
+            <div className="anno-bubble__msg-body">
+              {commentBodyForDisplay(message.body) || "(empty)"}
+            </div>
           </div>
         ))}
       </div>
 
       {mode === "edit" ? (
-        <div className="anno-bubble__editor">
-          <textarea
-            className="anno-bubble__textarea"
-            rows={3}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            autoFocus
-          />
-          <div className="anno-bubble__editor-actions">
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              onClick={() => setMode("view")}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--accent btn--small"
-              disabled={!draft.trim() || busy}
-              onClick={submitEdit}
-            >
-              Save
-            </button>
-          </div>
-        </div>
+        <BubbleEditor
+          value={draft}
+          rows={3}
+          busy={busy}
+          submitLabel="Save"
+          onChange={setDraft}
+          onCancel={() => setMode("view")}
+          onSubmit={submitEdit}
+        />
       ) : null}
-
       {mode === "reply" ? (
-        <div className="anno-bubble__editor">
-          <textarea
-            className="anno-bubble__textarea"
-            rows={2}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Reply…"
-            autoFocus
-          />
-          <div className="anno-bubble__editor-actions">
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              onClick={() => setMode("view")}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--accent btn--small"
-              disabled={!draft.trim() || busy}
-              onClick={submitReply}
-            >
-              Reply
-            </button>
-          </div>
-        </div>
+        <BubbleEditor
+          value={draft}
+          rows={2}
+          busy={busy}
+          submitLabel="Reply"
+          placeholder="Reply…"
+          onChange={setDraft}
+          onCancel={() => setMode("view")}
+          onSubmit={submitReply}
+        />
       ) : null}
+    </section>
+  );
+}
+
+function BubbleEditor({
+  value,
+  rows,
+  busy,
+  submitLabel,
+  placeholder,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  value: string;
+  rows: number;
+  busy: boolean;
+  submitLabel: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="anno-bubble__editor">
+      <textarea
+        className="anno-bubble__textarea"
+        rows={rows}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        autoFocus
+      />
+      <div className="anno-bubble__editor-actions">
+        <button
+          type="button"
+          className="btn btn--ghost btn--small"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn--accent btn--small"
+          disabled={!value.trim() || busy}
+          onClick={onSubmit}
+        >
+          {submitLabel}
+        </button>
+      </div>
     </div>
   );
 }

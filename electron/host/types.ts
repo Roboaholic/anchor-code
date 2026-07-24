@@ -80,7 +80,12 @@ export interface HostSession {
   readonly profileId: string;
   workspaceRoot: string | null;
 
-  run(cwd: string, command: string, args: string[]): Promise<RunResult>;
+  run(
+    cwd: string,
+    command: string,
+    args: string[],
+    opts?: { timeoutMs?: number; stdin?: string },
+  ): Promise<RunResult>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, data: string): Promise<void>;
   listDir(path: string): Promise<DirEntry[]>;

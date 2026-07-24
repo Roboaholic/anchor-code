@@ -29,6 +29,10 @@ export type OpenItem =
       mdViewMode: MdViewMode;
       error?: string;
       revealLine?: number;
+      /** Comment to emphasize after jump / bubble open. */
+      focusCommentId?: string | null;
+      /** Bumps on every jump so repeated clicks re-run reveal. */
+      revealNonce?: number;
     }
   | {
       id: string;
@@ -53,6 +57,7 @@ export interface DocumentState {
     path: string;
     workspaceRoot: string | null;
     revealLine?: number;
+    focusCommentId?: string | null;
   }) => Promise<void>;
   openDiff: (payload: DiffOpenPayload) => void;
   setDiffActiveFile: (id: string, filePath: string) => void;
@@ -70,8 +75,23 @@ function welcomeItem(): OpenItem {
   return { id: "welcome", kind: "welcome", title: "Welcome" };
 }
 
+function normalizePathKey(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
 function fileItemId(path: string): string {
-  return `file:${path}`;
+  return `file:${normalizePathKey(path)}`;
+}
+
+function findOpenFile(
+  openItems: OpenItem[],
+  path: string,
+): Extract<OpenItem, { kind: "file" }> | undefined {
+  const key = normalizePathKey(path);
+  return openItems.find(
+    (i): i is Extract<OpenItem, { kind: "file" }> =>
+      i.kind === "file" && normalizePathKey(i.path) === key,
+  );
 }
 
 function diffItemId(payload: DiffOpenPayload): string {
@@ -95,32 +115,39 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  openFile: async ({ path, workspaceRoot, revealLine }) => {
-    const id = fileItemId(path);
-    const existing = get().openItems.find((i) => i.id === id);
-    if (existing && existing.kind === "file" && !existing.error) {
+  openFile: async ({ path, workspaceRoot, revealLine, focusCommentId }) => {
+    const normalizedPath = normalizePathKey(path);
+    const id = fileItemId(normalizedPath);
+    const existing = findOpenFile(get().openItems, normalizedPath);
+    if (existing && !existing.error) {
       set((s) => ({
-        activeId: id,
+        activeId: existing.id,
         openItems: s.openItems.map((item) =>
-          item.id === id && item.kind === "file"
-            ? { ...item, revealLine }
+          item.id === existing.id && item.kind === "file"
+            ? {
+                ...item,
+                // Keep the already-open host path; only refresh reveal/focus.
+                revealLine,
+                focusCommentId: focusCommentId ?? null,
+                revealNonce: (item.revealNonce ?? 0) + 1,
+              }
             : item,
         ),
       }));
       return;
     }
 
-    const title = basename(path);
+    const title = basename(normalizedPath);
     const relativePath = workspaceRoot
-      ? relativeToRoot(workspaceRoot, path) || title
-      : path;
-    const language = languageFromPath(path);
-    const isMarkdown = isMarkdownPath(path);
+      ? relativeToRoot(workspaceRoot, normalizedPath) || title
+      : normalizedPath;
+    const language = languageFromPath(normalizedPath);
+    const isMarkdown = isMarkdownPath(normalizedPath);
 
     const loading: OpenItem = {
       id,
       kind: "file",
-      path,
+      path: normalizedPath,
       title,
       relativePath,
       language,
@@ -130,6 +157,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       size: 0,
       mdViewMode: isMarkdown ? "rendered" : "rendered",
       revealLine,
+      focusCommentId: focusCommentId ?? null,
+      revealNonce: 1,
     };
 
     set((s) => {
@@ -138,7 +167,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
 
     try {
-      const result = await window.anchor.workspace.readText(path);
+      const result = await window.anchor.workspace.readText(normalizedPath);
       set((s) => ({
         openItems: s.openItems.map((item) =>
           item.id === id && item.kind === "file"
@@ -248,12 +277,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   revealInFile: (path, line) => {
-    const id = fileItemId(path);
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing) return;
     set((s) => ({
-      activeId: id,
+      activeId: existing.id,
       openItems: s.openItems.map((item) =>
-        item.id === id && item.kind === "file"
-          ? { ...item, revealLine: line }
+        item.id === existing.id && item.kind === "file"
+          ? {
+              ...item,
+              revealLine: line,
+              revealNonce: (item.revealNonce ?? 0) + 1,
+            }
           : item,
       ),
     }));
@@ -264,10 +298,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   updateFileContent: (path, content) => {
-    const id = fileItemId(path);
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing) return;
     set((s) => ({
       openItems: s.openItems.map((item) =>
-        item.id === id && item.kind === "file" ? { ...item, content } : item,
+        item.id === existing.id && item.kind === "file"
+          ? { ...item, content }
+          : item,
       ),
     }));
   },

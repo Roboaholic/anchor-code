@@ -168,7 +168,7 @@ export function TerminalPanel() {
         <div className="terminal-panel__body">
           {error ? (
             <pre className="terminal-mock">
-              {`Terminal unavailable:\n${error}\n\nTry:\n  npm run ensure:pty\n  npm run rebuild:native\n  npm run dev`}
+              {`Terminal unavailable:\n${error}\n\nIf using WSL:\n  • Confirm WSL is running (wsl -l -v)\n  • If stuck: wsl --shutdown, then reopen workspace\n  • Check workspace path exists inside the distro\n\nIf node-pty failed in a dev build:\n  npm run rebuild:native\n  npm run ensure:pty`}
             </pre>
           ) : !workspaceRoot ? (
             <pre className="terminal-mock">

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDiffCommentPrefix,
+  commentBodyForDisplay,
   isSelectionLockedOut,
+  parseDiffCommentBody,
+  rejoinDiffCommentBody,
   shortRev,
 } from "./diffComment";
 
@@ -51,6 +54,44 @@ describe("buildDiffCommentPrefix", () => {
     expect(p).toContain("base: HEAD");
     expect(p).toContain("head: bbbbbbb");
     expect(p).toContain("L3, newer side");
+  });
+});
+
+describe("parseDiffCommentBody / display", () => {
+  it("returns human text without the machine prefix", () => {
+    const prefix = buildDiffCommentPrefix({
+      branch: "main",
+      base: "aaaaaaaaaaaaaaaa",
+      head: "worktree",
+      filePath: "src/a.ts",
+      startLine: 1,
+      endLine: 2,
+    });
+    const body = `${prefix}please fix this`;
+    expect(commentBodyForDisplay(body)).toBe("please fix this");
+    expect(parseDiffCommentBody(body).prefix.startsWith("[diff context]")).toBe(
+      true,
+    );
+  });
+
+  it("leaves plain comments unchanged", () => {
+    expect(commentBodyForDisplay("hello")).toBe("hello");
+    expect(parseDiffCommentBody("hello").prefix).toBe("");
+  });
+
+  it("rejoins prefix when editing human text", () => {
+    const prefix = buildDiffCommentPrefix({
+      branch: "main",
+      base: "HEAD",
+      head: "worktree",
+      filePath: "x.ts",
+      startLine: 1,
+      endLine: 1,
+    });
+    const original = `${prefix}old note`;
+    const next = rejoinDiffCommentBody(original, "new note");
+    expect(next.startsWith("[diff context]")).toBe(true);
+    expect(commentBodyForDisplay(next)).toBe("new note");
   });
 });
 

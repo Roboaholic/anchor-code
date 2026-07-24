@@ -9,8 +9,10 @@ export type CodiconName =
   | "close"
   | "comment"
   | "comment-discussion"
+  | "copy"
   | "diff"
   | "error"
+  | "export"
   | "file"
   | "file-code"
   | "files"
@@ -24,13 +26,13 @@ export type CodiconName =
   | "layout-sidebar-right"
   | "list-flat"
   | "markdown"
+  | "refresh"
   | "search"
   | "settings-gear"
   | "symbol-file"
   | "terminal"
   | "chevron-down"
   | "chevron-right";
-
 type IconProps = {
   name: CodiconName | (string & {});
   className?: string;

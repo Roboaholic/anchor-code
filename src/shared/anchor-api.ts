@@ -115,6 +115,13 @@ export interface RepoStatus {
   added: number;
   deleted: number;
   untracked: number;
+  /**
+   * Commits ahead of the comparison base (upstream, else origin/HEAD / main / master).
+   * null when no base is available.
+   */
+  ahead: number | null;
+  /** Commits behind the same base; null when no base. */
+  behind: number | null;
 }
 
 export interface HistoryCompareEntry {

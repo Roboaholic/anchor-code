@@ -4,13 +4,12 @@ import {
   type DiffFile,
 } from "../../src/core/history/diffParse.js";
 import {
-  parsePorcelainStatus,
+  parsePorcelainStatusDetailed,
   type StatusEntry,
 } from "../../src/core/history/statusParse.js";
 import type { HostSession } from "../host/types.js";
 import {
   hostBasename,
-  hostDirname,
   hostJoin,
   hostNormalize,
 } from "../host/paths.js";
@@ -22,6 +21,7 @@ const SCAN_DEPTH = 6;
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
+  ".repo",
   "dist",
   "build",
   "out",
@@ -74,18 +74,33 @@ export interface RepoStatus {
   added: number;
   deleted: number;
   untracked: number;
+  /** Commits ahead of comparison base; null if no base. */
+  ahead: number | null;
+  /** Commits behind comparison base; null if no base. */
+  behind: number | null;
 }
-
 async function isGitRoot(host: HostSession, dir: string): Promise<boolean> {
   const gitPath = hostJoin(host.kind, dir, ".git");
-  if (!(await host.exists(gitPath))) return false;
+  let st: StatLike;
   try {
-    const st = await host.stat(gitPath);
-    return st.isDir || st.isFile;
+    // Single stat instead of exists()+stat() — halves fs round-trips.
+    st = await host.stat(gitPath);
+  } catch {
+    return false;
+  }
+  // Worktree/gitfile: `.git` is a file pointing at the real git dir.
+  if (st.isFile) return true;
+  if (!st.isDir) return false;
+  // Empty or stub `.git` directories are not usable (common in broken checkouts).
+  try {
+    await host.stat(hostJoin(host.kind, gitPath, "HEAD"));
+    return true;
   } catch {
     return false;
   }
 }
+
+type StatLike = { isFile: boolean; isDir: boolean };
 
 async function discoverViaFind(
   host: HostSession,
@@ -93,16 +108,30 @@ async function discoverViaFind(
 ): Promise<string[] | null> {
   if (host.kind !== "wsl" && host.kind !== "ssh") return null;
 
-  // One bash -lc script: avoids argv edge cases and is ~50ms warm / cold-start bound.
+  // One bash invocation that both walks AND validates git roots, so we never do
+  // per-candidate UNC round-trips from Node (each ~1s on WSL via wsl.exe
+  // fallback, and UNC can't follow symlink `.git` used by `repo` manifests).
+  //
+  // Why stdin / `bash -s`: host.run routes args through posixShellCommand into
+  // `bash -lc '<script>'`, whose double-shell quoting mangles `'`, `;`, `()`,
+  // `$var`, and `{} -exec`. Piping the script on stdin to `bash -s` bypasses
+  // that layer entirely, so we can use `\( ... \)`, `while read`, `dirname`,
+  // and `[ -f "$g/HEAD" ]` reliably.
   const maxdepth = String(SCAN_DEPTH + 1);
   const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
+  const pruneNames = [...SKIP_DIRS].filter((d) => d !== ".git");
+  const pruneExpr = pruneNames.map((d) => `-name ${d}`).join(" -o ");
   const script = [
-    `find '${rootQ}' -maxdepth ${maxdepth}`,
-    `\\( -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name target -o -name .cache -o -name .turbo -o -name coverage -o -name __pycache__ -o -name .venv -o -name venv \\)`,
-    `-prune -o -name .git -print 2>/dev/null`,
-  ].join(" ");
+    `root='${rootQ}'`,
+    `find "$root" -maxdepth ${maxdepth} \\( ${pruneExpr} \\) -prune -o -name .git -print 2>/dev/null | while IFS= read -r g; do`,
+    `  d=$(dirname "$g")`,
+    // Valid when: real `.git/HEAD` (normal repo or repo-manifest symlink that
+    // resolves to a dir with HEAD), or `.git` is a gitfile (worktree/submodule).
+    `  if [ -f "$g/HEAD" ] || [ -f "$g" ]; then echo "$d"; fi`,
+    `done`,
+  ].join("\n");
 
-  const result = await host.run(workspaceRoot, "bash", ["-lc", script]);
+  const result = await host.run(workspaceRoot, "bash", ["-s"], { stdin: script });
   // find often exits 0; treat empty+error as failure so caller can decide
   if (!result.stdout.trim() && result.code !== 0) {
     return null;
@@ -112,10 +141,7 @@ async function discoverViaFind(
   for (const line of result.stdout.split("\n")) {
     const p = line.trim().replace(/\\/g, "/");
     if (!p) continue;
-    if (p.endsWith("/.git") || /\/\.git$/.test(p) || p === ".git") {
-      const repo = p === ".git" ? workspaceRoot : hostDirname(host.kind, p);
-      if (repo) roots.push(repo);
-    }
+    roots.push(hostNormalize(host.kind, p));
   }
   return roots;
 }
@@ -194,11 +220,21 @@ export async function discoverRepos(
   }
 
   if (nested) {
-    for (const r of nested) roots.push(r);
+    for (const r of nested) {
+      // discoverViaFind (WSL/SSH) already validated HEAD and stripped stubs;
+      // walkDiscover (local) validated inline too. Only re-check the workspace
+      // root above goes through isGitRoot. Here we just drop .repo noise and
+      // trust the discovery pass — re-validating on WSL would re-introduce the
+      // per-root wsl.exe fallback that made discover time out (>20s) on trees
+      // with symlink `.git` (e.g. `repo` manifests).
+      if (/(^|\/)\.repo(\/|$)/.test(hostNormalize(host.kind, r))) continue;
+      roots.push(r);
+    }
   }
 
-  // If find failed on WSL but workspace root is git, still return at least that.
-  const unique = [...new Set(roots.map((r) => hostNormalize(host.kind, r)))];
+  const unique = [
+    ...new Set(roots.map((r) => hostNormalize(host.kind, r))),
+  ];
   unique.sort((a, b) => a.length - b.length || a.localeCompare(b));
 
   return unique.map((repoRoot) => ({
@@ -241,10 +277,14 @@ export async function loadRepoStatus(
   host: HostSession,
   repoRoot: string,
 ): Promise<RepoStatus> {
+  // "normal" (default) — not "all". Listing every untracked path under huge trees
+  // (SDK out/, .repo, build dumps) freezes WSL and stalls the History UI on "…".
+  // `-b` adds `## branch...upstream [ahead N, behind M]` so we get tracking in one call.
   const result = await host.run(repoRoot, "git", [
     "status",
     "--porcelain",
-    "--untracked-files=all",
+    "-b",
+    "--untracked-files=normal",
   ]);
   if (result.code !== 0 && !result.stdout) {
     throw new HostError(
@@ -253,7 +293,7 @@ export async function loadRepoStatus(
       result.stderr || result.stdout,
     );
   }
-  const entries = parsePorcelainStatus(result.stdout);
+  const { entries, tracking } = parsePorcelainStatusDetailed(result.stdout);
   let modified = 0;
   let added = 0;
   let deleted = 0;
@@ -264,7 +304,16 @@ export async function loadRepoStatus(
     else if (e.status === "D") deleted += 1;
     else if (e.status === "?") untracked += 1;
   }
-  return { repoRoot, entries, modified, added, deleted, untracked };
+  return {
+    repoRoot,
+    entries,
+    modified,
+    added,
+    deleted,
+    untracked,
+    ahead: tracking.ahead,
+    behind: tracking.behind,
+  };
 }
 
 async function resolveBranch(
@@ -385,6 +434,10 @@ export async function compareToWorktree(
   };
 }
 
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 async function gitShow(
   host: HostSession,
   repoRoot: string,
@@ -397,6 +450,10 @@ async function gitShow(
   return result.stdout;
 }
 
+/**
+ * Load old + new sides in one host process when possible.
+ * Cuts WSL cold-spawn cost roughly in half vs two separate git/cat calls.
+ */
 export async function getFileDiff(
   host: HostSession,
   repoRoot: string,
@@ -405,29 +462,131 @@ export async function getFileDiff(
   filePath: string,
   status: string,
 ): Promise<FileDiffContent> {
-  let oldText = "";
-  let newText = "";
+  const needOld = !(status === "?" || status.startsWith("A") || status === "A");
+  const needNew = !(status.startsWith("D") || status === "D");
 
-  if (status === "?" || status.startsWith("A") || status === "A") {
-    oldText = "";
-  } else {
-    oldText = await gitShow(host, repoRoot, `${base}:${filePath}`);
+  if (!needOld && !needNew) {
+    return { path: filePath, oldText: "", newText: "", status };
   }
 
-  if (status.startsWith("D") || status === "D") {
-    newText = "";
-  } else if (head === "worktree") {
-    const abs = hostJoin(host.kind, repoRoot, filePath);
-    if (await host.exists(abs)) {
-      try {
-        newText = await host.readFile(abs);
-      } catch {
-        newText = "";
+  try {
+    const both = await loadBothSidesOnce(
+      host,
+      repoRoot,
+      base,
+      head,
+      filePath,
+      needOld,
+      needNew,
+    );
+    if (both) {
+      // Worktree new-side empty while old has content usually means cat missed
+      // the path on this host — fall back to host.readFile.
+      const worktreeMiss =
+        head === "worktree" &&
+        needNew &&
+        both.newText.length === 0 &&
+        (!needOld || both.oldText.length > 0);
+      if (!worktreeMiss) {
+        return { path: filePath, ...both, status };
+      }
+      if (needOld) {
+        // Keep old from combined, only re-read worktree new.
+        const abs = hostJoin(host.kind, repoRoot, filePath);
+        const newText = await host.readFile(abs).catch(() => "");
+        return { path: filePath, oldText: both.oldText, newText, status };
       }
     }
-  } else {
-    newText = await gitShow(host, repoRoot, `${head}:${filePath}`);
+  } catch {
+    // fall through
   }
 
+  const oldP = needOld
+    ? gitShow(host, repoRoot, `${base}:${filePath}`)
+    : Promise.resolve("");
+  let newP: Promise<string>;
+  if (!needNew) {
+    newP = Promise.resolve("");
+  } else if (head === "worktree") {
+    const abs = hostJoin(host.kind, repoRoot, filePath);
+    newP = host.readFile(abs).catch(() => "");
+  } else {
+    newP = gitShow(host, repoRoot, `${head}:${filePath}`);
+  }
+  const [oldText, newText] = await Promise.all([oldP, newP]);
   return { path: filePath, oldText, newText, status };
+}
+
+async function loadBothSidesOnce(
+  host: HostSession,
+  repoRoot: string,
+  base: string,
+  head: string | "worktree",
+  filePath: string,
+  needOld: boolean,
+  needNew: boolean,
+): Promise<{ oldText: string; newText: string } | null> {
+  const oldCmd = needOld
+    ? `git show ${shQuote(`${base}:${filePath}`)} 2>/dev/null || true`
+    : "true";
+  let newCmd = "true";
+  if (needNew) {
+    if (head === "worktree") {
+      // cwd is already repoRoot — use relative path (portable for local/WSL/SSH).
+      newCmd = `cat ${shQuote(filePath)} 2>/dev/null || true`;
+    } else {
+      newCmd = `git show ${shQuote(`${head}:${filePath}`)} 2>/dev/null || true`;
+    }
+  }
+  // Markers must not appear in source; use low-collision sentinels.
+  const script = [
+    "set +e",
+    "printf '%s\\n' '__AC_OLD_BEGIN__'",
+    oldCmd,
+    "printf '%s\\n' '__AC_OLD_END__'",
+    "printf '%s\\n' '__AC_NEW_BEGIN__'",
+    newCmd,
+    "printf '%s\\n' '__AC_NEW_END__'",
+    "",
+  ].join("\n");
+
+  const result = await host.run(repoRoot, "bash", ["-s"], {
+    stdin: script,
+    timeoutMs: 45_000,
+  });
+  if (!result.stdout.includes("__AC_OLD_BEGIN__")) return null;
+  const oldText = sliceBetween(
+    result.stdout,
+    "__AC_OLD_BEGIN__",
+    "__AC_OLD_END__",
+  );
+  const newText = sliceBetween(
+    result.stdout,
+    "__AC_NEW_BEGIN__",
+    "__AC_NEW_END__",
+  );
+  if (oldText === null || newText === null) return null;
+  return { oldText, newText };
+}
+
+function sliceBetween(
+  text: string,
+  begin: string,
+  end: string,
+): string | null {
+  const bi = text.indexOf(begin);
+  if (bi < 0) return null;
+  let bodyStart = bi + begin.length;
+  // Marker is printed with a trailing newline; skip it only.
+  if (text.startsWith("\r\n", bodyStart)) bodyStart += 2;
+  else if (text.startsWith("\n", bodyStart)) bodyStart += 1;
+  const ei = text.indexOf(end, bodyStart);
+  if (ei < 0) return null;
+  // End marker sits at the start of its line; drop the separator newline before it.
+  let bodyEnd = ei;
+  if (bodyEnd > bodyStart && text[bodyEnd - 1] === "\n") {
+    bodyEnd -= 1;
+    if (bodyEnd > bodyStart && text[bodyEnd - 1] === "\r") bodyEnd -= 1;
+  }
+  return text.slice(bodyStart, bodyEnd);
 }

@@ -198,6 +198,8 @@ const anchor = {
       added: number;
       deleted: number;
       untracked: number;
+      ahead: number | null;
+      behind: number | null;
     }> => ipcRenderer.invoke("history:status", repoRoot),
     compare: (args: {
       repoRoot: string;

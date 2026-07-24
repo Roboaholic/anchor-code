@@ -61,10 +61,12 @@ export function HistoryPane() {
         </p>
         <button
           type="button"
-          className="btn btn--ghost btn--small"
+          className="icon-btn"
           onClick={() => void discover(workspaceRoot)}
+          title="Rescan for git roots"
+          aria-label="Rescan for git roots"
         >
-          Rescan
+          <Icon name="refresh" />
         </button>
       </div>
     );
@@ -79,10 +81,12 @@ export function HistoryPane() {
         </p>
         <button
           type="button"
-          className="btn btn--ghost btn--small"
+          className="icon-btn"
           onClick={() => void discover(workspaceRoot)}
+          title="Rescan for git roots"
+          aria-label="Rescan for git roots"
         >
-          Rescan
+          <Icon name="refresh" />
         </button>
       </div>
     );
@@ -94,11 +98,12 @@ export function HistoryPane() {
         <span className="files-pane__title">Repos</span>
         <button
           type="button"
-          className="btn btn--ghost btn--small"
+          className="icon-btn"
           onClick={() => void discover(workspaceRoot)}
           title="Rescan for git roots"
+          aria-label="Rescan for git roots"
         >
-          Rescan
+          <Icon name="refresh" />
         </button>
       </div>
 
@@ -146,7 +151,6 @@ function RepoCard({
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
   const toggleCompares = useHistoryStore((s) => s.toggleCompares);
   const toggleCommit = useHistoryStore((s) => s.toggleCommit);
-  const swap = useHistoryStore((s) => s.swap);
   const refreshStatus = useHistoryStore((s) => s.refreshStatus);
   const removeRecent = useHistoryStore((s) => s.removeRecent);
   const dirty = dirtyCount(card);
@@ -173,32 +177,57 @@ function RepoCard({
         <span className="repo-row__meta">
           {card.statusState === "loading" ? (
             <span className="repo-row__count is-muted">…</span>
-          ) : dirty > 0 ? (
+          ) : card.statusState === "error" ? (
+            <span
+              className="repo-row__count is-muted"
+              title={card.statusError ?? "Status failed"}
+            >
+              err
+            </span>
+          ) : card.status ? (
             <>
-              {(card.status?.modified ?? 0) > 0 ? (
-                <span className="repo-row__count" title="Modified">
-                  M{card.status!.modified}
+              {dirty > 0 ? (
+                <>
+                  {(card.status.modified ?? 0) > 0 ? (
+                    <span className="repo-row__count" title="Modified">
+                      M{card.status.modified}
+                    </span>
+                  ) : null}
+                  {(card.status.added ?? 0) > 0 ? (
+                    <span className="repo-row__count" title="Added">
+                      A{card.status.added}
+                    </span>
+                  ) : null}
+                  {(card.status.deleted ?? 0) > 0 ? (
+                    <span className="repo-row__count" title="Deleted">
+                      D{card.status.deleted}
+                    </span>
+                  ) : null}
+                  {(card.status.untracked ?? 0) > 0 ? (
+                    <span className="repo-row__count" title="Untracked">
+                      ?{card.status.untracked}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+              {(card.status.ahead ?? 0) > 0 ? (
+                <span
+                  className="repo-row__count"
+                  title="Commits ahead of base (upstream / origin default)"
+                >
+                  ↑{card.status.ahead}
                 </span>
               ) : null}
-              {(card.status?.added ?? 0) > 0 ? (
-                <span className="repo-row__count" title="Added">
-                  A{card.status!.added}
-                </span>
-              ) : null}
-              {(card.status?.deleted ?? 0) > 0 ? (
-                <span className="repo-row__count" title="Deleted">
-                  D{card.status!.deleted}
-                </span>
-              ) : null}
-              {(card.status?.untracked ?? 0) > 0 ? (
-                <span className="repo-row__count" title="Untracked">
-                  ?{card.status!.untracked}
+              {(card.status.behind ?? 0) > 0 ? (
+                <span
+                  className="repo-row__count is-muted"
+                  title="Commits behind base (upstream / origin default)"
+                >
+                  ↓{card.status.behind}
                 </span>
               ) : null}
             </>
-          ) : (
-            <span className="repo-row__count is-muted">clean</span>
-          )}
+          ) : null}
         </span>
       </button>
 
@@ -223,11 +252,12 @@ function RepoCard({
               {card.changesOpen ? (
                 <button
                   type="button"
-                  className="repo-block__text-btn"
+                  className="icon-btn"
                   onClick={() => void refreshStatus(card.root)}
                   title="Refresh working tree status"
+                  aria-label="Refresh working tree status"
                 >
-                  Refresh
+                  <Icon name="refresh" />
                 </button>
               ) : null}
             </div>
@@ -261,7 +291,7 @@ function RepoCard({
                       </li>
                     ))}
                   </ul>
-                ) : dirty === 0 && card.statusState !== "loading" ? (
+                ) : card.status && dirty === 0 && card.statusState !== "loading" ? (
                   <p className="pane-hint">No local changes.</p>
                 ) : null}
               </div>
@@ -282,6 +312,19 @@ function RepoCard({
                 />
                 <span className="repo-block__title">History</span>
               </button>
+              {card.historyOpen ? (
+                <div className="repo-block__head-actions">
+                  <button
+                    type="button"
+                    className="btn btn--accent btn--small"
+                    disabled={!canCompare}
+                    onClick={() => void openHistoryCompare(card.root)}
+                    title="Compare selection (first = base, second = head)"
+                  >
+                    {card.comparing ? "…" : "Compare"}
+                  </button>
+                </div>
+              ) : null}
             </div>
             {card.historyOpen ? (
               <div className="repo-block__body">
@@ -292,34 +335,13 @@ function RepoCard({
                   <p className="pane-hint">Loading commits…</p>
                 ) : null}
 
-                <div className="history-pane__actions">
-                  {label ? (
+                {label ? (
+                  <div className="history-pane__actions">
                     <span className="history-pane__label" title={label}>
                       {label}
                     </span>
-                  ) : (
-                    <span className="history-pane__label history-pane__label--empty" />
-                  )}
-                  <div className="history-pane__btns">
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--small"
-                      disabled={card.selectedHashes.length !== 2}
-                      onClick={() => swap(card.root)}
-                    >
-                      Swap
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--accent btn--small"
-                      disabled={!canCompare}
-                      onClick={() => void openHistoryCompare(card.root)}
-                      title="Start compare from current selection"
-                    >
-                      {card.comparing ? "…" : "Compare"}
-                    </button>
                   </div>
-                </div>
+                ) : null}
                 <ul className="commit-list">
                   <li>
                     <label

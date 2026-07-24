@@ -11,6 +11,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
+  overlapRegionsForModel,
   useAnnotationsStore,
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
@@ -20,6 +21,8 @@ import "./monacoSetup";
 
 type BubbleState = {
   commentId: string;
+  /** Every annotation thread hit at the clicked source position. */
+  relatedCommentIds: string[];
   left: number;
   top: number;
 };
@@ -42,33 +45,29 @@ function positionForSpec(
   return { left, top };
 }
 
-function findSpecAt(
+function findSpecsAt(
   specs: DecorationSpec[],
   line: number,
   column: number,
-): DecorationSpec | null {
-  let best: DecorationSpec | null = null;
-  let bestSpan = Number.POSITIVE_INFINITY;
+): DecorationSpec[] {
+  const hits: Array<{ spec: DecorationSpec; span: number }> = [];
   for (const s of specs) {
     if (s.anchorStatus === "unresolved") continue;
     if (line < s.startLine || line > s.endLine) continue;
     const startCol = Math.max(1, s.startColumn || 1);
     const endCol = Math.max(startCol, s.endColumn || 1);
-    // Single-line: require column inside range (pad 1 for click ease).
     if (s.startLine === s.endLine) {
       if (column < startCol || column > endCol + 1) continue;
     } else {
       if (line === s.startLine && column < startCol) continue;
       if (line === s.endLine && column > endCol + 1) continue;
     }
-    const span =
-      (s.endLine - s.startLine) * 1000 + endCol - startCol;
-    if (span < bestSpan) {
-      bestSpan = span;
-      best = s;
-    }
+    hits.push({
+      spec: s,
+      span: (s.endLine - s.startLine) * 1000 + endCol - startCol,
+    });
   }
-  return best;
+  return hits.sort((a, b) => a.span - b.span).map((hit) => hit.spec);
 }
 
 export function CodeViewer({
@@ -77,6 +76,8 @@ export function CodeViewer({
   language,
   truncated,
   revealLine,
+  focusCommentId,
+  revealNonce,
   kind = "source",
 }: {
   path: string;
@@ -84,10 +85,14 @@ export function CodeViewer({
   language: string;
   truncated: boolean;
   revealLine?: number;
+  focusCommentId?: string | null;
+  revealNonce?: number;
   kind?: "source" | "markdown";
 }) {
   const theme = useThemeStore((s) => s.theme);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const decorationsRef =
+    useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
   const bubbleRef = useRef<BubbleState | null>(null);
@@ -95,6 +100,8 @@ export function CodeViewer({
 
   const decorationsFor = useAnnotationsStore((s) => s.decorationsFor);
   const activeSession = useAnnotationsStore((s) => s.activeSession);
+  const expandedSessionId = useAnnotationsStore((s) => s.expandedSessionId);
+  const sessions = useAnnotationsStore((s) => s.sessions);
 
   const [composer, setComposer] = useState<{
     startLine: number;
@@ -113,21 +120,25 @@ export function CodeViewer({
   bubbleRef.current = bubble;
 
   const liveComment = (id: string): CommentRecord | null => {
-    const session = useAnnotationsStore.getState().activeSession;
-    return session?.comments.find((c) => c.id === id) ?? null;
+    const state = useAnnotationsStore.getState();
+    for (const session of state.sessions) {
+      const found = session.comments.find((c) => c.id === id);
+      if (found) return found;
+    }
+    return null;
   };
 
-  const applyDecorations = useCallback(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    const specs = decorationsFor(path, content);
-    specsRef.current = specs;
-    const prev =
-      (ed as unknown as { __annoIds?: string[] }).__annoIds ?? [];
-    const activeId = bubbleRef.current?.commentId;
-    const ids = ed.deltaDecorations(
-      prev,
-      specs
+  const applyDecorations = useCallback(
+    (activeCommentId?: string | null) => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      const specs = decorationsFor(path, content);
+      specsRef.current = specs;
+      const activeId =
+        activeCommentId !== undefined
+          ? activeCommentId
+          : bubbleRef.current?.commentId ?? null;
+      const decorations: MonacoEditor.IModelDeltaDecoration[] = specs
         .filter(
           (s) =>
             s.anchorStatus === "resolved" || s.anchorStatus === "relocated",
@@ -142,16 +153,7 @@ export function CodeViewer({
               endColumn: Math.max(1, s.endColumn || 1),
             },
             options: {
-              className: selected
-                ? "anno-decoration anno-decoration--active"
-                : "anno-decoration",
-              inlineClassName: selected
-                ? "anno-inline anno-inline--active"
-                : "anno-inline",
-              hoverMessage: {
-                value: `**${s.status}** — click highlight to open`,
-              },
-              isWholeLine: s.startLine !== s.endLine,
+              inlineClassName: `anno-inline${selected ? " anno-inline--active" : ""}`,
               overviewRuler: {
                 color: accentHex(theme),
                 position: 4,
@@ -162,98 +164,121 @@ export function CodeViewer({
               },
             },
           };
-        }),
-    );
-    (ed as unknown as { __annoIds?: string[] }).__annoIds = ids;
+        });
+      const model = ed.getModel();
+      if (model) {
+        decorations.push(
+          ...overlapRegionsForModel(specs, (line) => model.getLineMaxColumn(line)).map(
+            (region) => ({
+              range: {
+                startLineNumber: region.startLine,
+                startColumn: region.startColumn,
+                endLineNumber: region.endLine,
+                endColumn: region.endColumn,
+              },
+              options: {
+                inlineClassName: `anno-inline-intersection anno-inline-intersection--${Math.min(3, region.depth)}`,
+              },
+            }),
+          ),
+        );
+      }
+      if (!decorationsRef.current) {
+        decorationsRef.current = ed.createDecorationsCollection();
+      }
+      decorationsRef.current.set(decorations);
 
-    const open = bubbleRef.current;
-    if (!open) return;
-    const still = specs.find((s) => s.commentId === open.commentId);
-    if (!still || !liveComment(open.commentId)) {
-      setBubble(null);
-      return;
-    }
-    const overlayW = overlayRef.current?.clientWidth ?? 480;
-    const pos = positionForSpec(ed, still, overlayW);
-    if (pos) setBubble({ commentId: open.commentId, ...pos });
-  }, [content, decorationsFor, path, theme]);
+      const open = bubbleRef.current;
+      if (!open) return;
+      const still = specs.find((s) => s.commentId === open.commentId);
+      if (!still) {
+        // Spec gone (session switched / comment deleted) — close bubble only.
+        bubbleRef.current = null;
+        setBubble(null);
+        return;
+      }
+      const overlayW = overlayRef.current?.clientWidth ?? 480;
+      const pos = positionForSpec(ed, still, overlayW);
+      if (pos) {
+        const next = {
+          commentId: open.commentId,
+          relatedCommentIds: open.relatedCommentIds ?? [],
+          ...pos,
+        };
+        bubbleRef.current = next;
+        setBubble(next);
+      }
+    },
+    [content, decorationsFor, path, theme],
+  );
 
   useEffect(() => {
-    applyDecorations();
-  }, [applyDecorations, activeSession]);
+    applyDecorations(focusCommentId ?? bubble?.commentId ?? null);
+  }, [
+    applyDecorations,
+    activeSession,
+    expandedSessionId,
+    sessions,
+    content,
+    focusCommentId,
+  ]);
 
   useEffect(() => {
-    if (revealLine && editorRef.current) {
-      editorRef.current.revealLineInCenter(revealLine);
-      editorRef.current.setPosition({ lineNumber: revealLine, column: 1 });
+    applyDecorations(bubble?.commentId ?? focusCommentId ?? null);
+  }, [applyDecorations, bubble?.commentId, focusCommentId]);
+
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (revealLine) {
+      ed.revealLineInCenter(revealLine);
+      ed.setPosition({ lineNumber: revealLine, column: 1 });
     }
-  }, [revealLine, content]);
+    requestAnimationFrame(() => {
+      applyDecorations(focusCommentId ?? bubbleRef.current?.commentId ?? null);
+    });
+  }, [revealLine, revealNonce, content, applyDecorations, focusCommentId]);
 
   useEffect(() => {
     return () => {
       for (const d of disposablesRef.current) d.dispose();
       disposablesRef.current = [];
+      decorationsRef.current?.clear();
+      decorationsRef.current = null;
+      editorRef.current = null;
     };
   }, []);
 
   const closeBubble = useCallback(() => {
+    bubbleRef.current = null;
     setBubble(null);
-    // Refresh decoration "active" styles after state commits.
-    requestAnimationFrame(() => {
-      const ed = editorRef.current;
-      if (!ed) return;
-      // applyDecorations reads bubbleRef; clear it first.
-      bubbleRef.current = null;
-      // Re-run via latest closure by calling decorationsFor path again.
-      const specs = decorationsFor(path, content);
-      specsRef.current = specs;
-      const prev =
-        (ed as unknown as { __annoIds?: string[] }).__annoIds ?? [];
-      const ids = ed.deltaDecorations(
-        prev,
-        specs
-          .filter(
-            (s) =>
-              s.anchorStatus === "resolved" || s.anchorStatus === "relocated",
-          )
-          .map((s) => ({
-            range: {
-              startLineNumber: s.startLine,
-              startColumn: Math.max(1, s.startColumn || 1),
-              endLineNumber: s.endLine,
-              endColumn: Math.max(1, s.endColumn || 1),
-            },
-            options: {
-              className: "anno-decoration",
-              inlineClassName: "anno-inline",
-              hoverMessage: {
-                value: `**${s.status}** — click highlight to open`,
-              },
-              isWholeLine: s.startLine !== s.endLine,
-              overviewRuler: {
-                color: accentHex(theme),
-                position: 4,
-              },
-              minimap: { color: accentHex(theme), position: 1 },
-            },
-          })),
-      );
-      (ed as unknown as { __annoIds?: string[] }).__annoIds = ids;
-    });
-  }, [content, decorationsFor, path, theme]);
+    // Re-paint without active modifier after state is cleared.
+    requestAnimationFrame(() => applyDecorations(null));
+  }, [applyDecorations]);
 
-  const openBubbleForSpec = (spec: DecorationSpec) => {
+  const openBubbleForSpecs = (hits: DecorationSpec[]) => {
     const ed = editorRef.current;
-    if (!ed) return;
+    if (!ed || hits.length === 0) return;
+    const primary = hits[0]!;
     const overlayW = overlayRef.current?.clientWidth ?? 480;
-    const pos = positionForSpec(ed, spec, overlayW);
+    const pos = positionForSpec(ed, primary, overlayW);
     if (!pos) return;
     setComposer(null);
-    setBubble({ commentId: spec.commentId, ...pos });
+    const next = {
+      commentId: primary.commentId,
+      relatedCommentIds: hits.slice(1).map((h) => h.commentId),
+      ...pos,
+    };
+    // Sync ref immediately so applyDecorations sees the open bubble.
+    bubbleRef.current = next;
+    setBubble(next);
+    applyDecorations(primary.commentId);
   };
 
   const onMount: OnMount = (ed, monaco) => {
     editorRef.current = ed;
+    decorationsRef.current?.clear();
+    decorationsRef.current = ed.createDecorationsCollection();
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
 
@@ -274,7 +299,6 @@ export function CodeViewer({
     });
 
     // mouseDown: open sticky bubble on highlight, dismiss on empty editor area.
-    // Capture-phase document dismiss also runs; re-open if this click hit a decoration.
     disposablesRef.current.push(
       ed.onMouseDown((e) => {
         const be = e.event.browserEvent as MouseEvent | undefined;
@@ -285,10 +309,9 @@ export function CodeViewer({
           return;
         }
         const { lineNumber, column } = e.target.position;
-        const hit = findSpecAt(specsRef.current, lineNumber, column);
-        if (hit) {
-          openBubbleForSpec(hit);
-          requestAnimationFrame(() => applyDecorations());
+        const hits = findSpecsAt(specsRef.current, lineNumber, column);
+        if (hits.length > 0) {
+          openBubbleForSpecs(hits);
         } else if (bubbleRef.current) {
           closeBubble();
         }
@@ -308,7 +331,15 @@ export function CodeViewer({
         }
         const overlayW = overlayRef.current?.clientWidth ?? 480;
         const pos = positionForSpec(ed, spec, overlayW);
-        if (pos) setBubble({ commentId: open.commentId, ...pos });
+        if (pos) {
+          const next = {
+            commentId: open.commentId,
+            relatedCommentIds: open.relatedCommentIds ?? [],
+            ...pos,
+          };
+          bubbleRef.current = next;
+          setBubble(next);
+        }
       }),
     );
 
@@ -372,6 +403,11 @@ export function CodeViewer({
   };
 
   const bubbleComment = bubble ? liveComment(bubble.commentId) : null;
+  const relatedBubbleComments = bubble
+    ? bubble.relatedCommentIds
+        .map((id) => liveComment(id))
+        .filter((c): c is CommentRecord => Boolean(c))
+    : [];
 
   return (
     <div className="code-viewer">
@@ -423,6 +459,7 @@ export function CodeViewer({
           <CommentBubble
             key={bubble.commentId}
             comment={bubbleComment}
+            relatedComments={relatedBubbleComments}
             left={bubble.left}
             top={bubble.top}
             onClose={closeBubble}

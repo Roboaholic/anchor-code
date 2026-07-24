@@ -10,6 +10,8 @@ export function MarkdownViewer({
   mode,
   onModeChange,
   revealLine,
+  focusCommentId,
+  revealNonce,
 }: {
   path: string;
   content: string;
@@ -17,6 +19,8 @@ export function MarkdownViewer({
   mode: MdViewMode;
   onModeChange: (mode: MdViewMode) => void;
   revealLine?: number;
+  focusCommentId?: string | null;
+  revealNonce?: number;
 }) {
   return (
     <div className="md-viewer">
@@ -49,6 +53,8 @@ export function MarkdownViewer({
           language="markdown"
           truncated={truncated}
           revealLine={revealLine}
+          focusCommentId={focusCommentId}
+          revealNonce={revealNonce}
           kind="markdown"
         />
       ) : (

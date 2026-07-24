@@ -3,7 +3,6 @@ import {
   WORKTREE_SELECTION,
   compareLabel,
   resolveCompareRange,
-  swapSelection,
   toggleCommitSelection,
 } from "@/core/history/selection";
 import {
@@ -58,7 +57,6 @@ export interface HistoryState {
   toggleHistory: (repoRoot: string) => Promise<void>;
   toggleCompares: (repoRoot: string) => void;
   toggleCommit: (repoRoot: string, hash: string) => void;
-  swap: (repoRoot: string) => void;
   clearToast: () => void;
   /** Explicit Start Compare for a repo selection (may include worktree). */
   runCompare: (repoRoot: string) => Promise<DiffOpenPayload | null>;
@@ -133,12 +131,19 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   discover: async (workspaceRoot) => {
-    set({
+    set((s) => ({
       workspaceRoot,
       discoverStatus: "loading",
       discoverError: null,
       toast: null,
-    });
+      // Wipe prior clean/dirty badges immediately so Rescan never shows stale clean.
+      repos: s.repos.map((r) => ({
+        ...r,
+        status: null,
+        statusState: "loading" as const,
+        statusError: null,
+      })),
+    }));
     try {
       const found = await Promise.race([
         window.anchor.history.discover(workspaceRoot),
@@ -168,20 +173,31 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
   refreshAllStatuses: async () => {
     const { repos } = get();
-    // Cap concurrency — WSL chokes on 50+ parallel git status.
-    const concurrency = 4;
+    // Drop stale badges (especially "clean") so mid-scan never looks finished.
+    set({
+      repos: repos.map((r) => ({
+        ...r,
+        status: null,
+        statusState: "loading" as const,
+        statusError: null,
+      })),
+    });
+    // Cap concurrency — WSL chokes on many parallel git status / wsl.exe.
+    const concurrency = 3;
     let i = 0;
+    const roots = repos.map((r) => r.root);
     async function worker() {
-      while (i < repos.length) {
+      while (i < roots.length) {
         const idx = i++;
-        const r = repos[idx];
-        if (!r) break;
-        await get().refreshStatus(r.root);
+        const root = roots[idx];
+        if (!root) break;
+        await get().refreshStatus(root);
       }
     }
     await Promise.all(
-      Array.from({ length: Math.min(concurrency, Math.max(repos.length, 1)) }, () =>
-        worker(),
+      Array.from(
+        { length: Math.min(concurrency, Math.max(roots.length, 1)) },
+        () => worker(),
       ),
     );
   },
@@ -194,7 +210,20 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       }),
     }));
     try {
-      const status = await window.anchor.history.status(repoRoot);
+      const status = await Promise.race([
+        window.anchor.history.status(repoRoot),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "Status timed out (20s). Repo may be huge or WSL is busy — try Refresh.",
+                ),
+              ),
+            20_000,
+          );
+        }),
+      ]);
       set((s) => ({
         repos: mapCard(s.repos, repoRoot, {
           status,
@@ -301,16 +330,6 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       toast: null,
       repos: mapCard(get().repos, repoRoot, {
         selectedHashes: result.selectedHashes,
-      }),
-    });
-  },
-
-  swap: (repoRoot) => {
-    const card = findCard(get().repos, repoRoot);
-    if (!card) return;
-    set({
-      repos: mapCard(get().repos, repoRoot, {
-        selectedHashes: swapSelection(card.selectedHashes),
       }),
     });
   },

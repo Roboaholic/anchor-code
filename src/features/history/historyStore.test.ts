@@ -23,6 +23,8 @@ function mockAnchor(opts?: {
     added: number;
     deleted: number;
     untracked: number;
+    ahead: number | null;
+    behind: number | null;
   };
   compare?: {
     repoRoot: string;
@@ -60,6 +62,8 @@ function mockAnchor(opts?: {
     added: 0,
     deleted: 0,
     untracked: 0,
+    ahead: 0,
+    behind: 0,
   };
   const compare = opts?.compare ?? {
     repoRoot: "/ws/repo-a",

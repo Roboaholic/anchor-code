@@ -47,7 +47,9 @@ export class LocalHostSession implements HostSession {
     cwd: string,
     command: string,
     args: string[],
+    opts?: { timeoutMs?: number; stdin?: string },
   ): Promise<RunResult> {
+    const timeoutMs = opts?.timeoutMs ?? 45_000;
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         cwd,
@@ -56,6 +58,31 @@ export class LocalHostSession implements HostSession {
       });
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try {
+            child.kill();
+          } catch {
+            // ignore
+          }
+          reject(
+            new HostError(
+              "timeout",
+              `Command timed out after ${Math.round(timeoutMs / 1000)}s: ${command}`,
+            ),
+          );
+        }, timeoutMs);
+      }
+      if (opts?.stdin !== undefined) {
+        child.stdin?.on("error", () => {
+          // ignore — EPIPE if child exits before reading stdin
+        });
+        child.stdin?.end(opts.stdin);
+      }
       child.stdout?.on("data", (chunk: Buffer) => {
         stdout += chunk.toString("utf8");
       });
@@ -63,6 +90,9 @@ export class LocalHostSession implements HostSession {
         stderr += chunk.toString("utf8");
       });
       child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         reject(
           new HostError(
             "failed",
@@ -72,6 +102,9 @@ export class LocalHostSession implements HostSession {
         );
       });
       child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({
           stdout,
           stderr,

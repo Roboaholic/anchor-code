@@ -1,6 +1,6 @@
 {
   "name": "anchor-code",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A human-in-the-loop reader for agent coding. Agent it. Review it. Feed it back.",
   "private": true,
   "type": "module",
@@ -102,7 +102,8 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}",
+      "executableName": "Anchor Code",
       "icon": "build/icon.ico"
     },
     "nsis": {
@@ -113,7 +114,7 @@
       "shortcutName": "Anchor Code"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
+      "artifactName": "Anchor.Code-${version}-${os}-${arch}-portable.${ext}"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -133,13 +134,13 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "icon": "build/icon.icns"
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+      "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}"
     },
     "linux": {
       "category": "Development",
@@ -157,7 +158,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}",
       "maintainer": "Roboaholic",
       "icon": "build/icons"
     },

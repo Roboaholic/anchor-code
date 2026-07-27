@@ -6,7 +6,7 @@ name: Release
 #   npm version patch
 #   git push origin main --follow-tags
 #
-# Tag format: v0.1.1
+# Tag format: v0.1.6
 
 on:
   push:
@@ -77,11 +77,13 @@ jobs:
         run: npm run rebuild:native
 
       - name: Typecheck & unit tests
+        shell: bash
         run: |
           npm run typecheck
           npm run test:unit
 
       - name: Package ${{ matrix.platform }}
+        shell: bash
         run: npm run ${{ matrix.pack }}
         env:
           ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
@@ -93,35 +95,51 @@ jobs:
         shell: bash
         run: |
           ls -la release || true
-          find release -maxdepth 3 -type f | sort || true
+          find release -maxdepth 3 -type f 2>/dev/null | sort || true
 
       # Only ship installers — not ConPTY helpers like OpenConsole.exe that break gh-release uploads.
+      # Use find (not brittle name globs) so "Anchor Code-…", "Anchor.Code-…", "Anchor-Code-…" all stage.
       - name: Stage installers for upload
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p staged
-          shopt -s nullglob
           case "${{ matrix.platform }}" in
             win)
-              for f in release/Anchor*.exe release/*.blockmap release/latest.yml; do
-                [ -f "$f" ] && cp -v "$f" staged/
+              find release -maxdepth 1 -type f \( \
+                -name '*.exe' -o -name '*.blockmap' -o -name 'latest.yml' \
+              \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+                # Skip nested helper binaries if any ever land at top level
+                base="$(basename "$f")"
+                case "$base" in
+                  OpenConsole.exe|elevate.exe) continue ;;
+                esac
+                cp -v "$f" staged/
               done
               ;;
             mac)
-              for f in release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml; do
-                [ -f "$f" ] && cp -v "$f" staged/
+              find release -maxdepth 1 -type f \( \
+                -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest-mac.yml' \
+              \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+                cp -v "$f" staged/
               done
               ;;
             linux)
-              for f in release/*.AppImage release/*.deb release/latest-linux.yml; do
-                [ -f "$f" ] && cp -v "$f" staged/
+              find release -maxdepth 1 -type f \( \
+                -name '*.AppImage' -o -name '*.deb' -o -name 'latest-linux.yml' \
+              \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+                cp -v "$f" staged/
               done
               ;;
           esac
           echo "--- staged ---"
-          ls -la staged
-          test "$(find staged -type f | wc -l)" -gt 0
+          ls -la staged || true
+          count="$(find staged -type f 2>/dev/null | wc -l | tr -d ' ')"
+          echo "staged file count=$count"
+          if [ "${count:-0}" -eq 0 ]; then
+            echo "::error::No installer artifacts staged for ${{ matrix.platform }}"
+            exit 1
+          fi
 
       - name: Upload artifacts to job
         uses: actions/upload-artifact@v4
@@ -133,7 +151,9 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: build
+    # Publish whatever platforms succeeded (fail-fast is false on the matrix).
+    needs: [verify, build]
+    if: ${{ always() && !cancelled() && needs.verify.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all packages
@@ -144,7 +164,9 @@ jobs:
           merge-multiple: true
 
       - name: List downloaded files
-        run: find dist-packages -type f | sort
+        run: |
+          find dist-packages -type f | sort
+          test "$(find dist-packages -type f | wc -l)" -gt 0
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

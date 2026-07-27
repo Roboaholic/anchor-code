@@ -115,6 +115,8 @@ export interface RepoStatus {
   added: number;
   deleted: number;
   untracked: number;
+  /** Current branch name; null if detached HEAD. */
+  branch: string | null;
   /**
    * Commits ahead of the comparison base (upstream, else origin/HEAD / main / master).
    * null when no base is available.
@@ -122,6 +124,21 @@ export interface RepoStatus {
   ahead: number | null;
   /** Commits behind the same base; null when no base. */
   behind: number | null;
+}
+
+export interface BranchInfo {
+  name: string;
+  current: boolean;
+}
+
+export interface CheckoutResult {
+  branch: string;
+}
+
+export interface CommitResult {
+  hash: string;
+  shortHash: string;
+  subject: string;
 }
 
 export interface HistoryCompareEntry {
@@ -309,11 +326,35 @@ export interface AnchorApi {
       truncated: boolean;
       source?: "git" | "walk";
     }>;
+    searchContent: (args: {
+      root?: string;
+      query: string;
+      maxResults?: number;
+      caseSensitive?: boolean;
+      useRegex?: boolean;
+      include?: string | string[];
+      exclude?: string | string[];
+    }) => Promise<{
+      root: string;
+      query: string;
+      hits: { path: string; line: number; text: string }[];
+      truncated: boolean;
+      source: "git-grep" | "rg" | "scan";
+    }>;
   };
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
     loadLog: (repoRoot: string) => Promise<CommitRow[]>;
     status: (repoRoot: string) => Promise<RepoStatus>;
+    listBranches: (repoRoot: string) => Promise<BranchInfo[]>;
+    checkout: (args: {
+      repoRoot: string;
+      branch: string;
+    }) => Promise<CheckoutResult>;
+    commit: (args: {
+      repoRoot: string;
+      message: string;
+    }) => Promise<CommitResult>;
     compare: (args: {
       repoRoot: string;
       base: string;

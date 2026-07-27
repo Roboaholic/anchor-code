@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeViewer } from "./CodeViewer";
-import type { MdViewMode } from "./documentStore";
+import type { MdViewMode, SearchHighlight } from "./documentStore";
 
 export function MarkdownViewer({
   path,
@@ -12,6 +12,7 @@ export function MarkdownViewer({
   revealLine,
   focusCommentId,
   revealNonce,
+  searchHighlight = null,
 }: {
   path: string;
   content: string;
@@ -21,7 +22,11 @@ export function MarkdownViewer({
   revealLine?: number;
   focusCommentId?: string | null;
   revealNonce?: number;
+  searchHighlight?: SearchHighlight | null;
 }) {
+  // Prefer raw when jumping from search so the match can be highlighted.
+  const effectiveMode = searchHighlight ? "raw" : mode;
+
   return (
     <div className="md-viewer">
       <div className="md-viewer__toolbar">
@@ -31,14 +36,14 @@ export function MarkdownViewer({
         <div className="segmented" role="group" aria-label="Markdown view mode">
           <button
             type="button"
-            className={`segmented__btn${mode === "rendered" ? " is-active" : ""}`}
+            className={`segmented__btn${effectiveMode === "rendered" ? " is-active" : ""}`}
             onClick={() => onModeChange("rendered")}
           >
             Rendered
           </button>
           <button
             type="button"
-            className={`segmented__btn${mode === "raw" ? " is-active" : ""}`}
+            className={`segmented__btn${effectiveMode === "raw" ? " is-active" : ""}`}
             onClick={() => onModeChange("raw")}
           >
             Raw
@@ -46,7 +51,7 @@ export function MarkdownViewer({
         </div>
       </div>
 
-      {mode === "raw" ? (
+      {effectiveMode === "raw" ? (
         <CodeViewer
           path={path}
           content={content}
@@ -55,6 +60,7 @@ export function MarkdownViewer({
           revealLine={revealLine}
           focusCommentId={focusCommentId}
           revealNonce={revealNonce}
+          searchHighlight={searchHighlight}
           kind="markdown"
         />
       ) : (

@@ -35,7 +35,10 @@ export type CodiconName =
   | "symbol-file"
   | "terminal"
   | "chevron-down"
-  | "chevron-right";
+  | "chevron-right"
+  | "regex"
+  | "case-sensitive"
+  | "filter";
 type IconProps = {
   name: CodiconName | (string & {});
   className?: string;

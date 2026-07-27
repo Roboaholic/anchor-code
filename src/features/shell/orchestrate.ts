@@ -69,10 +69,26 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
   }
 }
 
-export async function openFileFromTree(path: string): Promise<void> {
+export async function openFileFromTree(
+  path: string,
+  opts?: {
+    revealLine?: number;
+    searchHighlight?: {
+      line: number;
+      query: string;
+      useRegex?: boolean;
+      caseSensitive?: boolean;
+    } | null;
+  },
+): Promise<void> {
   const root = useWorkspaceStore.getState().workspaceRoot;
   useWorkspaceStore.getState().setSelectedPath(path);
-  await useDocumentStore.getState().openFile({ path, workspaceRoot: root });
+  await useDocumentStore.getState().openFile({
+    path,
+    workspaceRoot: root,
+    revealLine: opts?.revealLine ?? opts?.searchHighlight?.line,
+    searchHighlight: opts?.searchHighlight,
+  });
   // load annotations for file's repo
   try {
     const repo = await window.anchor.annotations.locateGitRoot(path);

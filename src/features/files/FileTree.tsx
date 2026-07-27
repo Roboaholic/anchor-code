@@ -1,4 +1,13 @@
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import {
   openFileFromTree,
   openWorkspacePath,
 } from "@/features/shell/orchestrate";
@@ -6,8 +15,70 @@ import {
   useWorkspaceStore,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
+import { joinPath } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
+
+type SearchHit = { path: string; line: number; text: string };
+
+type SearchFileGroup = {
+  path: string;
+  hits: SearchHit[];
+};
+
+/** Group hits by file path (preserve first-seen order). */
+function groupHitsByFile(hits: SearchHit[]): SearchFileGroup[] {
+  const map = new Map<string, SearchHit[]>();
+  const order: string[] = [];
+  for (const hit of hits) {
+    const list = map.get(hit.path);
+    if (!list) {
+      map.set(hit.path, [hit]);
+      order.push(hit.path);
+    } else {
+      list.push(hit);
+    }
+  }
+  return order.map((path) => ({ path, hits: map.get(path)! }));
+}
+
+/** Collapse noisy whitespace for preview rows. */
+function previewLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** Highlight the first match of query in a line (fixed or simple regex). */
+function highlightPreview(
+  text: string,
+  query: string,
+  useRegex: boolean,
+  caseSensitive: boolean,
+): ReactNode {
+  const line = previewLine(text);
+  if (!query.trim() || !line) return line;
+  try {
+    let re: RegExp;
+    if (useRegex) {
+      re = new RegExp(query, caseSensitive ? "" : "i");
+    } else {
+      const esc = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      re = new RegExp(esc, caseSensitive ? "" : "i");
+    }
+    const m = line.match(re);
+    if (!m || m.index === undefined || m[0] === "") return line;
+    const i = m.index;
+    const end = i + m[0].length;
+    return (
+      <>
+        {line.slice(0, i)}
+        <mark className="files-search-hit__mark">{line.slice(i, end)}</mark>
+        {line.slice(end)}
+      </>
+    );
+  } catch {
+    return line;
+  }
+}
 
 export function FileTree() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
@@ -18,6 +89,206 @@ export function FileTree() {
   const selectedPath = useWorkspaceStore((s) => s.selectedPath);
   const recent = useWorkspaceStore((s) => s.recent);
   const toggleDir = useWorkspaceStore((s) => s.toggleDir);
+
+  const [query, setQuery] = useState("");
+  const [include, setInclude] = useState("");
+  const [exclude, setExclude] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  /** Collapse search results list; file tree stays visible either way. */
+  const [resultsOpen, setResultsOpen] = useState(true);
+  /** Collapsed file groups: only the filename head is shown (no match lines). */
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(
+    () => new Set(),
+  );
+  /** Results panel height (px); drag the RESULTS/EXPLORER divider to change. */
+  const [resultsHeight, setResultsHeight] = useState(() => {
+    try {
+      const raw = localStorage.getItem("anchor.filesSearchResultsHeight");
+      const n = raw ? Number.parseInt(raw, 10) : NaN;
+      if (Number.isFinite(n) && n >= 120 && n <= 900) return n;
+    } catch {
+      // ignore
+    }
+    return 320;
+  });
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [searchSource, setSearchSource] = useState<string | null>(null);
+  const searchGen = useRef(0);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const resizeDrag = useRef<{ startY: number; startH: number } | null>(null);
+  const resultsHeightRef = useRef(resultsHeight);
+  resultsHeightRef.current = resultsHeight;
+
+  const runSearch = useCallback(
+    async (
+      raw: string,
+      opts: {
+        include: string;
+        exclude: string;
+        useRegex: boolean;
+        caseSensitive: boolean;
+      },
+    ) => {
+      const q = raw.trim();
+      const gen = ++searchGen.current;
+      if (!workspaceRoot || q.length < 1) {
+        setHits([]);
+        setTruncated(false);
+        setSearchError(null);
+        setSearching(false);
+        setSearchSource(null);
+        return;
+      }
+      // Fixed-string: require 2 chars; regex may be short (e.g. `\d`)
+      if (!opts.useRegex && q.length < 2) {
+        setHits([]);
+        setTruncated(false);
+        setSearchError(null);
+        setSearching(false);
+        setSearchSource(null);
+        return;
+      }
+      setSearching(true);
+      setSearchError(null);
+      try {
+        const result = await window.anchor.workspace.searchContent({
+          root: workspaceRoot,
+          query: q,
+          maxResults: 200,
+          include: opts.include,
+          exclude: opts.exclude,
+          useRegex: opts.useRegex,
+          caseSensitive: opts.caseSensitive,
+        });
+        if (gen !== searchGen.current) return;
+        setHits(result.hits);
+        setTruncated(result.truncated);
+        setSearchSource(result.source);
+        // New result set: expand all file groups by default
+        setCollapsedFiles(new Set());
+      } catch (err) {
+        if (gen !== searchGen.current) return;
+        setHits([]);
+        setTruncated(false);
+        setSearchSource(null);
+        setSearchError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (gen === searchGen.current) setSearching(false);
+      }
+    },
+    [workspaceRoot],
+  );
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      setQuery("");
+      setHits([]);
+      setSearchError(null);
+      return;
+    }
+    // Longer debounce while typing; native git-grep/rg is cheap but avoids thrash.
+    const t = window.setTimeout(() => {
+      void runSearch(query, { include, exclude, useRegex, caseSensitive });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    query,
+    include,
+    exclude,
+    useRegex,
+    caseSensitive,
+    workspaceRoot,
+    runSearch,
+  ]);
+
+  const openHit = (hit: SearchHit) => {
+    if (!workspaceRoot) return;
+    const abs = joinPath(workspaceRoot, hit.path);
+    void openFileFromTree(abs, {
+      revealLine: hit.line,
+      searchHighlight: {
+        line: hit.line,
+        query,
+        useRegex,
+        caseSensitive,
+      },
+    });
+  };
+
+  const fileGroups = useMemo(() => groupHitsByFile(hits), [hits]);
+
+  const allFilesExpanded =
+    fileGroups.length > 0 &&
+    fileGroups.every((g) => !collapsedFiles.has(g.path));
+
+  const toggleAllFiles = useCallback(() => {
+    if (allFilesExpanded) {
+      setCollapsedFiles(new Set(fileGroups.map((g) => g.path)));
+    } else {
+      setCollapsedFiles(new Set());
+    }
+  }, [allFilesExpanded, fileGroups]);
+
+  const toggleFileGroup = useCallback((path: string) => {
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const onResizePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      resizeDrag.current = { startY: e.clientY, startH: resultsHeightRef.current };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      document.body.classList.add("files-split-resizing");
+    },
+    [],
+  );
+
+  const onResizePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDrag.current;
+      if (!drag) return;
+      const paneH = paneRef.current?.clientHeight ?? 600;
+      const maxH = Math.max(160, paneH - 180);
+      const next = Math.min(
+        maxH,
+        Math.max(120, drag.startH + (e.clientY - drag.startY)),
+      );
+      setResultsHeight(next);
+    },
+    [],
+  );
+
+  const onResizePointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!resizeDrag.current) return;
+      resizeDrag.current = null;
+      document.body.classList.remove("files-split-resizing");
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      try {
+        localStorage.setItem(
+          "anchor.filesSearchResultsHeight",
+          String(resultsHeightRef.current),
+        );
+      } catch {
+        // ignore
+      }
+    },
+    [],
+  );
 
   if (!workspaceRoot) {
     return (
@@ -95,13 +366,26 @@ export function FileTree() {
     );
   }
 
-  if (status === "error") {
-    return (
-      <div className="files-pane">
-        <div className="files-pane__title" title={workspaceRoot}>
-          {(workspaceName ?? "WORKSPACE").toUpperCase()} (ERROR)
-        </div>
-        <p className="pane-hint pane-hint--error">{error}</p>
+  const qTrim = query.trim();
+  const hasSearchQuery =
+    qTrim.length >= 1 && (useRegex || qTrim.length >= 2);
+
+  const resultsMeta = searching
+    ? "Searching…"
+    : searchError
+      ? "Search failed"
+      : hits.length === 0
+        ? "No matches"
+        : `${hits.length} result${hits.length === 1 ? "" : "s"}${
+            truncated ? "+" : ""
+          }${searchSource ? ` · ${searchSource}` : ""}`;
+
+  const explorer = (
+    <section className="files-section files-section--tree">
+      <div className="files-section__head files-section__head--static">
+        <span className="files-section__label">EXPLORER</span>
+      </div>
+      <div className="files-tree-scroll">
         {rootEntries.length > 0 ? (
           <ul className="file-tree" role="tree">
             {rootEntries.map((node) => (
@@ -115,41 +399,255 @@ export function FileTree() {
               />
             ))}
           </ul>
-        ) : (
+        ) : status === "error" ? (
           <button
             type="button"
             className="btn btn--ghost btn--small"
             style={{ margin: 12 }}
-            onClick={() =>
-              workspaceRoot
-                ? void openWorkspacePath(workspaceRoot)
-                : undefined
-            }
+            onClick={() => void openWorkspacePath(workspaceRoot)}
           >
             Retry
           </button>
+        ) : (
+          <p className="pane-hint">Empty folder.</p>
         )}
       </div>
-    );
-  }
+    </section>
+  );
 
   return (
-    <div className="files-pane">
+    <div className="files-pane" ref={paneRef}>
       <div className="files-pane__title" title={workspaceRoot}>
-        {(workspaceName ?? "WORKSPACE").toUpperCase()} (WORKSPACE)
+        {(workspaceName ?? "WORKSPACE").toUpperCase()}
+        {status === "error" ? " (ERROR)" : " (WORKSPACE)"}
       </div>
-      <ul className="file-tree" role="tree">
-        {rootEntries.map((node) => (
-          <TreeRow
-            key={node.path}
-            node={node}
-            depth={0}
-            selectedPath={selectedPath}
-            onToggle={(p) => void toggleDir(p)}
-            onOpenFile={(p) => void openFileFromTree(p)}
-          />
-        ))}
-      </ul>
+
+      <div className="files-search">
+        <Icon name="search" className="files-search__icon" />
+        <input
+          type="search"
+          className="files-search__input"
+          placeholder={useRegex ? "Regex search…" : "Search in files…"}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            if (e.target.value.trim()) setResultsOpen(true);
+          }}
+          aria-label="Search in files"
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <button
+          type="button"
+          className={`icon-btn files-search__toggle${useRegex ? " is-active" : ""}`}
+          title="Use regular expression"
+          aria-label="Use regular expression"
+          aria-pressed={useRegex}
+          onClick={() => setUseRegex((v) => !v)}
+        >
+          <Icon name="regex" />
+        </button>
+        <button
+          type="button"
+          className={`icon-btn files-search__toggle${caseSensitive ? " is-active" : ""}`}
+          title="Match case"
+          aria-label="Match case"
+          aria-pressed={caseSensitive}
+          onClick={() => setCaseSensitive((v) => !v)}
+        >
+          <Icon name="case-sensitive" />
+        </button>
+        <button
+          type="button"
+          className={`icon-btn files-search__toggle${filtersOpen || include || exclude ? " is-active" : ""}`}
+          title="Include / exclude files"
+          aria-label="Include and exclude filters"
+          aria-pressed={filtersOpen}
+          onClick={() => setFiltersOpen((v) => !v)}
+        >
+          <Icon name="filter" />
+        </button>
+      </div>
+
+      {filtersOpen ? (
+        <div className="files-search-filters">
+          <label className="files-search-filters__row">
+            <span className="files-search-filters__label">
+              files to include
+            </span>
+            <input
+              type="text"
+              className="files-search-filters__input"
+              placeholder="e.g. *.ts, src/**"
+              value={include}
+              onChange={(e) => setInclude(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+          <label className="files-search-filters__row">
+            <span className="files-search-filters__label">
+              files to exclude
+            </span>
+            <input
+              type="text"
+              className="files-search-filters__input"
+              placeholder="e.g. dist, *.min.js"
+              value={exclude}
+              onChange={(e) => setExclude(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+      ) : null}
+
+      {status === "error" && error ? (
+        <p className="pane-hint pane-hint--error">{error}</p>
+      ) : null}
+
+  {hasSearchQuery ? (
+        <div className="files-pane__split">
+          <div
+            className={`files-search-results${resultsOpen ? " is-open" : ""}`}
+            style={
+              resultsOpen
+                ? { height: resultsHeight, flex: "0 0 auto" }
+                : undefined
+            }
+          >
+            <div className="files-section__head-row">
+              <button
+                type="button"
+                className="files-section__head"
+                onClick={() => setResultsOpen((v) => !v)}
+                aria-expanded={resultsOpen}
+              >
+                <Icon
+                  name={resultsOpen ? "chevron-down" : "chevron-right"}
+                  className="files-section__chevron"
+                />
+                <span className="files-section__label">RESULTS</span>
+                <span className="files-section__meta">{resultsMeta}</span>
+              </button>
+              {resultsOpen && fileGroups.length > 0 ? (
+                <div className="files-section__head-actions">
+                  <button
+                    type="button"
+                    className="icon-btn files-section__bulk"
+                    title={
+                      allFilesExpanded
+                        ? "Collapse all files (filename only)"
+                        : "Expand all files (show match lines)"
+                    }
+                    aria-label={
+                      allFilesExpanded
+                        ? "Collapse all files"
+                        : "Expand all files"
+                    }
+                    onClick={toggleAllFiles}
+                  >
+                    <Icon
+                      name={allFilesExpanded ? "chevron-right" : "chevron-down"}
+                    />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {resultsOpen ? (
+              <div className="files-search-results__body">
+                {searchError ? (
+                  <p className="pane-hint pane-hint--error">{searchError}</p>
+                ) : null}
+                <ul className="files-search-results__list">
+                  {fileGroups.map((group) => {
+                    const dir = fileDirname(group.path);
+                    const collapsed = collapsedFiles.has(group.path);
+                    return (
+                      <li
+                        key={group.path}
+                        className={`files-search-group${collapsed ? " is-collapsed" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="files-search-group__head"
+                          title={
+                            collapsed
+                              ? `Expand ${group.path}`
+                              : `Collapse ${group.path}`
+                          }
+                          aria-expanded={!collapsed}
+                          onClick={() => toggleFileGroup(group.path)}
+                        >
+                          <Icon
+                            name={collapsed ? "chevron-right" : "chevron-down"}
+                            className="files-search-group__chevron"
+                          />
+                          <span className="files-search-group__file">
+                            {fileBasename(group.path)}
+                          </span>
+                          {dir ? (
+                            <span className="files-search-group__dir">
+                              {dir}
+                            </span>
+                          ) : null}
+                          <span className="files-search-group__count">
+                            {group.hits.length}
+                          </span>
+                        </button>
+                        {!collapsed ? (
+                          <ul className="files-search-group__hits">
+                            {group.hits.map((hit, i) => (
+                              <li key={`${hit.line}:${i}`}>
+                                <button
+                                  type="button"
+                                  className="files-search-hit"
+                                  title={`${hit.path}:${hit.line}`}
+                                  onClick={() => openHit(hit)}
+                                >
+                                  <span className="files-search-hit__line">
+                                    {hit.line}
+                                  </span>
+                                  <span className="files-search-hit__text">
+                                    {highlightPreview(
+                                      hit.text,
+                                      query,
+                                      useRegex,
+                                      caseSensitive,
+                                    )}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+
+          {resultsOpen ? (
+            <div
+              className="files-split-sash"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize search results"
+              title="Drag to resize"
+              onPointerDown={onResizePointerDown}
+              onPointerMove={onResizePointerMove}
+              onPointerUp={onResizePointerUp}
+              onPointerCancel={onResizePointerUp}
+            />
+          ) : null}
+
+          {explorer}
+        </div>
+      ) : (
+        explorer
+      )}
     </div>
   );
 }
@@ -225,6 +723,18 @@ function TreeRow({
       </button>
     </li>
   );
+}
+
+function fileBasename(filePath: string): string {
+  const norm = filePath.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+function fileDirname(filePath: string): string {
+  const norm = filePath.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i > 0 ? norm.slice(0, i) : "";
 }
 
 function fileIcon(name: string): CodiconName {

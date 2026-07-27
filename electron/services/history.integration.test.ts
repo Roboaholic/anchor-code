@@ -5,10 +5,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LocalHostSession } from "../host/localHost.js";
 import {
+  checkoutBranch,
+  commitChanges,
   compareCommits,
   compareToWorktree,
   discoverRepos,
   getFileDiff,
+  listBranches,
   loadLog,
   loadRepoStatus,
 } from "./historyService.js";
@@ -125,6 +128,8 @@ describe("historyService (integration, temp git repo)", () => {
       true,
     );
     expect(status.untracked).toBeGreaterThanOrEqual(1);
+    // Default branch name varies (master vs main depending on git config).
+    expect(status.branch).toBeTruthy();
 
     const payload = await compareToWorktree(host, root, "HEAD");
     expect(payload.files.some((f) => f.path === "scratch.tmp" && f.status === "?")).toBe(
@@ -140,5 +145,40 @@ describe("historyService (integration, temp git repo)", () => {
     );
     expect(diff.oldText).toBe("");
     expect(diff.newText).toContain("hi");
+  });
+
+  it("lists branches, checkouts, and commits working tree changes", async () => {
+    const initial = await loadRepoStatus(host, root);
+    const baseBranch = initial.branch;
+    expect(baseBranch).toBeTruthy();
+
+    git(root, ["branch", "feature-hist"]);
+    const branches = await listBranches(host, root);
+    expect(branches.some((b) => b.name === "feature-hist")).toBe(true);
+    expect(branches.some((b) => b.current)).toBe(true);
+
+    // Dirty worktree may block checkout of unrelated changes — commit first path.
+    const committed = await commitChanges(host, root, "wip before switch");
+    expect(committed.subject).toBe("wip before switch");
+    expect(committed.hash.length).toBeGreaterThanOrEqual(7);
+
+    const clean = await loadRepoStatus(host, root);
+    expect(clean.modified + clean.added + clean.deleted + clean.untracked).toBe(
+      0,
+    );
+
+    const switched = await checkoutBranch(host, root, "feature-hist");
+    expect(switched.branch).toBe("feature-hist");
+    const after = await loadRepoStatus(host, root);
+    expect(after.branch).toBe("feature-hist");
+
+    await fs.writeFile(path.join(root, "feat.ts"), "export const f = 1\n", "utf8");
+    const c2 = await commitChanges(host, root, "add feat");
+    expect(c2.subject).toBe("add feat");
+
+    // Switch back
+    await checkoutBranch(host, root, baseBranch!);
+    const back = await loadRepoStatus(host, root);
+    expect(back.branch).toBe(baseBranch);
   });
 });

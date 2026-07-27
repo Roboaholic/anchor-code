@@ -17,6 +17,7 @@ import {
 } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import type { CommentRecord } from "@/shared/anchor-api";
+import type { SearchHighlight } from "./documentStore";
 import "./monacoSetup";
 
 type BubbleState = {
@@ -26,6 +27,33 @@ type BubbleState = {
   left: number;
   top: number;
 };
+
+/** Resolve the column range of a search hit on a single line (1-based columns). */
+export function matchRangeOnLine(
+  lineText: string,
+  query: string,
+  useRegex: boolean,
+  caseSensitive: boolean,
+): { startColumn: number; endColumn: number } | null {
+  if (!query || !lineText) return null;
+  try {
+    let re: RegExp;
+    if (useRegex) {
+      re = new RegExp(query, caseSensitive ? "" : "i");
+    } else {
+      const esc = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      re = new RegExp(esc, caseSensitive ? "" : "i");
+    }
+    const m = lineText.match(re);
+    if (!m || m.index === undefined || m[0] === "") return null;
+    return {
+      startColumn: m.index + 1,
+      endColumn: m.index + m[0].length + 1,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** Map anchor coords into the overlay (editor-local → container-local). */
 function positionForSpec(
@@ -85,6 +113,7 @@ export function CodeViewer({
   revealLine,
   focusCommentId,
   revealNonce,
+  searchHighlight = null,
   kind = "source",
 }: {
   path: string;
@@ -94,11 +123,14 @@ export function CodeViewer({
   revealLine?: number;
   focusCommentId?: string | null;
   revealNonce?: number;
+  searchHighlight?: SearchHighlight | null;
   kind?: "source" | "markdown";
 }) {
   const theme = useThemeStore((s) => s.theme);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
+    useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
+  const searchHighlightRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
@@ -235,17 +267,129 @@ export function CodeViewer({
     applyDecorations(bubble?.commentId ?? focusCommentId ?? null);
   }, [applyDecorations, bubble?.commentId, focusCommentId]);
 
+  /**
+   * First open often has clientHeight 0 until flex layout settles — revealLineInCenter
+   * then pins the line to the top. Retry until the editor has a real viewport.
+   */
+  const revealLineWhenReady = useCallback(
+    (
+      ed: MonacoEditor.IStandaloneCodeEditor,
+      line: number,
+      range?: {
+        startLineNumber: number;
+        startColumn: number;
+        endLineNumber: number;
+        endColumn: number;
+      },
+    ) => {
+      let tries = 0;
+      const maxTries = 40;
+      const run = () => {
+        const dom = ed.getDomNode();
+        const h = dom?.clientHeight ?? 0;
+        if (h < 40 && tries < maxTries) {
+          tries += 1;
+          requestAnimationFrame(run);
+          return;
+        }
+        try {
+          ed.layout();
+        } catch {
+          // ignore
+        }
+        ed.revealLineInCenter(line);
+        if (range) {
+          ed.setSelection(range);
+        } else {
+          ed.setPosition({ lineNumber: line, column: 1 });
+        }
+        // One more pass after layout paints (first-open safety).
+        requestAnimationFrame(() => {
+          ed.revealLineInCenter(line);
+          if (range) ed.setSelection(range);
+        });
+      };
+      requestAnimationFrame(run);
+    },
+    [],
+  );
+
   useEffect(() => {
     const ed = editorRef.current;
     if (!ed) return;
     if (revealLine) {
-      ed.revealLineInCenter(revealLine);
-      ed.setPosition({ lineNumber: revealLine, column: 1 });
+      revealLineWhenReady(ed, revealLine);
     }
     requestAnimationFrame(() => {
       applyDecorations(focusCommentId ?? bubbleRef.current?.commentId ?? null);
     });
-  }, [revealLine, revealNonce, content, applyDecorations, focusCommentId]);
+  }, [
+    revealLine,
+    revealNonce,
+    content,
+    applyDecorations,
+    focusCommentId,
+    revealLineWhenReady,
+  ]);
+
+  const paintSearchHighlight = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (!searchHighlightRef.current) {
+      searchHighlightRef.current = ed.createDecorationsCollection();
+    }
+    const hl = searchHighlight;
+    if (!hl) {
+      searchHighlightRef.current.clear();
+      return;
+    }
+    const model = ed.getModel();
+    if (!model) return;
+    const line = hl.line;
+    if (line < 1 || line > model.getLineCount()) {
+      searchHighlightRef.current.clear();
+      return;
+    }
+    const lineText = model.getLineContent(line);
+    const match = matchRangeOnLine(
+      lineText,
+      hl.query,
+      hl.useRegex === true,
+      hl.caseSensitive === true,
+    );
+    const startColumn = match?.startColumn ?? 1;
+    const endColumn = match?.endColumn ?? model.getLineMaxColumn(line);
+    const range = {
+      startLineNumber: line,
+      startColumn,
+      endLineNumber: line,
+      endColumn,
+    };
+    searchHighlightRef.current.set([
+      {
+        range,
+        options: {
+          className: "search-jump-line",
+          inlineClassName: "search-jump-match",
+          isWholeLine: !match,
+          overviewRuler: {
+            color: accentHex(theme),
+            position: 1,
+          },
+          minimap: {
+            color: accentHex(theme),
+            position: 1,
+          },
+        },
+      },
+    ]);
+    revealLineWhenReady(ed, line, range);
+    ed.focus();
+  }, [searchHighlight, theme, revealLineWhenReady]);
+
+  useEffect(() => {
+    paintSearchHighlight();
+  }, [paintSearchHighlight, content, searchHighlight?.nonce]);
 
   useEffect(() => {
     return () => {
@@ -253,6 +397,8 @@ export function CodeViewer({
       disposablesRef.current = [];
       decorationsRef.current?.clear();
       decorationsRef.current = null;
+      searchHighlightRef.current?.clear();
+      searchHighlightRef.current = null;
       editorRef.current = null;
     };
   }, []);
@@ -287,8 +433,16 @@ export function CodeViewer({
     editorRef.current = ed;
     decorationsRef.current?.clear();
     decorationsRef.current = ed.createDecorationsCollection();
+    searchHighlightRef.current?.clear();
+    searchHighlightRef.current = ed.createDecorationsCollection();
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
+
+    // Re-apply after model is ready (open-from-search before mount).
+    requestAnimationFrame(() => {
+      applyDecorations(focusCommentId ?? null);
+      paintSearchHighlight();
+    });
 
     ed.addAction({
       id: "anchor.addComment",

@@ -822,7 +822,7 @@ button.search-field:hover {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .files-pane__title {
@@ -832,6 +832,434 @@ button.search-field:hover {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.files-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 8px 6px;
+  padding: 0 6px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field-well);
+  flex-shrink: 0;
+}
+
+.files-search:focus-within {
+  border-color: var(--accent-border-strong);
+}
+
+.files-search__icon {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.files-search__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+
+.files-search__input::placeholder {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.files-search__toggle {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+
+.files-search__toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.files-search-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 8px 8px;
+  flex-shrink: 0;
+}
+
+.files-search-filters__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.files-search-filters__label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text-muted);
+  padding-left: 2px;
+}
+
+.files-search-filters__input {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field-well);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.files-search-filters__input:focus {
+  border-color: var(--accent-border-strong);
+}
+
+.files-search-filters__input::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+/* When searching: results (resizable) + explorer (fills rest) */
+.files-pane__split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Invisible hit-target sash — same look as a plain border, no grip chrome */
+.files-split-sash {
+  flex: 0 0 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  position: relative;
+  z-index: 2;
+  cursor: row-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+/* Widen hit area without adding visible thickness */
+.files-split-sash::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+}
+
+.files-split-sash:hover,
+.files-split-sash:active {
+  border-top-color: var(--border-strong);
+}
+
+body.files-split-resizing {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+body.files-split-resizing iframe,
+body.files-split-resizing .monaco-editor {
+  pointer-events: none !important;
+}
+
+.files-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.files-section--tree {
+  flex: 1 1 0;
+  min-height: 96px;
+  overflow: hidden;
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+
+.files-section__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.files-section__head:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.files-section__head--static {
+  cursor: default;
+}
+
+.files-section__head--static:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.files-section__chevron {
+  font-size: 12px;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.files-section__label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.files-section__meta {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.files-section__head-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.files-section__head-row > .files-section__head {
+  flex: 1;
+  min-width: 0;
+}
+
+.files-section__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+
+.files-section__bulk {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+}
+
+.files-search-results {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  position: relative;
+  z-index: 1;
+}
+
+.files-search-results:not(.is-open) {
+  height: auto !important;
+  flex: 0 0 auto;
+}
+
+.files-search-results__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.files-search-results__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+  min-height: 0;
+}
+
+/* One file head + N line hits (VS Code-style) */
+.files-search-group {
+  margin: 0;
+  padding: 0 0 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.files-search-group:last-child {
+  border-bottom: none;
+}
+
+.files-search-group__head {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.25;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.files-search-group__head:hover {
+  background: var(--bg-hover);
+}
+
+.files-search-group__chevron {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.files-search-group.is-collapsed .files-search-group__head {
+  padding-bottom: 2px;
+}
+
+.files-search-group__file {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 10.5px;
+}
+
+.files-search-group__dir {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.files-search-group__count {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 14px;
+}
+
+.files-search-group__hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.files-search-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 1px 8px 1px 10px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.files-search-hit:hover {
+  background: var(--bg-hover);
+}
+
+.files-search-hit__line {
+  flex-shrink: 0;
+  width: 2.2em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.files-search-hit__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-search-hit__mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Editor highlight when jumping from workspace search */
+.search-jump-line {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.search-jump-match {
+  background: color-mix(in srgb, var(--accent) 38%, transparent) !important;
+  border-radius: 2px;
+  font-weight: 600;
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.files-tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.files-tree-scroll > .file-tree {
+  padding-bottom: 12px;
 }
 
 .file-tree {
@@ -2156,8 +2584,7 @@ button.search-field:hover {
   font-size: 11px;
 }
 
-.history-pane__toolbar .icon-btn,
-.repo-block__head .icon-btn {
+.history-pane__toolbar .icon-btn {
   width: 20px;
   height: 20px;
   font-size: 13px;
@@ -2180,14 +2607,6 @@ button.search-field:hover {
   white-space: nowrap;
   min-width: 0;
   flex: 1;
-}
-
-.repo-block__head-actions .btn--accent {
-  height: 20px;
-  min-height: 20px;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 600;
 }
 
 .history-toast {
@@ -2223,14 +2642,15 @@ button.search-field:hover {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-height: 28px;
   height: 28px;
-  padding: 0 10px;
+  padding: 0 8px 0 6px;
   border: none;
   background: transparent;
   font: inherit;
   color: var(--text);
-  cursor: pointer;
   text-align: left;
+  position: relative;
 }
 
 .repo-row__header:hover {
@@ -2242,7 +2662,23 @@ button.search-field:hover {
   box-shadow: none;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   position: relative;
-  z-index: 1;
+  z-index: 2;
+}
+
+.repo-row__expand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .repo-row__chevron {
@@ -2253,7 +2689,6 @@ button.search-field:hover {
 }
 
 .repo-row__name {
-  flex: 1;
   min-width: 0;
   font-weight: 500;
   font-size: 12px;
@@ -2266,6 +2701,197 @@ button.search-field:hover {
 .repo-row.is-expanded > .repo-row__header .repo-row__name {
   color: var(--text);
   font-weight: 500;
+}
+
+/* Branch switcher on repo row — compact chip, not a full control */
+.repo-branch {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 7.5rem;
+}
+
+.repo-branch__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  height: 16px;
+  padding: 0 4px 0 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--bg-muted) 55%, transparent);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 400;
+  font-family: var(--font-mono);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.repo-branch__btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.repo-branch__btn.is-open {
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.repo-branch__btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.repo-branch__icon {
+  flex-shrink: 0;
+  font-size: 10px !important;
+  width: 10px;
+  height: 10px;
+  line-height: 10px;
+  color: var(--text-muted);
+}
+
+.repo-branch__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.repo-branch__chevron {
+  flex-shrink: 0;
+  font-size: 9px !important;
+  width: 9px;
+  height: 9px;
+  line-height: 9px;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.repo-branch__menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  right: 0;
+  z-index: 20;
+  min-width: 120px;
+  max-width: min(220px, 70vw);
+  max-height: 200px;
+  overflow: auto;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
+}
+
+.repo-branch__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.repo-branch__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo-branch__item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.repo-branch__item.is-current {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.repo-branch__item-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-branch__item-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-family: var(--font-ui, inherit);
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+
+.repo-branch__empty {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* Inline commit form in Changes */
+.repo-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg-muted) 12%);
+}
+
+.repo-commit__input {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.repo-commit__input:focus {
+  outline: none;
+  border-color: var(--accent, var(--border-strong));
+}
+
+.repo-commit__input:disabled {
+  opacity: 0.7;
+}
+
+.repo-commit__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.repo-commit__hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 .repo-row__meta {
@@ -2314,10 +2940,14 @@ button.search-field:hover {
 .repo-block__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 6px;
-  min-height: 22px;
-  padding: 0 10px 0 30px;
+  /* Fixed row height so Commit / Compare sit on the same baseline vs bar top */
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  padding: 0 8px 0 30px;
+  box-sizing: border-box;
   background: transparent;
   border-bottom: none;
 }
@@ -2326,6 +2956,7 @@ button.search-field:hover {
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.05em;
+  line-height: 1;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -2334,27 +2965,54 @@ button.search-field:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   padding: 0;
+  height: 18px;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  min-height: 20px;
+  line-height: 1;
+  text-align: left;
 }
 
 .repo-block__head-actions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
+  height: 18px;
 }
 
-.repo-block__head .btn {
-  height: 20px;
-  min-height: 20px;
+/* Beat .btn / .btn--small (26–30px) so header actions share one size */
+.repo-block__head .btn,
+.repo-block__head .btn.btn--small,
+.repo-block__head .btn.btn--accent,
+.repo-block__head-actions .btn {
+  box-sizing: border-box;
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
   padding: 0 7px;
   font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  border-width: 1px;
+}
+
+.repo-block__head .icon-btn {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
 }
 
 .repo-block__text-btn {

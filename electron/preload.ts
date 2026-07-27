@@ -185,6 +185,21 @@ const anchor = {
       truncated: boolean;
       source?: "git" | "walk";
     }> => ipcRenderer.invoke("workspace:findFiles", args ?? {}),
+    searchContent: (args: {
+      root?: string;
+      query: string;
+      maxResults?: number;
+      caseSensitive?: boolean;
+      useRegex?: boolean;
+      include?: string | string[];
+      exclude?: string | string[];
+    }): Promise<{
+      root: string;
+      query: string;
+      hits: { path: string; line: number; text: string }[];
+      truncated: boolean;
+      source: "git-grep" | "rg" | "scan";
+    }> => ipcRenderer.invoke("workspace:searchContent", args),
   },
   history: {
     discover: (workspaceRoot: string): Promise<RepoInfo[]> =>
@@ -198,9 +213,24 @@ const anchor = {
       added: number;
       deleted: number;
       untracked: number;
+      branch: string | null;
       ahead: number | null;
       behind: number | null;
     }> => ipcRenderer.invoke("history:status", repoRoot),
+    listBranches: (
+      repoRoot: string,
+    ): Promise<Array<{ name: string; current: boolean }>> =>
+      ipcRenderer.invoke("history:listBranches", repoRoot),
+    checkout: (args: {
+      repoRoot: string;
+      branch: string;
+    }): Promise<{ branch: string }> =>
+      ipcRenderer.invoke("history:checkout", args),
+    commit: (args: {
+      repoRoot: string;
+      message: string;
+    }): Promise<{ hash: string; shortHash: string; subject: string }> =>
+      ipcRenderer.invoke("history:commit", args),
     compare: (args: {
       repoRoot: string;
       base: string;

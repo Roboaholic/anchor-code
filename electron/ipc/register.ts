@@ -26,10 +26,13 @@ import {
   type CommentStatus,
 } from "../services/annotationsService.js";
 import {
+  checkoutBranch,
+  commitChanges,
   compareCommits,
   compareToWorktree,
   discoverRepos,
   getFileDiff,
+  listBranches,
   loadLog,
   loadRepoStatus,
 } from "../services/historyService.js";
@@ -47,6 +50,7 @@ import {
   discoverAgentLaunchOptions,
 } from "../services/agentLaunch.js";
 import { findWorkspaceFiles } from "../services/fileIndex.js";
+import { searchWorkspaceContent } from "../services/contentSearch.js";
 import {
   getHistoryRecentCompares,
   getHostProfile,
@@ -486,6 +490,43 @@ export function registerIpc(opts: {
   );
 
   ipcMain.handle(
+    "workspace:searchContent",
+    async (
+      _evt,
+      args?: {
+        root?: string;
+        query?: string;
+        maxResults?: number;
+        caseSensitive?: boolean;
+        useRegex?: boolean;
+        include?: string | string[];
+        exclude?: string | string[];
+      },
+    ) => {
+      try {
+        const h = host();
+        const root =
+          (args?.root && typeof args.root === "string" && args.root) ||
+          h.workspaceRoot;
+        if (!root) {
+          throw new HostError("failed", "No workspace open");
+        }
+        const query = typeof args?.query === "string" ? args.query : "";
+        return await searchWorkspaceContent(h, root, query, {
+          maxResults: args?.maxResults,
+          caseSensitive: args?.caseSensitive,
+          useRegex: args?.useRegex,
+          include: args?.include,
+          exclude: args?.exclude,
+        });
+      } catch (err) {
+        console.error("[ipc] workspace:searchContent failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     "workspace:pickFile",
     async (): Promise<string | null> => {
       try {
@@ -595,6 +636,45 @@ export function registerIpc(opts: {
     async (_evt, repoRoot: string) => {
       try {
         return await loadRepoStatus(host(), repoRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:listBranches",
+    async (_evt, repoRoot: string) => {
+      try {
+        return await listBranches(host(), repoRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:checkout",
+    async (
+      _evt,
+      args: { repoRoot: string; branch: string },
+    ) => {
+      try {
+        return await checkoutBranch(host(), args.repoRoot, args.branch);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:commit",
+    async (
+      _evt,
+      args: { repoRoot: string; message: string },
+    ) => {
+      try {
+        return await commitChanges(host(), args.repoRoot, args.message);
       } catch (err) {
         rethrowIpc(err);
       }

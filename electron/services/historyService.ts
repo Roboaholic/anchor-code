@@ -74,10 +74,27 @@ export interface RepoStatus {
   added: number;
   deleted: number;
   untracked: number;
+  /** Current branch name from `git status -b`; null if detached. */
+  branch: string | null;
   /** Commits ahead of comparison base; null if no base. */
   ahead: number | null;
   /** Commits behind comparison base; null if no base. */
   behind: number | null;
+}
+
+export interface BranchInfo {
+  name: string;
+  current: boolean;
+}
+
+export interface CheckoutResult {
+  branch: string;
+}
+
+export interface CommitResult {
+  hash: string;
+  shortHash: string;
+  subject: string;
 }
 async function isGitRoot(host: HostSession, dir: string): Promise<boolean> {
   const gitPath = hostJoin(host.kind, dir, ".git");
@@ -311,8 +328,135 @@ export async function loadRepoStatus(
     added,
     deleted,
     untracked,
+    branch: tracking.branch,
     ahead: tracking.ahead,
     behind: tracking.behind,
+  };
+}
+
+/**
+ * List local branches (no remote-only refs).
+ * Uses `git branch --format` for a stable parse.
+ */
+export async function listBranches(
+  host: HostSession,
+  repoRoot: string,
+): Promise<BranchInfo[]> {
+  const result = await host.run(repoRoot, "git", [
+    "branch",
+    "--format=%(refname:short)%09%(HEAD)",
+  ]);
+  if (result.code !== 0) {
+    throw new HostError(
+      "failed",
+      "Failed to list branches",
+      result.stderr || result.stdout,
+    );
+  }
+  const branches: BranchInfo[] = [];
+  for (const raw of result.stdout.split("\n")) {
+    const line = raw.replace(/\r$/, "").trim();
+    if (!line) continue;
+    const [name, headMark] = line.split("\t");
+    if (!name) continue;
+    branches.push({
+      name,
+      current: headMark === "*",
+    });
+  }
+  branches.sort((a, b) => {
+    if (a.current !== b.current) return a.current ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return branches;
+}
+
+/**
+ * Checkout a local branch. Fails cleanly when the worktree has conflicts
+ * that block the switch (no --force).
+ */
+export async function checkoutBranch(
+  host: HostSession,
+  repoRoot: string,
+  branch: string,
+): Promise<CheckoutResult> {
+  const name = branch.trim();
+  if (!name) {
+    throw new HostError("failed", "Branch name is required");
+  }
+  if (name.includes("..") || /[\s~^:?*[\\]/.test(name)) {
+    throw new HostError("failed", `Invalid branch name: ${name}`);
+  }
+  const result = await host.run(repoRoot, "git", ["checkout", name]);
+  if (result.code !== 0) {
+    const detail = (result.stderr || result.stdout).trim();
+    throw new HostError(
+      "failed",
+      detail
+        ? `Could not switch to ${name}: ${detail}`
+        : `Could not switch to ${name}`,
+      detail,
+    );
+  }
+  const current = (await resolveBranch(host, repoRoot)) ?? name;
+  return { branch: current };
+}
+
+/**
+ * Stage all changes (`git add -A`) and create a commit with the given message.
+ */
+export async function commitChanges(
+  host: HostSession,
+  repoRoot: string,
+  message: string,
+): Promise<CommitResult> {
+  const msg = message.trim();
+  if (!msg) {
+    throw new HostError("failed", "Commit message is required");
+  }
+
+  const status = await loadRepoStatus(host, repoRoot);
+  const dirty =
+    status.modified + status.added + status.deleted + status.untracked;
+  if (dirty === 0) {
+    throw new HostError("failed", "Nothing to commit — working tree is clean");
+  }
+
+  const add = await host.run(repoRoot, "git", ["add", "-A"]);
+  if (add.code !== 0) {
+    throw new HostError(
+      "failed",
+      "Failed to stage changes",
+      add.stderr || add.stdout,
+    );
+  }
+
+  // -F - reads message from stdin so multi-line / special chars are safe.
+  const commit = await host.run(repoRoot, "git", ["commit", "-F", "-"], {
+    stdin: msg,
+  });
+  if (commit.code !== 0) {
+    throw new HostError(
+      "failed",
+      "git commit failed",
+      commit.stderr || commit.stdout,
+    );
+  }
+
+  const rev = await host.run(repoRoot, "git", [
+    "log",
+    "-1",
+    "--format=%H%x09%h%x09%s",
+  ]);
+  if (rev.code !== 0 || !rev.stdout.trim()) {
+    // Commit likely succeeded; return best-effort from message.
+    return { hash: "", shortHash: "", subject: msg.split("\n")[0] ?? msg };
+  }
+  const [hash, shortHash, subject] = rev.stdout.trim().split("\t");
+  return {
+    hash: hash ?? "",
+    shortHash: shortHash ?? "",
+    subject: subject ?? msg.split("\n")[0] ?? msg,
   };
 }
 

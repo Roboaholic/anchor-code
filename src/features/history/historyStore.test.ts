@@ -23,6 +23,7 @@ function mockAnchor(opts?: {
     added: number;
     deleted: number;
     untracked: number;
+    branch: string | null;
     ahead: number | null;
     behind: number | null;
   };
@@ -62,6 +63,7 @@ function mockAnchor(opts?: {
     added: 0,
     deleted: 0,
     untracked: 0,
+    branch: "main",
     ahead: 0,
     behind: 0,
   };
@@ -75,6 +77,10 @@ function mockAnchor(opts?: {
   };
 
   const recent: unknown[] = [];
+  const branches = [
+    { name: "main", current: true },
+    { name: "feature", current: false },
+  ];
 
   (globalThis as { window?: unknown }).window = {
     anchor: {
@@ -82,6 +88,24 @@ function mockAnchor(opts?: {
         discover: vi.fn(async () => discover),
         loadLog: vi.fn(async () => log),
         status: vi.fn(async (root: string) => ({ ...status, repoRoot: root })),
+        listBranches: vi.fn(async () => branches),
+        checkout: vi.fn(async ({ branch }: { branch: string }) => {
+          for (const b of branches) b.current = b.name === branch;
+          status.branch = branch;
+          return { branch };
+        }),
+        commit: vi.fn(async ({ message }: { message: string }) => {
+          status.entries = [];
+          status.modified = 0;
+          status.added = 0;
+          status.deleted = 0;
+          status.untracked = 0;
+          return {
+            hash: "ccc333abc",
+            shortHash: "ccc333a",
+            subject: message.split("\n")[0] ?? message,
+          };
+        }),
         compare: vi.fn(async () => compare),
         getRecentCompares: vi.fn(async () => recent),
         pushRecentCompare: vi.fn(async ({ entry }: { entry: unknown }) => {
@@ -100,7 +124,7 @@ function mockAnchor(opts?: {
     },
   };
 
-  return { discover, log, status, compare, recent };
+  return { discover, log, status, compare, recent, branches };
 }
 
 describe("historyStore multi-repo", () => {
@@ -159,6 +183,40 @@ describe("historyStore multi-repo", () => {
       .repos.find((r) => r.root === "/ws/repo-a");
     expect(card?.selectedHashes).toEqual(["aaa111", "bbb222"]);
     expect(useHistoryStore.getState().toast).toMatch(/two/i);
+  });
+
+  it("loads branches and switches branch", async () => {
+    await useHistoryStore.getState().discover("/ws");
+    await useHistoryStore.getState().loadBranches("/ws/repo-a");
+    let card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.branches.map((b) => b.name)).toEqual(["main", "feature"]);
+
+    const ok = await useHistoryStore
+      .getState()
+      .checkoutBranch("/ws/repo-a", "feature");
+    expect(ok).toBe(true);
+    card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.status?.branch).toBe("feature");
+    expect(useHistoryStore.getState().toast).toMatch(/feature/i);
+  });
+
+  it("commits all changes and clears worktree selection", async () => {
+    await useHistoryStore.getState().discover("/ws");
+    useHistoryStore.getState().toggleCommit("/ws/repo-a", WORKTREE_SELECTION);
+    const ok = await useHistoryStore
+      .getState()
+      .commitChanges("/ws/repo-a", "fix stuff");
+    expect(ok).toBe(true);
+    const card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.selectedHashes).not.toContain(WORKTREE_SELECTION);
+    expect(card?.status?.modified).toBe(0);
+    expect(useHistoryStore.getState().toast).toMatch(/Committed/i);
   });
 });
 

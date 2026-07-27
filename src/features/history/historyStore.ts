@@ -10,6 +10,7 @@ import {
   type CompareEntry,
 } from "@/core/history/recentCompare";
 import type {
+  BranchInfo,
   CommitRow,
   DiffOpenPayload,
   HistoryCompareEntry,
@@ -38,6 +39,12 @@ export interface RepoCardState {
   statusState: RepoStatusState;
   statusError: string | null;
   comparing: boolean;
+  /** Local branches for switcher (lazy-loaded). */
+  branches: BranchInfo[];
+  branchesStatus: "idle" | "loading" | "error";
+  branchesError: string | null;
+  switchingBranch: boolean;
+  committing: boolean;
 }
 
 export interface HistoryState {
@@ -55,8 +62,13 @@ export interface HistoryState {
   toggleExpanded: (repoRoot: string) => void;
   toggleChanges: (repoRoot: string) => void;
   toggleHistory: (repoRoot: string) => Promise<void>;
+  /** Reload commit log for an open History section. */
+  refreshLog: (repoRoot: string) => Promise<void>;
   toggleCompares: (repoRoot: string) => void;
   toggleCommit: (repoRoot: string, hash: string) => void;
+  loadBranches: (repoRoot: string) => Promise<void>;
+  checkoutBranch: (repoRoot: string, branch: string) => Promise<boolean>;
+  commitChanges: (repoRoot: string, message: string) => Promise<boolean>;
   clearToast: () => void;
   /** Explicit Start Compare for a repo selection (may include worktree). */
   runCompare: (repoRoot: string) => Promise<DiffOpenPayload | null>;
@@ -83,6 +95,11 @@ function emptyCard(repo: RepoInfo): RepoCardState {
     statusState: "idle",
     statusError: null,
     comparing: false,
+    branches: [],
+    branchesStatus: "idle",
+    branchesError: null,
+    switchingBranch: false,
+    committing: false,
   };
 }
 
@@ -289,6 +306,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       repos: mapCard(s.repos, repoRoot, {
         historyOpen: true,
         expanded: true,
+      }),
+    }));
+    await get().refreshLog(repoRoot);
+  },
+
+  refreshLog: async (repoRoot) => {
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, {
         logStatus: "loading",
         logError: null,
       }),
@@ -332,6 +357,157 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         selectedHashes: result.selectedHashes,
       }),
     });
+  },
+
+  loadBranches: async (repoRoot) => {
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, {
+        branchesStatus: "loading",
+        branchesError: null,
+      }),
+    }));
+    try {
+      const branches = await window.anchor.history.listBranches(repoRoot);
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
+          branches,
+          branchesStatus: "idle",
+          branchesError: null,
+        }),
+      }));
+    } catch (err) {
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
+          branches: [],
+          branchesStatus: "error",
+          branchesError: err instanceof Error ? err.message : String(err),
+        }),
+      }));
+    }
+  },
+
+  checkoutBranch: async (repoRoot, branch) => {
+    const card = findCard(get().repos, repoRoot);
+    if (!card || card.switchingBranch) return false;
+    set((s) => ({
+      toast: null,
+      repos: mapCard(s.repos, repoRoot, { switchingBranch: true }),
+    }));
+    try {
+      const result = await window.anchor.history.checkout({
+        repoRoot,
+        branch,
+      });
+      set((s) => ({
+        toast: `Switched to ${result.branch}`,
+        repos: mapCard(s.repos, repoRoot, {
+          switchingBranch: false,
+          // Invalidate log so next History open reloads for the new branch tip.
+          commits: [],
+          logStatus: "idle",
+          logError: null,
+          selectedHashes: [],
+        }),
+      }));
+      await get().refreshStatus(repoRoot);
+      await get().loadBranches(repoRoot);
+      // If History section is open, reload commits for the new branch.
+      const next = findCard(get().repos, repoRoot);
+      if (next?.historyOpen) {
+        set((s) => ({
+          repos: mapCard(s.repos, repoRoot, {
+            logStatus: "loading",
+            logError: null,
+          }),
+        }));
+        try {
+          const commits = await window.anchor.history.loadLog(repoRoot);
+          set((s) => ({
+            repos: mapCard(s.repos, repoRoot, {
+              commits,
+              logStatus: "idle",
+              logError: null,
+            }),
+          }));
+        } catch (err) {
+          set((s) => ({
+            repos: mapCard(s.repos, repoRoot, {
+              commits: [],
+              logStatus: "error",
+              logError: err instanceof Error ? err.message : String(err),
+            }),
+          }));
+        }
+      }
+      return true;
+    } catch (err) {
+      set((s) => ({
+        toast: err instanceof Error ? err.message : String(err),
+        repos: mapCard(s.repos, repoRoot, { switchingBranch: false }),
+      }));
+      return false;
+    }
+  },
+
+  commitChanges: async (repoRoot, message) => {
+    const card = findCard(get().repos, repoRoot);
+    if (!card || card.committing) return false;
+    const msg = message.trim();
+    if (!msg) {
+      set({ toast: "Commit message is required" });
+      return false;
+    }
+    set((s) => ({
+      toast: null,
+      repos: mapCard(s.repos, repoRoot, { committing: true }),
+    }));
+    try {
+      const result = await window.anchor.history.commit({
+        repoRoot,
+        message: msg,
+      });
+      const short =
+        result.shortHash ||
+        (result.hash ? result.hash.slice(0, 7) : "");
+      set((s) => {
+        const prev = findCard(s.repos, repoRoot);
+        return {
+          toast: short
+            ? `Committed ${short}: ${result.subject}`
+            : `Committed: ${result.subject}`,
+          repos: mapCard(s.repos, repoRoot, {
+            committing: false,
+            // Drop worktree from compare selection after a successful commit.
+            selectedHashes: (prev?.selectedHashes ?? []).filter(
+              (h) => h !== WORKTREE_SELECTION,
+            ),
+          }),
+        };
+      });
+      await get().refreshStatus(repoRoot);
+      const next = findCard(get().repos, repoRoot);
+      if (next?.historyOpen) {
+        try {
+          const commits = await window.anchor.history.loadLog(repoRoot);
+          set((s) => ({
+            repos: mapCard(s.repos, repoRoot, {
+              commits,
+              logStatus: "idle",
+              logError: null,
+            }),
+          }));
+        } catch {
+          // non-fatal; status already refreshed
+        }
+      }
+      return true;
+    } catch (err) {
+      set((s) => ({
+        toast: err instanceof Error ? err.message : String(err),
+        repos: mapCard(s.repos, repoRoot, { committing: false }),
+      }));
+      return false;
+    }
   },
 
   runCompare: async (repoRoot) => {

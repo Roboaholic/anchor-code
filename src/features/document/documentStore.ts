@@ -9,6 +9,16 @@ import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
 
 export type MdViewMode = "rendered" | "raw";
 
+/** Temporary editor highlight when jumping from workspace search. */
+export type SearchHighlight = {
+  line: number;
+  query: string;
+  useRegex?: boolean;
+  caseSensitive?: boolean;
+  /** Bumps so the same line can be re-highlighted on every click. */
+  nonce: number;
+};
+
 export type OpenItem =
   | {
       id: string;
@@ -33,6 +43,7 @@ export type OpenItem =
       focusCommentId?: string | null;
       /** Bumps on every jump so repeated clicks re-run reveal. */
       revealNonce?: number;
+      searchHighlight?: SearchHighlight | null;
     }
   | {
       id: string;
@@ -58,6 +69,7 @@ export interface DocumentState {
     workspaceRoot: string | null;
     revealLine?: number;
     focusCommentId?: string | null;
+    searchHighlight?: Omit<SearchHighlight, "nonce"> | null;
   }) => Promise<void>;
   openDiff: (payload: DiffOpenPayload) => void;
   setDiffActiveFile: (id: string, filePath: string) => void;
@@ -115,10 +127,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  openFile: async ({ path, workspaceRoot, revealLine, focusCommentId }) => {
+  openFile: async ({
+    path,
+    workspaceRoot,
+    revealLine,
+    focusCommentId,
+    searchHighlight,
+  }) => {
     const normalizedPath = normalizePathKey(path);
     const id = fileItemId(normalizedPath);
     const existing = findOpenFile(get().openItems, normalizedPath);
+    const nextHighlight: SearchHighlight | null | undefined =
+      searchHighlight === undefined
+        ? undefined
+        : searchHighlight
+          ? {
+              ...searchHighlight,
+              nonce: (existing?.searchHighlight?.nonce ?? 0) + 1,
+            }
+          : null;
     if (existing && !existing.error) {
       set((s) => ({
         activeId: existing.id,
@@ -130,6 +157,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                 revealLine,
                 focusCommentId: focusCommentId ?? null,
                 revealNonce: (item.revealNonce ?? 0) + 1,
+                ...(nextHighlight !== undefined
+                  ? { searchHighlight: nextHighlight }
+                  : {}),
+                // Search jump: show raw MD so Monaco can highlight the line.
+                mdViewMode:
+                  nextHighlight && item.isMarkdown
+                    ? "raw"
+                    : item.mdViewMode,
               }
             : item,
         ),
@@ -155,10 +190,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       content: "",
       truncated: false,
       size: 0,
-      mdViewMode: isMarkdown ? "rendered" : "rendered",
+      mdViewMode: isMarkdown && nextHighlight ? "raw" : "rendered",
       revealLine,
       focusCommentId: focusCommentId ?? null,
       revealNonce: 1,
+      searchHighlight: nextHighlight ?? null,
     };
 
     set((s) => {

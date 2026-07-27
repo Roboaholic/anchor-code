@@ -177,6 +177,7 @@ function ActiveView({
         revealLine={item.revealLine}
         focusCommentId={item.focusCommentId}
         revealNonce={item.revealNonce}
+        searchHighlight={item.searchHighlight}
       />
     );
   }
@@ -190,6 +191,7 @@ function ActiveView({
       revealLine={item.revealLine}
       focusCommentId={item.focusCommentId}
       revealNonce={item.revealNonce}
+      searchHighlight={item.searchHighlight}
       kind="source"
     />
   );

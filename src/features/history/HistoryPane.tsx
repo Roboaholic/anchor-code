@@ -1,4 +1,10 @@
-import { useEffect } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { Icon } from "@/shared/Icon";
 import {
   openHistoryCompare,
@@ -149,31 +155,56 @@ function RepoCard({
   const toggleExpanded = useHistoryStore((s) => s.toggleExpanded);
   const toggleChanges = useHistoryStore((s) => s.toggleChanges);
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
+  const refreshLog = useHistoryStore((s) => s.refreshLog);
   const toggleCompares = useHistoryStore((s) => s.toggleCompares);
   const toggleCommit = useHistoryStore((s) => s.toggleCommit);
   const refreshStatus = useHistoryStore((s) => s.refreshStatus);
   const removeRecent = useHistoryStore((s) => s.removeRecent);
+  const commitChanges = useHistoryStore((s) => s.commitChanges);
   const dirty = dirtyCount(card);
   const label = selectionLabelForCard(card);
   const canCompare = card.selectedHashes.length > 0 && !card.comparing;
   const entries = statusEntries(card);
   const selectionFull = card.selectedHashes.length >= 2;
+  const branchLabel = card.status?.branch ?? null;
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+
+  useEffect(() => {
+    if (dirty === 0) {
+      setCommitOpen(false);
+      setCommitMessage("");
+    }
+  }, [dirty]);
+
+  const onCommitSubmit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    const ok = await commitChanges(card.root, commitMessage);
+    if (ok) {
+      setCommitOpen(false);
+      setCommitMessage("");
+    }
+  };
 
   return (
     <div className={`repo-row${card.expanded ? " is-expanded" : ""}`}>
-      <button
-        type="button"
-        className="repo-row__header"
-        onClick={() => toggleExpanded(card.root)}
-        aria-expanded={card.expanded}
-      >
-        <Icon
-          name={card.expanded ? "chevron-down" : "chevron-right"}
-          className="repo-row__chevron"
-        />
-        <span className="repo-row__name" title={card.root}>
-          {card.name}
-        </span>
+      <div className="repo-row__header">
+        <button
+          type="button"
+          className="repo-row__expand"
+          onClick={() => toggleExpanded(card.root)}
+          aria-expanded={card.expanded}
+          title={card.root}
+        >
+          <Icon
+            name={card.expanded ? "chevron-down" : "chevron-right"}
+            className="repo-row__chevron"
+          />
+          <span className="repo-row__name" title={card.root}>
+            {card.name}
+          </span>
+        </button>
+        <BranchSwitcher card={card} branchLabel={branchLabel} />
         <span className="repo-row__meta">
           {card.statusState === "loading" ? (
             <span className="repo-row__count is-muted">…</span>
@@ -229,11 +260,11 @@ function RepoCard({
             </>
           ) : null}
         </span>
-      </button>
+      </div>
 
       {card.expanded ? (
         <div className="repo-row__body">
-          {/* CHANGES — default open: file list only */}
+          {/* CHANGES — default open: file list + commit */}
           <div className="repo-block">
             <div className="repo-block__head">
               <button
@@ -250,15 +281,28 @@ function RepoCard({
                 </span>
               </button>
               {card.changesOpen ? (
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => void refreshStatus(card.root)}
-                  title="Refresh working tree status"
-                  aria-label="Refresh working tree status"
-                >
-                  <Icon name="refresh" />
-                </button>
+                <div className="repo-block__head-actions">
+                  {dirty > 0 ? (
+                    <button
+                      type="button"
+                      className="btn btn--accent btn--small"
+                      disabled={card.committing}
+                      onClick={() => setCommitOpen((v) => !v)}
+                      title="Stage all changes and commit"
+                    >
+                      {commitOpen ? "Cancel" : "Commit"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => void refreshStatus(card.root)}
+                    title="Refresh working tree status"
+                    aria-label="Refresh working tree status"
+                  >
+                    <Icon name="refresh" />
+                  </button>
+                </div>
               ) : null}
             </div>
             {card.changesOpen ? (
@@ -268,6 +312,46 @@ function RepoCard({
                 ) : null}
                 {card.statusState === "loading" ? (
                   <p className="pane-hint">Loading status…</p>
+                ) : null}
+                {commitOpen && dirty > 0 ? (
+                  <form
+                    className="repo-commit"
+                    onSubmit={(e) => void onCommitSubmit(e)}
+                  >
+                    <textarea
+                      className="repo-commit__input"
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      placeholder="Commit message"
+                      rows={3}
+                      disabled={card.committing}
+                      autoFocus
+                      onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                        if (
+                          (e.ctrlKey || e.metaKey) &&
+                          e.key === "Enter" &&
+                          commitMessage.trim()
+                        ) {
+                          e.preventDefault();
+                          void onCommitSubmit();
+                        }
+                      }}
+                    />
+                    <div className="repo-commit__actions">
+                      <span className="repo-commit__hint">
+                        Stages all changes · Ctrl+Enter
+                      </span>
+                      <button
+                        type="submit"
+                        className="btn btn--accent btn--small"
+                        disabled={
+                          card.committing || !commitMessage.trim()
+                        }
+                      >
+                        {card.committing ? "Committing…" : "Commit"}
+                      </button>
+                    </div>
+                  </form>
                 ) : null}
                 {entries.length > 0 ? (
                   <ul className="wt-list">
@@ -322,6 +406,16 @@ function RepoCard({
                     title="Compare selection (first = base, second = head)"
                   >
                     {card.comparing ? "…" : "Compare"}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    disabled={card.logStatus === "loading"}
+                    onClick={() => void refreshLog(card.root)}
+                    title="Refresh commit history"
+                    aria-label="Refresh commit history"
+                  >
+                    <Icon name="refresh" />
                   </button>
                 </div>
               ) : null}
@@ -481,6 +575,113 @@ function RepoCard({
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BranchSwitcher({
+  card,
+  branchLabel,
+}: {
+  card: RepoCardState;
+  branchLabel: string | null;
+}) {
+  const loadBranches = useHistoryStore((s) => s.loadBranches);
+  const checkoutBranch = useHistoryStore((s) => s.checkoutBranch);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const label = branchLabel ?? (card.switchingBranch ? "…" : "detached");
+  const busy = card.switchingBranch;
+
+  const toggle = () => {
+    if (busy) return;
+    const next = !open;
+    setOpen(next);
+    if (next) void loadBranches(card.root);
+  };
+
+  const onPick = async (name: string) => {
+    if (name === branchLabel) {
+      setOpen(false);
+      return;
+    }
+    const ok = await checkoutBranch(card.root, name);
+    if (ok) setOpen(false);
+  };
+
+  return (
+    <div className="repo-branch" ref={rootRef}>
+      <button
+        type="button"
+        className={`repo-branch__btn${open ? " is-open" : ""}`}
+        onClick={toggle}
+        disabled={busy}
+        title={
+          branchLabel
+            ? `Current branch: ${branchLabel}. Click to switch.`
+            : "Detached HEAD. Click to switch to a branch."
+        }
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <Icon name="git-branch" className="repo-branch__icon" />
+        <span className="repo-branch__label">{label}</span>
+      </button>
+      {open ? (
+        <div className="repo-branch__menu" role="listbox" aria-label="Branches">
+          {card.branchesStatus === "loading" ? (
+            <p className="repo-branch__empty">Loading branches…</p>
+          ) : null}
+          {card.branchesError ? (
+            <p className="repo-branch__empty pane-hint--error">
+              {card.branchesError}
+            </p>
+          ) : null}
+          {card.branchesStatus === "idle" && card.branches.length === 0 ? (
+            <p className="repo-branch__empty">No local branches</p>
+          ) : null}
+          <ul className="repo-branch__list">
+            {card.branches.map((b) => (
+              <li key={b.name}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={b.current}
+                  className={`repo-branch__item${
+                    b.current ? " is-current" : ""
+                  }`}
+                  disabled={busy || b.current}
+                  onClick={() => void onPick(b.name)}
+                >
+                  <span className="repo-branch__item-name">{b.name}</span>
+                  {b.current ? (
+                    <span className="repo-branch__item-badge">current</span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </div>

@@ -223,13 +223,13 @@ app.whenReady().then(async () => {
     terminal,
   });
   buildMenu();
-  const theme = await getUiTheme().catch(() => "light" as UiTheme);
+  const theme = await getUiTheme().catch(() => "dark-modern" as UiTheme);
   createWindow(theme);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       void getUiTheme()
-        .catch(() => "light" as UiTheme)
+        .catch(() => "dark-modern" as UiTheme)
         .then((t) => createWindow(t));
     }
   });

@@ -74,7 +74,7 @@ export interface AppSettings {
     terminalVisible: boolean;
     leftWidth?: number;
     rightWidth?: number;
-    /** Workbench color theme. Default light. */
+    /** Workbench color theme. Default dark-modern. */
     theme?: "light" | "light-modern" | "dark" | "dark-modern";
   };
 }
@@ -94,7 +94,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentProfiles: [],
   agentLaunchCache: {},
   historyRecentCompares: {},
-  ui: { terminalVisible: true, theme: "light" },
+  ui: { terminalVisible: true, theme: "dark-modern" },
 };
 
 const MAX_RECENT = 12;
@@ -243,7 +243,7 @@ export function normalizeTheme(value: unknown): UiTheme {
   ) {
     return value;
   }
-  return "light";
+  return "dark-modern";
 }
 
 export async function getUiTheme(): Promise<UiTheme> {

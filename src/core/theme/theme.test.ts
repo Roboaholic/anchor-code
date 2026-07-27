@@ -15,10 +15,10 @@ describe("normalizeTheme", () => {
     expect(normalizeTheme("dark-modern")).toBe("dark-modern");
   });
 
-  it("defaults unknown values to light", () => {
-    expect(normalizeTheme(undefined)).toBe("light");
-    expect(normalizeTheme("system")).toBe("light");
-    expect(normalizeTheme(1)).toBe("light");
+  it("defaults unknown values to dark-modern", () => {
+    expect(normalizeTheme(undefined)).toBe("dark-modern");
+    expect(normalizeTheme("system")).toBe("dark-modern");
+    expect(normalizeTheme(1)).toBe("dark-modern");
   });
 });
 

@@ -20,7 +20,7 @@ export function normalizeTheme(value: unknown): UiTheme {
   ) {
     return value;
   }
-  return "light";
+  return "dark-modern";
 }
 
 export function isDarkTheme(theme: UiTheme): boolean {
@@ -178,7 +178,7 @@ export function resolveInitialTheme(): UiTheme {
   } catch {
     // ignore
   }
-  return "light";
+  return "dark-modern";
 }
 
 export function cacheThemeLocally(theme: UiTheme): void {

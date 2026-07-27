@@ -32,6 +32,7 @@ import {
   monacoThemeId,
 } from "@/core/theme/theme";
 import type { CommentRecord } from "@/shared/anchor-api";
+import { Icon } from "@/shared/Icon";
 import "./monacoSetup";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
@@ -56,21 +57,33 @@ type BubbleState = {
   top: number;
 };
 
+/**
+ * Map a decoration anchor to overlay-local coords.
+ * Monaco's getScrolledVisiblePosition is relative to the *modified* editor,
+ * not the full DiffEditor shell — in side-by-side that editor sits on the right,
+ * so we must add its offset within the overlay or the bubble lands on the left pane.
+ */
 function positionForSpec(
   ed: MonacoEditor.IStandaloneCodeEditor,
   spec: DecorationSpec,
-  overlayWidth: number,
+  overlay: HTMLElement,
 ): { left: number; top: number } | null {
   const pos = ed.getScrolledVisiblePosition({
     lineNumber: spec.startLine,
     column: Math.max(1, spec.startColumn || 1),
   });
   if (!pos) return null;
+  const edDom = ed.getDomNode();
+  if (!edDom) return null;
+  const edRect = edDom.getBoundingClientRect();
+  const overlayRect = overlay.getBoundingClientRect();
+  const rawLeft = edRect.left - overlayRect.left + pos.left + 12;
+  const rawTop = edRect.top - overlayRect.top + pos.top + pos.height + 6;
   const left = Math.min(
-    Math.max(8, pos.left + 12),
-    Math.max(8, overlayWidth - 320),
+    Math.max(8, rawLeft),
+    Math.max(8, overlay.clientWidth - 320),
   );
-  const top = Math.max(8, pos.top + pos.height + 6);
+  const top = Math.max(8, rawTop);
   return { left, top };
 }
 
@@ -81,7 +94,8 @@ function findSpecsAt(
 ): DecorationSpec[] {
   const hits: Array<{ spec: DecorationSpec; span: number }> = [];
   for (const s of specs) {
-    if (s.anchorStatus === "unresolved") continue;
+    // Include unresolved: reopened diffs may only have stored coords until
+    // relocate succeeds, but the user should still open the bubble.
     if (line < s.startLine || line > s.endLine) continue;
     const startCol = Math.max(1, s.startColumn || 1);
     const endCol = Math.max(startCol, s.endColumn || 1);
@@ -117,6 +131,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sideBySide, setSideBySide] = useState(true);
+  /** Changed-files rail: open by default; user can collapse for more editor space. */
+  const [filesOpen, setFilesOpen] = useState(true);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
@@ -125,12 +141,16 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
+  /** Editor instance that owns decorationsRef (must recreate after remount). */
+  const decorationsEditorRef =
+    useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const diffEditorRef =
     useRef<MonacoEditor.IStandaloneDiffEditor | null>(null);
   const disposablesRef = useRef<{ dispose: () => void }[]>([]);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
   const bubbleRef = useRef<BubbleState | null>(null);
+  const applyDecorationsRef = useRef<(id?: string | null) => void>(() => {});
   bubbleRef.current = bubble;
 
   useEffect(() => {
@@ -201,11 +221,12 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     item.files,
   ]);
 
-  // Diff comments are stored under item.repoRoot — keep session loaded.
+  // Diff comments live under item.repoRoot — always ensure sessions are loaded
+  // when opening a compare (reopen must repaint anchors from YAML/cache).
   useEffect(() => {
     if (!item.repoRoot) return;
     const current = useAnnotationsStore.getState().repoRoot;
-    if (current !== item.repoRoot) {
+    if (current !== item.repoRoot || useAnnotationsStore.getState().sessions.length === 0) {
       void loadForRepo(item.repoRoot);
     }
   }, [item.repoRoot, loadForRepo]);
@@ -268,19 +289,33 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     (activeCommentId?: string | null) => {
       const ed = modifiedEditorRef.current;
       if (!ed || !absActivePath || !sideBySide) return;
+      const model = ed.getModel();
+      // DiffEditor often mounts before the modified model is filled (or swaps
+      // models after onDidUpdateDiff). Resolving against `newText` but painting
+      // an empty/stale model drops ranges — wait until model matches.
+      if (!model) return;
+      // Empty model while we already have newer-side text → wait for DiffEditor
+      // to push content (onDidUpdateDiff / model listeners will repaint).
+      if (newText.length > 0 && model.getValueLength() === 0) return;
+
       const specs = decorationsFor(absActivePath, newText);
       specsRef.current = specs;
       const activeId =
         activeCommentId !== undefined
           ? activeCommentId
           : bubbleRef.current?.commentId ?? null;
-      const decorations: MonacoEditor.IModelDeltaDecoration[] = specs
-        .filter(
-          (s) =>
-            s.anchorStatus === "resolved" || s.anchorStatus === "relocated",
-        )
-        .map((s) => {
+      // Prefer resolved/relocated; fall back to stored coords for unresolved so
+      // reopened diffs still show attachment while content is slightly off.
+      const paintable = specs.filter(
+        (s) =>
+          s.anchorStatus === "resolved" ||
+          s.anchorStatus === "relocated" ||
+          s.anchorStatus === "unresolved",
+      );
+      const decorations: MonacoEditor.IModelDeltaDecoration[] = paintable.map(
+        (s) => {
           const selected = activeId === s.commentId;
+          const unresolved = s.anchorStatus === "unresolved";
           return {
             range: {
               startLineNumber: s.startLine,
@@ -289,7 +324,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               endColumn: Math.max(1, s.endColumn || 1),
             },
             options: {
-              inlineClassName: `anno-inline${selected ? " anno-inline--active" : ""}`,
+              inlineClassName: `anno-inline${selected ? " anno-inline--active" : ""}${
+                unresolved ? " anno-inline--unresolved" : ""
+              }`,
               overviewRuler: {
                 color: accentHex(theme),
                 position: 4,
@@ -300,27 +337,30 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               },
             },
           };
-        });
-      const model = ed.getModel();
-      if (model) {
-        decorations.push(
-          ...overlapRegionsForModel(specs, (line) => model.getLineMaxColumn(line)).map(
-            (region) => ({
-              range: {
-                startLineNumber: region.startLine,
-                startColumn: region.startColumn,
-                endLineNumber: region.endLine,
-                endColumn: region.endColumn,
-              },
-              options: {
-                inlineClassName: `anno-inline-intersection anno-inline-intersection--${Math.min(3, region.depth)}`,
-              },
-            }),
-          ),
-        );
-      }
-      if (!decorationsRef.current) {
+        },
+      );
+      decorations.push(
+        ...overlapRegionsForModel(specs, (line) =>
+          model.getLineMaxColumn(line),
+        ).map((region) => ({
+          range: {
+            startLineNumber: region.startLine,
+            startColumn: region.startColumn,
+            endLineNumber: region.endLine,
+            endColumn: region.endColumn,
+          },
+          options: {
+            inlineClassName: `anno-inline-intersection anno-inline-intersection--${Math.min(3, region.depth)}`,
+          },
+        })),
+      );
+      if (
+        !decorationsRef.current ||
+        decorationsEditorRef.current !== ed
+      ) {
+        decorationsRef.current?.clear();
         decorationsRef.current = ed.createDecorationsCollection();
+        decorationsEditorRef.current = ed;
       }
       decorationsRef.current.set(decorations);
 
@@ -332,8 +372,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         setBubble(null);
         return;
       }
-      const overlayW = overlayRef.current?.clientWidth ?? 480;
-      const pos = positionForSpec(ed, still, overlayW);
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const pos = positionForSpec(ed, still, overlay);
       if (pos) {
         const next = {
           commentId: open.commentId,
@@ -346,6 +387,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     },
     [absActivePath, decorationsFor, newText, sideBySide, theme],
   );
+  applyDecorationsRef.current = applyDecorations;
 
   useEffect(() => {
     applyDecorations();
@@ -366,10 +408,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
 
   const openBubbleForSpecs = (hits: DecorationSpec[]) => {
     const ed = modifiedEditorRef.current;
-    if (!ed || hits.length === 0) return;
+    const overlay = overlayRef.current;
+    if (!ed || !overlay || hits.length === 0) return;
     const primary = hits[0]!;
-    const overlayW = overlayRef.current?.clientWidth ?? 480;
-    const pos = positionForSpec(ed, primary, overlayW);
+    const pos = positionForSpec(ed, primary, overlay);
     if (!pos) return;
     setComposer(null);
     const next = {
@@ -399,10 +441,23 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     modifiedEditorRef.current = modified;
     decorationsRef.current?.clear();
     decorationsRef.current = modified.createDecorationsCollection();
+    decorationsEditorRef.current = modified;
+
+    const repaint = () => {
+      applyDecorationsRef.current(bubbleRef.current?.commentId ?? null);
+    };
+
+    // DiffEditor rebuilds models after mount / layout — repaint then.
+    disposablesRef.current.push(editor.onDidUpdateDiff(() => repaint()));
+    disposablesRef.current.push(modified.onDidChangeModel(() => repaint()));
+    disposablesRef.current.push(
+      modified.onDidChangeModelContent(() => repaint()),
+    );
 
     // Only register comment actions in side-by-side mode (newer column).
     if (!sideBySide) {
-      applyDecorations();
+      repaint();
+      requestAnimationFrame(repaint);
       return;
     }
 
@@ -444,7 +499,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         }
       }),
     );
-    applyDecorations();
+    repaint();
+    // Second pass after Monaco finishes first layout/diff computation.
+    requestAnimationFrame(repaint);
+    window.setTimeout(repaint, 50);
   };
 
   useEffect(() => {
@@ -461,6 +519,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       disposablesRef.current = [];
       decorationsRef.current?.clear();
       decorationsRef.current = null;
+      decorationsEditorRef.current = null;
       diffEditorRef.current = null;
       modifiedEditorRef.current = null;
     };
@@ -509,14 +568,30 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         .filter((c): c is CommentRecord => Boolean(c))
     : [];
 
+  const showFilesRail = !item.hideFileList;
+
   return (
     <div
-      className={`diff-viewer${item.hideFileList ? " diff-viewer--focus" : ""}`}
+      className={`diff-viewer${item.hideFileList ? " diff-viewer--focus" : ""}${
+        showFilesRail && !filesOpen ? " diff-viewer--files-collapsed" : ""
+      }`}
     >
-      {item.hideFileList ? null : (
+      {showFilesRail && filesOpen ? (
         <aside className="diff-viewer__files">
-          <div className="diff-viewer__range" title={item.title}>
-            {item.title}
+          <div className="diff-viewer__files-head">
+            <div className="diff-viewer__range" title={item.title}>
+              {item.title}
+            </div>
+            <button
+              type="button"
+              className="icon-btn diff-viewer__files-toggle"
+              title="Hide changed files"
+              aria-label="Hide changed files"
+              aria-expanded={true}
+              onClick={() => setFilesOpen(false)}
+            >
+              <Icon name="layout-sidebar-left" />
+            </button>
           </div>
           <div className="diff-viewer__meta" title={rangeLabel}>
             {rangeLabel}
@@ -562,7 +637,25 @@ export function DiffViewer({ item }: { item: DiffItem }) {
             </button>
           ) : null}
         </aside>
-      )}
+      ) : null}
+
+      {showFilesRail && !filesOpen ? (
+        <div className="diff-viewer__files-rail">
+          <button
+            type="button"
+            className="icon-btn diff-viewer__files-toggle"
+            title={`Show changed files (${item.files.length})`}
+            aria-label="Show changed files"
+            aria-expanded={false}
+            onClick={() => setFilesOpen(true)}
+          >
+            <Icon name="layout-sidebar-left" />
+          </button>
+          <span className="diff-viewer__files-rail-count" title="Changed files">
+            {item.files.length}
+          </span>
+        </div>
+      ) : null}
 
       <div className="diff-viewer__main">
         <div className="diff-viewer__toolbar">
@@ -574,6 +667,11 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   {" "}
                   · HEAD → worktree
                 </span>
+              </span>
+            ) : null}
+            {showFilesRail && !filesOpen && activePath ? (
+              <span className="diff-viewer__focus-title" title={activePath}>
+                {activePath}
               </span>
             ) : null}
             <div

@@ -3047,6 +3047,59 @@ button.search-field:hover {
   background: var(--bg);
 }
 
+.diff-viewer__files-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.diff-viewer__files-head .diff-viewer__range {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-viewer__files-toggle {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.diff-viewer__files-toggle:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* Collapsed: thin strip to re-open the changed-files list */
+.diff-viewer__files-rail {
+  width: 28px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  background: var(--bg);
+  min-height: 0;
+}
+
+.diff-viewer__files-rail .diff-viewer__files-toggle {
+  margin-top: 0;
+}
+
+.diff-viewer__files-rail-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  writing-mode: horizontal-tb;
+  line-height: 1;
+}
+
 .diff-file-list {
   list-style: none;
   margin: 0;
@@ -3199,6 +3252,12 @@ button.search-field:hover {
 .anno-inline--active {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
   border-bottom: 2px solid color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+/* Stored coords when text match failed — still visible after reopening a diff */
+.anno-inline--unresolved {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  border-bottom: 2px dashed color-mix(in srgb, var(--warn) 70%, transparent);
 }
 
 .anno-decoration--active {

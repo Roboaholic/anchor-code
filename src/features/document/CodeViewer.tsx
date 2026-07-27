@@ -27,21 +27,28 @@ type BubbleState = {
   top: number;
 };
 
+/** Map anchor coords into the overlay (editor-local → container-local). */
 function positionForSpec(
   ed: MonacoEditor.IStandaloneCodeEditor,
   spec: DecorationSpec,
-  overlayWidth: number,
+  overlay: HTMLElement,
 ): { left: number; top: number } | null {
   const pos = ed.getScrolledVisiblePosition({
     lineNumber: spec.startLine,
     column: Math.max(1, spec.startColumn || 1),
   });
   if (!pos) return null;
+  const edDom = ed.getDomNode();
+  if (!edDom) return null;
+  const edRect = edDom.getBoundingClientRect();
+  const overlayRect = overlay.getBoundingClientRect();
+  const rawLeft = edRect.left - overlayRect.left + pos.left + 12;
+  const rawTop = edRect.top - overlayRect.top + pos.top + pos.height + 6;
   const left = Math.min(
-    Math.max(8, pos.left + 12),
-    Math.max(8, overlayWidth - 320),
+    Math.max(8, rawLeft),
+    Math.max(8, overlay.clientWidth - 320),
   );
-  const top = Math.max(8, pos.top + pos.height + 6);
+  const top = Math.max(8, rawTop);
   return { left, top };
 }
 
@@ -197,8 +204,9 @@ export function CodeViewer({
         setBubble(null);
         return;
       }
-      const overlayW = overlayRef.current?.clientWidth ?? 480;
-      const pos = positionForSpec(ed, still, overlayW);
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const pos = positionForSpec(ed, still, overlay);
       if (pos) {
         const next = {
           commentId: open.commentId,
@@ -258,10 +266,10 @@ export function CodeViewer({
 
   const openBubbleForSpecs = (hits: DecorationSpec[]) => {
     const ed = editorRef.current;
-    if (!ed || hits.length === 0) return;
+    const overlay = overlayRef.current;
+    if (!ed || !overlay || hits.length === 0) return;
     const primary = hits[0]!;
-    const overlayW = overlayRef.current?.clientWidth ?? 480;
-    const pos = positionForSpec(ed, primary, overlayW);
+    const pos = positionForSpec(ed, primary, overlay);
     if (!pos) return;
     setComposer(null);
     const next = {
@@ -329,8 +337,9 @@ export function CodeViewer({
           setBubble(null);
           return;
         }
-        const overlayW = overlayRef.current?.clientWidth ?? 480;
-        const pos = positionForSpec(ed, spec, overlayW);
+        const overlay = overlayRef.current;
+        if (!overlay) return;
+        const pos = positionForSpec(ed, spec, overlay);
         if (pos) {
           const next = {
             commentId: open.commentId,

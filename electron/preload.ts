@@ -391,6 +391,17 @@ const anchor = {
       theme: "light" | "light-modern" | "dark" | "dark-modern",
     ): Promise<"light" | "light-modern" | "dark" | "dark-modern"> =>
       ipcRenderer.invoke("settings:setTheme", theme),
+    getWorkspaceFilter: (args: {
+      workspaceRoot: string;
+      hostProfileId?: string | null;
+    }): Promise<{ excludes: string[] }> =>
+      ipcRenderer.invoke("settings:getWorkspaceFilter", args),
+    setWorkspaceFilter: (args: {
+      workspaceRoot: string;
+      hostProfileId?: string | null;
+      excludes: string[];
+    }): Promise<{ excludes: string[] }> =>
+      ipcRenderer.invoke("settings:setWorkspaceFilter", args),
   },
   agent: {
     listProfiles: (): Promise<AgentCliProfile[]> =>

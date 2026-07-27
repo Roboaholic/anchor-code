@@ -61,6 +61,21 @@ describe("LocalHostSession (integration)", () => {
     expect(r.stdout.trim()).toBe("ok");
   });
 
+  it("supports earlyExit to stop a long-running process", async () => {
+    // cwd outside fixture tmp so a slow Windows kill cannot EBUSY afterEach rm.
+    const r = await host.run(os.tmpdir(), process.execPath, [
+      "-e",
+      // Print lines until killed
+      "let i=0; setInterval(()=>{console.log('line:'+ (++i));}, 5);",
+    ], {
+      timeoutMs: 5_000,
+      earlyExit: (stdout) => (stdout.match(/^line:/gm) ?? []).length >= 3,
+    });
+    expect(r.earlyExit).toBe(true);
+    expect(r.code).toBe(0);
+    expect((r.stdout.match(/^line:/gm) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
   it(
     "openPty returns a writable handle",
     async () => {

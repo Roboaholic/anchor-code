@@ -463,6 +463,15 @@ export interface AnchorApi {
   settings: {
     getTheme: () => Promise<UiTheme>;
     setTheme: (theme: UiTheme) => Promise<UiTheme>;
+    getWorkspaceFilter: (args: {
+      workspaceRoot: string;
+      hostProfileId?: string | null;
+    }) => Promise<{ excludes: string[] }>;
+    setWorkspaceFilter: (args: {
+      workspaceRoot: string;
+      hostProfileId?: string | null;
+      excludes: string[];
+    }) => Promise<{ excludes: string[] }>;
   };
   agent: {
     listProfiles: () => Promise<AgentCliProfile[]>;

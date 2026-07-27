@@ -38,6 +38,19 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   code: number;
+  /** True when the process was stopped early via `earlyExit` (still a successful capture). */
+  earlyExit?: boolean;
+}
+
+export interface RunOptions {
+  timeoutMs?: number;
+  stdin?: string;
+  /**
+   * Called after each stdout chunk with cumulative buffers.
+   * Return true to kill the process and resolve successfully with current output
+   * (used to stop content search once enough hits are collected).
+   */
+  earlyExit?: (stdout: string, stderr: string) => boolean;
 }
 
 export interface DirEntry {
@@ -84,7 +97,7 @@ export interface HostSession {
     cwd: string,
     command: string,
     args: string[],
-    opts?: { timeoutMs?: number; stdin?: string },
+    opts?: RunOptions,
   ): Promise<RunResult>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, data: string): Promise<void>;

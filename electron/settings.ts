@@ -70,6 +70,11 @@ export interface AppSettings {
    * Key: workspace absolute path.
    */
   historyRecentCompares?: Record<string, HistoryCompareEntry[]>;
+  /**
+   * Per-workspace Files view filters (exclude paths/globs relative to root).
+   * Key: `${hostProfileId}::${workspaceRoot}`.
+   */
+  workspaceFilters?: Record<string, WorkspaceFilter>;
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -77,6 +82,11 @@ export interface AppSettings {
     /** Workbench color theme. Default dark-modern. */
     theme?: "light" | "light-modern" | "dark" | "dark-modern";
   };
+}
+
+export interface WorkspaceFilter {
+  /** Relative paths/globs hidden from Files tree and content search. */
+  excludes: string[];
 }
 
 const DEFAULT_PROFILES: HostProfile[] = [
@@ -94,6 +104,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentProfiles: [],
   agentLaunchCache: {},
   historyRecentCompares: {},
+  workspaceFilters: {},
   ui: { terminalVisible: true, theme: "dark-modern" },
 };
 
@@ -133,6 +144,7 @@ export async function loadSettings(): Promise<AppSettings> {
       defaultAgentId: parsed.defaultAgentId,
       agentLaunchCache: parsed.agentLaunchCache ?? {},
       historyRecentCompares: parsed.historyRecentCompares ?? {},
+      workspaceFilters: parsed.workspaceFilters ?? {},
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {
@@ -244,6 +256,51 @@ export function normalizeTheme(value: unknown): UiTheme {
     return value;
   }
   return "dark-modern";
+}
+
+export function workspaceFilterKey(
+  workspaceRoot: string,
+  hostProfileId?: string | null,
+): string {
+  const host = (hostProfileId && hostProfileId.trim()) || "local-default";
+  const root = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  return `${host}::${root}`;
+}
+
+export async function getWorkspaceFilter(
+  workspaceRoot: string,
+  hostProfileId?: string | null,
+): Promise<WorkspaceFilter> {
+  const settings = await loadSettings();
+  const key = workspaceFilterKey(workspaceRoot, hostProfileId);
+  const raw = settings.workspaceFilters?.[key];
+  const excludes = Array.isArray(raw?.excludes)
+    ? raw!.excludes.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+    : [];
+  return { excludes };
+}
+
+export async function setWorkspaceFilter(
+  workspaceRoot: string,
+  hostProfileId: string | null | undefined,
+  filter: WorkspaceFilter,
+): Promise<WorkspaceFilter> {
+  const settings = await loadSettings();
+  const key = workspaceFilterKey(workspaceRoot, hostProfileId);
+  const excludes = [
+    ...new Set(
+      (filter.excludes ?? [])
+        .map((p) => p.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "").trim())
+        .filter((p) => p && p !== "." && p !== "**"),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  const next: WorkspaceFilter = { excludes };
+  settings.workspaceFilters = {
+    ...(settings.workspaceFilters ?? {}),
+    [key]: next,
+  };
+  await saveSettings(settings);
+  return next;
 }
 
 export async function getUiTheme(): Promise<UiTheme> {

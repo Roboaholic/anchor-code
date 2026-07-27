@@ -1058,9 +1058,146 @@ body.files-split-resizing .monaco-editor {
   flex-shrink: 0;
 }
 
+.files-section__head-row--static {
+  padding-right: 4px;
+}
+
 .files-section__head-row > .files-section__head {
   flex: 1;
   min-width: 0;
+}
+
+.files-exclude-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.files-exclude-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 8px 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg-muted) 12%);
+  flex-shrink: 0;
+}
+
+.files-exclude-panel__hint {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.files-exclude-panel__hint code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.files-exclude-panel__add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.files-exclude-panel__input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+}
+
+.files-exclude-panel__input:focus {
+  outline: none;
+  border-color: var(--accent, var(--border-strong));
+}
+
+.files-exclude-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.files-exclude-list__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 1px 2px 1px 6px;
+  border-radius: 3px;
+}
+
+.files-exclude-list__row:hover {
+  background: var(--bg-hover);
+}
+
+.files-exclude-list__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* File tree context menu (fixed to viewport) */
+.file-tree-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 200px;
+  max-width: min(280px, 80vw);
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+}
+
+.file-tree-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-tree-menu__item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .files-section__head-actions {
@@ -1069,6 +1206,7 @@ body.files-split-resizing .monaco-editor {
   gap: 0;
   padding-right: 6px;
   flex-shrink: 0;
+  position: relative;
 }
 
 .files-section__bulk {

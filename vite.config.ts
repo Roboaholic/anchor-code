@@ -24,6 +24,8 @@ export default defineConfig({
                 "yaml",
                 "ssh2",
                 "cpu-features",
+                "@vscode/ripgrep",
+                /^@vscode\/ripgrep-/,
                 /^ssh2\//,
               ],
             },

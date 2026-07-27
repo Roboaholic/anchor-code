@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -15,6 +16,7 @@ import {
   useWorkspaceStore,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
+import { pathMatchesExclude } from "@/core/workspace/pathFilter";
 import { joinPath } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
@@ -89,6 +91,10 @@ export function FileTree() {
   const selectedPath = useWorkspaceStore((s) => s.selectedPath);
   const recent = useWorkspaceStore((s) => s.recent);
   const toggleDir = useWorkspaceStore((s) => s.toggleDir);
+  const workspaceExcludes = useWorkspaceStore((s) => s.excludes);
+  const addExclude = useWorkspaceStore((s) => s.addExclude);
+  const removeExclude = useWorkspaceStore((s) => s.removeExclude);
+  const addExcludePattern = useWorkspaceStore((s) => s.addExcludePattern);
 
   const [query, setQuery] = useState("");
   const [include, setInclude] = useState("");
@@ -96,6 +102,67 @@ export function FileTree() {
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [workspaceFilterOpen, setWorkspaceFilterOpen] = useState(false);
+  const [excludeDraft, setExcludeDraft] = useState("");
+  const [treeMenu, setTreeMenu] = useState<{
+    path: string;
+    name: string;
+    type: "file" | "dir";
+    x: number;
+    y: number;
+  } | null>(null);
+  const treeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!treeMenu) return;
+    const close = () => setTreeMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (treeMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    // Defer so the opening contextmenu event doesn't immediately close.
+    const t = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDown);
+      document.addEventListener("keydown", onKey);
+      window.addEventListener("blur", close);
+      window.addEventListener("resize", close);
+      window.addEventListener("scroll", close, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [treeMenu]);
+
+  const openTreeMenu = useCallback(
+    (
+      e: ReactMouseEvent,
+      node: { path: string; name: string; type: "file" | "dir" },
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pad = 4;
+      const menuW = 200;
+      const menuH = 40;
+      const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
+      const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
+      setTreeMenu({
+        path: node.path,
+        name: node.name,
+        type: node.type,
+        x: Math.max(pad, x),
+        y: Math.max(pad, y),
+      });
+    },
+    [],
+  );
   /** Collapse search results list; file tree stays visible either way. */
   const [resultsOpen, setResultsOpen] = useState(true);
   /** Collapsed file groups: only the filename head is shown (no match lines). */
@@ -132,6 +199,7 @@ export function FileTree() {
         exclude: string;
         useRegex: boolean;
         caseSensitive: boolean;
+        workspaceExcludes: string[];
       },
     ) => {
       const q = raw.trim();
@@ -156,17 +224,31 @@ export function FileTree() {
       setSearching(true);
       setSearchError(null);
       try {
+        // Pass workspace excludes as discrete list entries (not comma-joined)
+        // so multi-segment paths like packages/legacy are not mangled.
+        const excludeList = [
+          ...(opts.exclude.trim() ? [opts.exclude.trim()] : []),
+          ...opts.workspaceExcludes,
+        ];
         const result = await window.anchor.workspace.searchContent({
           root: workspaceRoot,
           query: q,
           maxResults: 200,
           include: opts.include,
-          exclude: opts.exclude,
+          exclude: excludeList.length > 0 ? excludeList : undefined,
           useRegex: opts.useRegex,
           caseSensitive: opts.caseSensitive,
         });
         if (gen !== searchGen.current) return;
-        setHits(result.hits);
+        // Belt-and-suspenders: drop hits under workspace excludes even if a
+        // search engine / old main process missed a pattern.
+        const hits =
+          opts.workspaceExcludes.length === 0
+            ? result.hits
+            : result.hits.filter(
+                (h) => !pathMatchesExclude(h.path, opts.workspaceExcludes),
+              );
+        setHits(hits);
         setTruncated(result.truncated);
         setSearchSource(result.source);
         // New result set: expand all file groups by default
@@ -191,10 +273,16 @@ export function FileTree() {
       setSearchError(null);
       return;
     }
-    // Longer debounce while typing; native git-grep/rg is cheap but avoids thrash.
+    // Short debounce: bundled rg is fast; cancel via searchGen on retype.
     const t = window.setTimeout(() => {
-      void runSearch(query, { include, exclude, useRegex, caseSensitive });
-    }, 400);
+      void runSearch(query, {
+        include,
+        exclude,
+        useRegex,
+        caseSensitive,
+        workspaceExcludes,
+      });
+    }, 180);
     return () => window.clearTimeout(t);
   }, [
     query,
@@ -202,6 +290,7 @@ export function FileTree() {
     exclude,
     useRegex,
     caseSensitive,
+    workspaceExcludes,
     workspaceRoot,
     runSearch,
   ]);
@@ -380,11 +469,96 @@ export function FileTree() {
             truncated ? "+" : ""
           }${searchSource ? ` · ${searchSource}` : ""}`;
 
+  const submitExcludeDraft = () => {
+    const p = excludeDraft.trim();
+    if (!p) return;
+    void addExcludePattern(p);
+    setExcludeDraft("");
+  };
+
   const explorer = (
     <section className="files-section files-section--tree">
-      <div className="files-section__head files-section__head--static">
-        <span className="files-section__label">EXPLORER</span>
+      <div className="files-section__head-row files-section__head-row--static">
+        <div className="files-section__head files-section__head--static">
+          <span className="files-section__label">EXPLORER</span>
+        </div>
+        <div className="files-section__head-actions">
+          <button
+            type="button"
+            className={`icon-btn files-section__bulk${
+              workspaceFilterOpen || workspaceExcludes.length > 0
+                ? " is-active"
+                : ""
+            }`}
+            title="Excluded paths for this workspace"
+            aria-label="Excluded paths"
+            aria-pressed={workspaceFilterOpen}
+            onClick={() => setWorkspaceFilterOpen((v) => !v)}
+          >
+            <Icon name="filter" />
+            {workspaceExcludes.length > 0 ? (
+              <span className="files-exclude-badge">
+                {workspaceExcludes.length}
+              </span>
+            ) : null}
+          </button>
+        </div>
       </div>
+      {workspaceFilterOpen ? (
+        <div className="files-exclude-panel">
+          <p className="files-exclude-panel__hint">
+            Hide folders/files from the tree and search. Right-click a row →
+            Exclude. Patterns are relative (e.g. <code>vendor</code>,{" "}
+            <code>**/*.log</code>).
+          </p>
+          <div className="files-exclude-panel__add">
+            <input
+              type="text"
+              className="files-exclude-panel__input"
+              value={excludeDraft}
+              onChange={(e) => setExcludeDraft(e.target.value)}
+              placeholder="path or glob…"
+              spellCheck={false}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitExcludeDraft();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn--small"
+              disabled={!excludeDraft.trim()}
+              onClick={submitExcludeDraft}
+            >
+              Add
+            </button>
+          </div>
+          {workspaceExcludes.length === 0 ? (
+            <p className="pane-hint">Nothing excluded.</p>
+          ) : (
+            <ul className="files-exclude-list">
+              {workspaceExcludes.map((p) => (
+                <li key={p} className="files-exclude-list__row">
+                  <span className="files-exclude-list__path" title={p}>
+                    {p}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Show again"
+                    aria-label={`Remove exclude ${p}`}
+                    onClick={() => void removeExclude(p)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
       <div className="files-tree-scroll">
         {rootEntries.length > 0 ? (
           <ul className="file-tree" role="tree">
@@ -396,6 +570,7 @@ export function FileTree() {
                 selectedPath={selectedPath}
                 onToggle={(p) => void toggleDir(p)}
                 onOpenFile={(p) => void openFileFromTree(p)}
+                onContextMenu={openTreeMenu}
               />
             ))}
           </ul>
@@ -412,6 +587,27 @@ export function FileTree() {
           <p className="pane-hint">Empty folder.</p>
         )}
       </div>
+      {treeMenu ? (
+        <div
+          ref={treeMenuRef}
+          className="file-tree-menu"
+          style={{ left: treeMenu.x, top: treeMenu.y }}
+          role="menu"
+          aria-label={`${treeMenu.name} actions`}
+        >
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              void addExclude(treeMenu.path);
+              setTreeMenu(null);
+            }}
+          >
+            Exclude from workspace view
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 
@@ -658,12 +854,17 @@ function TreeRow({
   selectedPath,
   onToggle,
   onOpenFile,
+  onContextMenu,
 }: {
   node: TreeNode;
   depth: number;
   selectedPath: string | null;
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onContextMenu: (
+    e: ReactMouseEvent,
+    node: { path: string; name: string; type: "file" | "dir" },
+  ) => void;
 }) {
   const selected = selectedPath === node.path;
   const pad = 8 + depth * 12;
@@ -676,6 +877,13 @@ function TreeRow({
           className={`file-tree__row${selected ? " is-selected" : ""}`}
           style={{ paddingLeft: pad }}
           onClick={() => onToggle(node.path)}
+          onContextMenu={(e) =>
+            onContextMenu(e, {
+              path: node.path,
+              name: node.name,
+              type: "dir",
+            })
+          }
         >
           <Icon
             name={node.expanded ? "chevron-down" : "chevron-right"}
@@ -702,6 +910,7 @@ function TreeRow({
                 selectedPath={selectedPath}
                 onToggle={onToggle}
                 onOpenFile={onOpenFile}
+                onContextMenu={onContextMenu}
               />
             ))}
           </ul>
@@ -717,6 +926,13 @@ function TreeRow({
         className={`file-tree__row${selected ? " is-selected" : ""}`}
         style={{ paddingLeft: pad + 14 }}
         onClick={() => onOpenFile(node.path)}
+        onContextMenu={(e) =>
+          onContextMenu(e, {
+            path: node.path,
+            name: node.name,
+            type: "file",
+          })
+        }
       >
         <Icon name={fileIcon(node.name)} className="file-tree__icon" />
         <span className="file-tree__name">{node.name}</span>

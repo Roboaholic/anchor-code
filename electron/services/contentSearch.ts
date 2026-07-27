@@ -1,6 +1,7 @@
 import type { HostSession } from "../host/types.js";
 import { hostJoin } from "../host/paths.js";
 import { findWorkspaceFiles } from "./fileIndex.js";
+import { resolveLocalRgPath } from "./rgPath.js";
 
 export interface ContentSearchHit {
   /** Path relative to workspace root, `/` separators. */
@@ -48,19 +49,51 @@ const DEFAULT_EXCLUDES = [
   "target",
 ];
 
-/** Cache which native engines work in a given workspace root. */
-const engineCache = new Map<
-  string,
-  { rg: boolean | null; git: boolean | null }
->();
+/**
+ * rg command resolution cache:
+ * - key `local` for LocalHost (absolute path or `"rg"`)
+ * - key `host:<id>` for WSL/SSH remote `rg`
+ * value `false` means unavailable
+ */
+const rgCmdCache = new Map<string, string | false>();
 
-function engineState(root: string) {
-  let s = engineCache.get(root);
-  if (!s) {
-    s = { rg: null, git: null };
-    engineCache.set(root, s);
+/** git-grep availability per workspace root. */
+const gitCache = new Map<string, boolean | null>();
+
+function rgCacheKey(host: HostSession): string {
+  return host.kind === "local" ? "local" : `host:${host.id}`;
+}
+
+/**
+ * Resolve the rg executable to spawn.
+ * Local: bundled @vscode/ripgrep first, then PATH name `rg`.
+ * Remote: remote PATH `rg` only (Windows binary cannot run in WSL/SSH Linux).
+ */
+function resolveRgCommand(host: HostSession): string | null {
+  const key = rgCacheKey(host);
+  const cached = rgCmdCache.get(key);
+  if (cached === false) return null;
+  if (typeof cached === "string") return cached;
+
+  if (host.kind === "local") {
+    const bundled = resolveLocalRgPath();
+    if (bundled) {
+      rgCmdCache.set(key, bundled);
+      return bundled;
+    }
+    // Let tryRipgrep attempt PATH once; failure marks cache false.
+    return "rg";
   }
-  return s;
+
+  return "rg";
+}
+
+function markRgUnavailable(host: HostSession): void {
+  rgCmdCache.set(rgCacheKey(host), false);
+}
+
+function markRgOk(host: HostSession, cmd: string): void {
+  rgCmdCache.set(rgCacheKey(host), cmd);
 }
 
 /**
@@ -69,13 +102,23 @@ function engineState(root: string) {
  */
 export function splitPatterns(raw: string | string[] | undefined): string[] {
   if (!raw) return [];
-  if (Array.isArray(raw)) {
-    return raw.map((p) => p.trim()).filter(Boolean);
+  const parts = Array.isArray(raw) ? raw : [raw];
+  const out: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== "string") continue;
+    // Workspace exclude paths may contain no separators; search UI fields
+    // may list several globs separated by comma/space.
+    if (/[,;\n]/.test(part) || (/\s/.test(part) && /[*?]/.test(part))) {
+      for (const p of part.split(/[,;\n]+|\s+/)) {
+        const t = p.trim();
+        if (t) out.push(t);
+      }
+    } else {
+      const t = part.trim();
+      if (t) out.push(t);
+    }
   }
-  return raw
-    .split(/[,;\n]+|\s+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  return out;
 }
 
 /** Convert a simple glob to a RegExp matching full relative paths. */
@@ -125,6 +168,11 @@ export function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`, "i");
 }
 
+/**
+ * Whether a relative path is allowed given include/exclude globs.
+ * Plain (non-glob) exclude patterns match the path itself and all descendants
+ * (so workspace "Exclude folder" also drops search hits under that folder).
+ */
 export function pathMatchesGlobs(
   relPath: string,
   include: string[],
@@ -132,14 +180,26 @@ export function pathMatchesGlobs(
 ): boolean {
   const path = relPath.replace(/\\/g, "/");
   for (const ex of exclude) {
-    if (globToRegExp(ex).test(path)) return false;
-    const base = ex.replace(/\\/g, "/").replace(/\*\*/g, "").replace(/\//g, "");
-    if (base && !ex.includes("*") && path.split("/").includes(base)) {
-      return false;
+    const e = ex.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!e) continue;
+    // Plain path: prefix match (file or directory tree).
+    if (!/[*?]/.test(e)) {
+      if (path === e || path.startsWith(`${e}/`)) return false;
+      // Single segment also matches any path component (node_modules, dist, …).
+      if (!e.includes("/") && path.split("/").includes(e)) return false;
+      continue;
     }
+    if (globToRegExp(e).test(path)) return false;
   }
   if (include.length === 0) return true;
-  return include.some((inc) => globToRegExp(inc).test(path));
+  return include.some((inc) => {
+    const i = inc.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!i) return false;
+    if (!/[*?]/.test(i)) {
+      return path === i || path.startsWith(`${i}/`);
+    }
+    return globToRegExp(i).test(path);
+  });
 }
 
 /**
@@ -150,7 +210,8 @@ export function parseGrepLine(line: string): ContentSearchHit | null {
   if (!raw) return null;
   const m = raw.match(/^(.*?):(\d+):(.*)$/);
   if (!m) return null;
-  const path = (m[1] ?? "").replace(/\\/g, "/");
+  // rg on Windows often emits `.\foo\bar.ts` or `./foo/bar.ts`
+  const path = (m[1] ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
   const lineNo = Number.parseInt(m[2] ?? "", 10);
   if (!path || !Number.isFinite(lineNo) || lineNo < 1) return null;
   return { path, line: lineNo, text: m[3] ?? "" };
@@ -177,6 +238,16 @@ export function parseGrepOutput(
   return { hits, truncated };
 }
 
+/** True once enough filtered hits exist in stdout (for process early-kill). */
+export function hasEnoughGrepHits(
+  stdout: string,
+  maxResults: number,
+  include: string[],
+  exclude: string[],
+): boolean {
+  return parseGrepOutput(stdout, maxResults, include, exclude).hits.length >= maxResults;
+}
+
 function normalizeOpts(opts?: ContentSearchOptions): {
   maxResults: number;
   caseSensitive: boolean;
@@ -200,7 +271,7 @@ function normalizeOpts(opts?: ContentSearchOptions): {
 
 /**
  * Search file contents under workspace root (Local / WSL / SSH).
- * Prefer ripgrep, then git grep (tracked files), then bounded parallel scan.
+ * Prefer bundled/system ripgrep, then git grep (tracked files), then bounded parallel scan.
  */
 export async function searchWorkspaceContent(
   host: HostSession,
@@ -224,25 +295,18 @@ export async function searchWorkspaceContent(
     }
   }
 
-  const engines = engineState(root);
+  // ripgrep first — bundled binary on local (VS Code–class speed).
+  const viaRg = await tryRipgrep(host, root, q, o);
+  if (viaRg) return viaRg;
 
-  // ripgrep first — typically 5–20× faster than git grep on large trees.
-  if (engines.rg !== false) {
-    const viaRg = await tryRipgrep(host, root, q, o);
-    if (viaRg) {
-      engines.rg = true;
-      return viaRg;
-    }
-    engines.rg = false;
-  }
-
-  if (engines.git !== false) {
+  const gitState = gitCache.get(root);
+  if (gitState !== false) {
     const viaGit = await tryGitGrep(host, root, q, o);
     if (viaGit) {
-      engines.git = true;
+      gitCache.set(root, true);
       return viaGit;
     }
-    engines.git = false;
+    gitCache.set(root, false);
   }
 
   return scanFiles(host, root, q, o);
@@ -256,7 +320,6 @@ async function tryGitGrep(
 ): Promise<ContentSearchResult | null> {
   try {
     // Fast path: tracked index only (no --untracked — that walks the whole tree).
-    // --exclude-standard still respects .gitignore for the few untracked we skip.
     const args = ["grep", "-n", "-I", "--full-name"];
     if (!o.useRegex) args.push("-F");
     if (o.useRegex) args.push("-E");
@@ -276,24 +339,40 @@ async function tryGitGrep(
       args.push(toGitPathspec(ex, true));
     }
 
-    const r = await host.run(root, "git", args, { timeoutMs: 20_000 });
-    if (r.code !== 0 && r.code !== 1) return null;
+    const r = await host.run(root, "git", args, {
+      timeoutMs: 20_000,
+      earlyExit: (stdout) =>
+        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+    });
+    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) return null;
     const { hits, truncated } = parseGrepOutput(
       r.stdout,
       o.maxResults,
       o.include,
       o.exclude,
     );
-    return { root, query, hits, truncated, source: "git-grep" };
+    return {
+      root,
+      query,
+      hits,
+      truncated: truncated || Boolean(r.earlyExit),
+      source: "git-grep",
+    };
   } catch {
     return null;
   }
 }
 
 function toGitPathspec(pattern: string, exclude: boolean): string {
-  let p = pattern.replace(/\\/g, "/");
-  if (!p.includes("/") && !p.includes("*")) {
-    p = `**/${p}/**`;
+  let p = pattern
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!p.includes("*") && !p.includes("?")) {
+    // Plain path: tree under this prefix (post-filter also enforces).
+    if (!p.includes("/")) p = `**/${p}/**`;
+    else p = `${p}/**`;
   } else if (p.startsWith("*.") || (p.startsWith("*") && !p.startsWith("**"))) {
     p = `**/${p}`;
   }
@@ -306,33 +385,38 @@ async function tryRipgrep(
   query: string,
   o: ReturnType<typeof normalizeOpts>,
 ): Promise<ContentSearchResult | null> {
+  const rgCmd = resolveRgCommand(host);
+  if (!rgCmd) return null;
+
   try {
+    // NOTE: do NOT pass `-I` — in ripgrep that means --no-filename (not
+    // "ignore binary" like git-grep). rg skips binary by default; force paths
+    // with -H so parseGrepLine always sees path:line:text.
     const args = [
       "-n",
-      "-I",
+      "-H",
       "--no-heading",
       "--color",
       "never",
-      // Skip hidden by default (faster); .git already excluded via glob
       "--glob",
       "!.git/**",
       "--max-filesize",
       "512K",
+      // Per-file match cap (keeps noisy files small)
       "--max-count",
       "8",
-      // Stop after enough matches overall (rg 13+)
-      "-m",
-      String(Math.min(o.maxResults, 200)),
+      "--max-columns",
+      "300",
+      "--max-columns-preview",
     ];
-    // Some rg builds use --max-count for per-file only; also pass head-limit if available
-    // --max-columns avoids huge lines
-    args.push("--max-columns", "300", "--max-columns-preview");
 
     if (!o.useRegex) args.push("-F");
     if (!o.caseSensitive) args.push("-i");
 
     for (const ex of o.exclude) {
-      args.push("--glob", `!${normalizeRgGlob(ex)}`);
+      for (const g of rgExcludeGlobs(ex)) {
+        args.push("--glob", `!${g}`);
+      }
     }
     if (o.include.length > 0) {
       for (const inc of o.include) {
@@ -341,20 +425,42 @@ async function tryRipgrep(
     }
 
     args.push("--", query, ".");
-    const r = await host.run(root, "rg", args, { timeoutMs: 15_000 });
+    const r = await host.run(root, rgCmd, args, {
+      timeoutMs: 15_000,
+      earlyExit: (stdout) =>
+        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+    });
     // 0 match, 1 no match, 2 error — also accept if stderr only complains about unknown flags
     if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
-      return tryRipgrepMinimal(host, root, query, o);
+      return tryRipgrepMinimal(host, root, query, o, rgCmd);
     }
-    if (r.code !== 0 && r.code !== 1) return null;
+    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
+      // Missing binary / hard failure
+      if (
+        r.code === 127 ||
+        /not found|ENOENT|is not recognized/i.test(r.stderr)
+      ) {
+        markRgUnavailable(host);
+      }
+      return null;
+    }
+    markRgOk(host, rgCmd);
     const { hits, truncated } = parseGrepOutput(
       r.stdout,
       o.maxResults,
       o.include,
       o.exclude,
     );
-    return { root, query, hits, truncated, source: "rg" };
+    return {
+      root,
+      query,
+      hits,
+      truncated: truncated || Boolean(r.earlyExit),
+      source: "rg",
+    };
   } catch {
+    // spawn ENOENT etc.
+    markRgUnavailable(host);
     return null;
   }
 }
@@ -365,11 +471,12 @@ async function tryRipgrepMinimal(
   root: string,
   query: string,
   o: ReturnType<typeof normalizeOpts>,
+  rgCmd: string,
 ): Promise<ContentSearchResult | null> {
   try {
     const args = [
       "-n",
-      "-I",
+      "-H",
       "--no-heading",
       "--color",
       "never",
@@ -381,7 +488,9 @@ async function tryRipgrepMinimal(
     if (!o.useRegex) args.push("-F");
     if (!o.caseSensitive) args.push("-i");
     for (const ex of o.exclude) {
-      args.push("--glob", `!${normalizeRgGlob(ex)}`);
+      for (const g of rgExcludeGlobs(ex)) {
+        args.push("--glob", `!${g}`);
+      }
     }
     if (o.include.length > 0) {
       for (const inc of o.include) {
@@ -389,29 +498,65 @@ async function tryRipgrepMinimal(
       }
     }
     args.push("--", query, ".");
-    const r = await host.run(root, "rg", args, { timeoutMs: 15_000 });
-    if (r.code !== 0 && r.code !== 1) return null;
+    const r = await host.run(root, rgCmd, args, {
+      timeoutMs: 15_000,
+      earlyExit: (stdout) =>
+        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+    });
+    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
+      markRgUnavailable(host);
+      return null;
+    }
+    markRgOk(host, rgCmd);
     const { hits, truncated } = parseGrepOutput(
       r.stdout,
       o.maxResults,
       o.include,
       o.exclude,
     );
-    return { root, query, hits, truncated, source: "rg" };
+    return {
+      root,
+      query,
+      hits,
+      truncated: truncated || Boolean(r.earlyExit),
+      source: "rg",
+    };
   } catch {
+    markRgUnavailable(host);
     return null;
   }
 }
 
 function normalizeRgGlob(pattern: string): string {
-  let p = pattern.replace(/\\/g, "/");
-  if (!p.includes("/") && !p.includes("*")) {
-    return `**/${p}/**`;
+  let p = pattern
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!p.includes("*") && !p.includes("?")) {
+    // Single name → anywhere; multi-segment plain path → that tree.
+    if (!p.includes("/")) return `**/${p}/**`;
+    return `${p}/**`;
   }
   if (p.startsWith("*.") || (p.startsWith("*") && !p.startsWith("**"))) {
     return `**/${p}`;
   }
   return p;
+}
+
+/** Emit one or more rg --glob values (without leading !). */
+function rgExcludeGlobs(pattern: string): string[] {
+  const p = pattern
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!p) return [];
+  if (!/[*?]/.test(p)) {
+    if (!p.includes("/")) return [`**/${p}/**`, `**/${p}`];
+    return [p, `${p}/**`];
+  }
+  return [normalizeRgGlob(p)];
 }
 
 async function scanFiles(

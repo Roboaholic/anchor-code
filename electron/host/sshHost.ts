@@ -5,6 +5,7 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
@@ -155,7 +156,7 @@ export class SshHostSession implements HostSession {
     cwd: string,
     command: string,
     args: string[],
-    opts?: { timeoutMs?: number; stdin?: string },
+    opts?: RunOptions,
   ): Promise<RunResult> {
     const client = await this.ensureConnected();
     const safeCwd = hostNormalize("ssh", cwd || "/");
@@ -166,7 +167,23 @@ export class SshHostSession implements HostSession {
     const timeoutMs = opts?.timeoutMs ?? 45_000;
     return new Promise((resolve, reject) => {
       let settled = false;
+      let early = false;
       let stream: ClientChannel | null = null;
+      let stdout = "";
+      let stderr = "";
+
+      const finish = (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          stdout,
+          stderr,
+          code,
+          earlyExit: early || undefined,
+        });
+      };
+
       const timer =
         timeoutMs > 0
           ? setTimeout(() => {
@@ -200,22 +217,29 @@ export class SshHostSession implements HostSession {
           return;
         }
         stream = s;
-        let stdout = "";
-        let stderr = "";
+        const requestEarlyExit = () => {
+          if (settled || early) return;
+          early = true;
+          try {
+            s.close();
+          } catch {
+            // ignore
+          }
+          finish(0);
+        };
         s.on("data", (chunk: Buffer) => {
+          if (settled) return;
           stdout += chunk.toString("utf8");
+          if (opts?.earlyExit?.(stdout, stderr)) {
+            requestEarlyExit();
+          }
         }).stderr.on("data", (chunk: Buffer) => {
+          if (settled) return;
           stderr += chunk.toString("utf8");
         });
         s.on("close", (code: number | null) => {
           if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve({
-            stdout,
-            stderr,
-            code: code ?? 1,
-          });
+          finish(code ?? 1);
         });
         s.on("error", (e: Error) => {
           if (settled) return;

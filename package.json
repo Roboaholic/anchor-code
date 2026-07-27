@@ -1,6 +1,6 @@
 {
   "name": "anchor-code",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A human-in-the-loop reader for agent coding. Agent it. Review it. Feed it back.",
   "license": "Apache-2.0",
   "private": true,
@@ -29,6 +29,7 @@
     "@fontsource/eb-garamond": "^5.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@vscode/codicons": "^0.0.45",
+    "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "monaco-editor": "^0.55.1",
@@ -77,7 +78,9 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "node_modules/@vscode/ripgrep/**",
+      "node_modules/@vscode/ripgrep-*/**"
     ],
     "npmRebuild": false,
     "nodeGypRebuild": false,

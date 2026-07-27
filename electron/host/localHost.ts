@@ -6,6 +6,7 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
@@ -47,7 +48,7 @@ export class LocalHostSession implements HostSession {
     cwd: string,
     command: string,
     args: string[],
-    opts?: { timeoutMs?: number; stdin?: string },
+    opts?: RunOptions,
   ): Promise<RunResult> {
     const timeoutMs = opts?.timeoutMs ?? 45_000;
     return new Promise((resolve, reject) => {
@@ -55,11 +56,38 @@ export class LocalHostSession implements HostSession {
         cwd,
         shell: false,
         env: process.env,
+        windowsHide: true,
       });
       let stdout = "";
       let stderr = "";
       let settled = false;
+      let early = false;
       let timer: NodeJS.Timeout | undefined;
+
+      const finish = (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          stdout,
+          stderr,
+          code,
+          earlyExit: early || undefined,
+        });
+      };
+
+      const requestEarlyExit = () => {
+        if (settled || early) return;
+        early = true;
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
+        // Resolve immediately so callers do not wait for slow process teardown.
+        finish(0);
+      };
+
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           if (settled) return;
@@ -84,9 +112,14 @@ export class LocalHostSession implements HostSession {
         child.stdin?.end(opts.stdin);
       }
       child.stdout?.on("data", (chunk: Buffer) => {
+        if (settled) return;
         stdout += chunk.toString("utf8");
+        if (opts?.earlyExit?.(stdout, stderr)) {
+          requestEarlyExit();
+        }
       });
       child.stderr?.on("data", (chunk: Buffer) => {
+        if (settled) return;
         stderr += chunk.toString("utf8");
       });
       child.on("error", (err) => {
@@ -103,13 +136,7 @@ export class LocalHostSession implements HostSession {
       });
       child.on("close", (code) => {
         if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({
-          stdout,
-          stderr,
-          code: code ?? 1,
-        });
+        finish(code ?? 1);
       });
     });
   }

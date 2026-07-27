@@ -55,17 +55,20 @@ import {
   getHistoryRecentCompares,
   getHostProfile,
   getUiTheme,
+  getWorkspaceFilter,
   loadSettings,
   normalizeTheme,
   pushHistoryRecentCompare,
   pushRecentWorkspace,
   removeHistoryRecentCompare,
   setUiTheme,
+  setWorkspaceFilter,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
   type UiTheme,
+  type WorkspaceFilter,
 } from "../settings.js";
 
 /** Max bytes for readText (1 MiB). */
@@ -304,6 +307,45 @@ export function registerIpc(opts: {
         const next = await setUiTheme(normalizeTheme(theme));
         applyWindowChromeTheme(getMainWindow(), next);
         return next;
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:getWorkspaceFilter",
+    async (
+      _evt,
+      args: { workspaceRoot: string; hostProfileId?: string | null },
+    ): Promise<WorkspaceFilter> => {
+      try {
+        return await getWorkspaceFilter(
+          args.workspaceRoot,
+          args.hostProfileId,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:setWorkspaceFilter",
+    async (
+      _evt,
+      args: {
+        workspaceRoot: string;
+        hostProfileId?: string | null;
+        excludes: string[];
+      },
+    ): Promise<WorkspaceFilter> => {
+      try {
+        return await setWorkspaceFilter(
+          args.workspaceRoot,
+          args.hostProfileId,
+          { excludes: args.excludes ?? [] },
+        );
       } catch (err) {
         rethrowIpc(err);
       }

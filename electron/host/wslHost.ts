@@ -7,6 +7,7 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
@@ -170,7 +171,7 @@ export class WslHostSession implements HostSession {
     cwd: string,
     command: string,
     args: string[],
-    opts?: { timeoutMs?: number; stdin?: string },
+    opts?: RunOptions,
   ): Promise<RunResult> {
     const wsl = this.resolveWslExe();
     const safeCwd = hostNormalize("wsl", cwd || "/");
@@ -184,7 +185,7 @@ export class WslHostSession implements HostSession {
       "-lc",
       cmdline,
     ];
-    return spawnCapture(wsl, wslArgs, opts?.timeoutMs ?? 45_000, opts?.stdin);
+    return spawnCapture(wsl, wslArgs, opts?.timeoutMs ?? 45_000, opts?.stdin, opts?.earlyExit);
   }
 
   async readFile(filePath: string): Promise<string> {
@@ -452,6 +453,7 @@ function spawnCapture(
   args: string[],
   timeoutMs = 0,
   stdin?: string,
+  earlyExit?: (stdout: string, stderr: string) => boolean,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -462,7 +464,32 @@ function spawnCapture(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let early = false;
     let timer: NodeJS.Timeout | undefined;
+
+    const finish = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        stdout,
+        stderr,
+        code,
+        earlyExit: early || undefined,
+      });
+    };
+
+    const requestEarlyExit = () => {
+      if (settled || early) return;
+      early = true;
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+      finish(0);
+    };
+
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
         if (settled) return;
@@ -489,9 +516,14 @@ function spawnCapture(
     }
 
     child.stdout?.on("data", (chunk: Buffer) => {
+      if (settled) return;
       stdout += chunk.toString("utf8");
+      if (earlyExit?.(stdout, stderr)) {
+        requestEarlyExit();
+      }
     });
     child.stderr?.on("data", (chunk: Buffer) => {
+      if (settled) return;
       stderr += chunk.toString("utf8");
     });
     child.on("error", (err) => {
@@ -504,13 +536,7 @@ function spawnCapture(
     });
     child.on("close", (code) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr,
-        code: code ?? 1,
-      });
+      finish(code ?? 1);
     });
   });
 }

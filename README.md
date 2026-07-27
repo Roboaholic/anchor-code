@@ -1,75 +1,59 @@
 # Anchor Code
 
-**Human-in-the-loop workbench for AI coding** — audit model output carefully, leave selection annotations, and hand a session YAML path back to the AI CLI in the terminal.
+**Agent it. Review it. Feed it back.**
 
-Not a general-purpose IDE. Not an agent orchestration product. Read / dual-commit diff / annotations / multi-tab terminal are means on that loop.
+A **human-in-the-loop** reader for agent coding.
 
-## Status
+Use your AI coding CLI (Claude Code, Codex, and similar) in the terminal. Use Anchor Code to read the result carefully, review the diff, leave selection comments, and hand structured feedback back to the agent.
 
-**M4 (Slice 1–5) on Local host**
+This is not a general-purpose IDE and not an agent orchestrator. Reading, dual-commit compare, annotations, and a multi-tab terminal exist to keep **you** in the loop.
 
-| Slice | Capability |
-|-------|------------|
-| 1 | Electron shell + host/IPC skeleton |
-| 2 | Open workspace, file tree, Monaco + MD read-only |
-| 3 | History: discover roots, log, dual-select Compare, DiffEditor |
-| 4 | Annotations: session YAML, decorations, Comments pane, copy path |
-| 5 | Multi-tab terminal (`node-pty` + xterm), cwd = workspace |
+## What you can do
 
-Next: Slice 6 SSH/WSL, Slice 7 polish (anchor UX, etc.).
+| Area | Purpose |
+|------|---------|
+| **Files** | Open a workspace; browse and read code and Markdown |
+| **History** | Pick two commits (or a commit vs worktree) and Compare |
+| **Document** | Read-only code viewer, Markdown, and side-by-side diff |
+| **Comments** | Select text, add annotations, store them in session YAML |
+| **Terminal** | Multi-tab shell with cwd set to the workspace — run your agent CLI here |
 
-Product docs: [`docs/anchor-code/`](docs/anchor-code/).
+Feedback is meant to go back to the agent: copy the session YAML path from Comments and paste it into the terminal for the CLI to read.
+
+## Typical loop
+
+1. **Open a workspace** — files, code, and docs in one place.
+2. **Review the change** — in History, select commits and Compare (or compare with the worktree).
+3. **Leave feedback** — open a file or diff, select text, add a comment (or use ⌘/Ctrl+M).
+4. **Close the loop** — in Comments, **Copy path** (session YAML absolute path), paste it into the agent terminal, and ask the agent to apply the feedback.
+
+Repeat until you are satisfied.
 
 ## Requirements
 
 - Node.js 20+
-- macOS or Linux for Local host
+- macOS or Linux for Local host (Windows WSL path is a later host mode)
 - System `git` on PATH
 - npm
-- Native build tools for `node-pty` (Xcode CLT on macOS)
+- Native build tools for `node-pty` (e.g. Xcode CLT on macOS)
 
-## Develop
+## Install and run
 
 ```bash
 npm install
-npm run rebuild:native   # if terminal fails to start
-npm test                 # unit tests (vitest)
+npm run rebuild:native   # if the terminal fails to start
 npm run dev
 ```
 
-### Tests
+Optional checks:
 
 ```bash
-npm test                 # all (unit + integration)
-npm run test:unit        # src/core pure logic
-npm run test:integration # electron host / history / annotations (needs git)
-npm run test:watch
+npm test                 # unit + integration
+npm run test:unit
+npm run test:integration # needs git
 ```
 
-- **Unit** (`src/core/**`): history dual-select, diff name-status, anchor relocation, session YAML schema, path helpers, Monaco setup contract.
-- **Integration** (`electron/**`): LocalHost fs/run, history against a temp git repo, annotations YAML write/read/copy path.
-
-### HITL smoke path
-
-1. **Open Workspace** on a git repo (this project works).
-2. **HISTORY** — select two commits → **Compare** (or one → **Compare with worktree**).
-3. Open a source file, select text → **Add comment** (or ⌘/Ctrl+M) → save.
-4. **COMMENTS** → **Copy path** (session YAML absolute path).
-5. Paste the path into the **TERMINAL** for your AI CLI.
-
-## Architecture (short)
-
-| Module id | Role |
-|-----------|------|
-| `host` | Local/SSH run · fs · pty facade |
-| `workspace` | Open folder, tree, read text |
-| `history` | Multi-root discover, log, dual compare (never `git.*` IPC) |
-| `annotations` | Session YAML, decorations, copy path |
-| `document` | Center open items, read-only file / diff |
-| `terminal` | Multi-tab PTY, cwd = workspace |
-| `shell` | Layout + use-case orchestration |
-
-Renderer never spawns PTY/SSH/`child_process` — only `window.anchor.*` via preload.
+Deeper product design notes live under [`docs/anchor-code/`](docs/anchor-code/).
 
 ## License
 

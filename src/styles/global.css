@@ -1147,6 +1147,7 @@ button.search-field:hover {
 
 .welcome__title,
 .welcome__lead,
+.welcome__slogan,
 .welcome__steps {
   width: 100%;
   margin-left: 0;
@@ -1170,12 +1171,21 @@ button.search-field:hover {
   padding-bottom: 0 !important;
 }
 
+.welcome__slogan,
+.welcome__lead {
+  font-size: 18px;
+  line-height: 1.45;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.welcome__slogan {
+  margin: 0 0 10px;
+}
+
 .welcome__lead {
   margin: 0 0 36px;
-  font-size: 17px;
-  line-height: 1.55;
-  font-weight: 400;
-  color: var(--text-secondary);
 }
 
 .welcome__steps {
@@ -1215,7 +1225,7 @@ button.search-field:hover {
   font-family: "EB Garamond", "Palatino Linotype", "Book Antiqua", Palatino,
     "Times New Roman", Georgia, "Noto Serif", serif;
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 700;
   font-variant-numeric: oldstyle-nums;
   line-height: 1.5;
   color: var(--text-muted);

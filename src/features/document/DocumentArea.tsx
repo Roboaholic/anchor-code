@@ -194,9 +194,9 @@ function WelcomeView() {
     <article className="welcome">
       <div className="welcome__inner">
         <h1 className="welcome__title">Anchor Code</h1>
+        <p className="welcome__slogan">Agent it. Review it. Feed it back.</p>
         <p className="welcome__lead">
-          Audit AI coding output and send structured feedback back to your AI
-          CLI.
+          A human-in-the-loop reader for agent coding.
         </p>
 
         <ol className="welcome__steps">
@@ -205,7 +205,7 @@ function WelcomeView() {
               1
             </span>
             <span className="welcome__step-body">
-              Open a workspace and browse code.
+              Open a workspace — files, code, and docs in one place.
             </span>
           </li>
           <li>
@@ -213,7 +213,7 @@ function WelcomeView() {
               2
             </span>
             <span className="welcome__step-body">
-              History: pick commits and Compare.
+              Review the change — History: pick commits and Compare.
             </span>
           </li>
           <li>
@@ -221,7 +221,7 @@ function WelcomeView() {
               3
             </span>
             <span className="welcome__step-body">
-              Select text and add comments.
+              Leave feedback — select text and add comments.
             </span>
           </li>
           <li>
@@ -229,7 +229,7 @@ function WelcomeView() {
               4
             </span>
             <span className="welcome__step-body">
-              Send comments to the agent terminal.
+              Close the loop — send the session path to your agent terminal.
             </span>
           </li>
         </ol>

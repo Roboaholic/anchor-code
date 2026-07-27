@@ -1,4 +1,11 @@
-import { useCallback, useState, type DragEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 import { CodeViewer } from "./CodeViewer";
@@ -8,17 +15,76 @@ import { useDocumentStore, type OpenItem } from "./documentStore";
 
 const TAB_DND_MIME = "application/x-anchor-tab-index";
 
+type TabMenuState = {
+  id: string;
+  index: number;
+  x: number;
+  y: number;
+};
+
 export function DocumentArea() {
   const openItems = useDocumentStore((s) => s.openItems);
   const activeId = useDocumentStore((s) => s.activeId);
   const setActive = useDocumentStore((s) => s.setActive);
   const closeItem = useDocumentStore((s) => s.closeItem);
+  const closeOtherItems = useDocumentStore((s) => s.closeOtherItems);
+  const closeItemsToTheRight = useDocumentStore((s) => s.closeItemsToTheRight);
+  const closeAllItems = useDocumentStore((s) => s.closeAllItems);
   const reorderTabs = useDocumentStore((s) => s.reorderTabs);
   const setMdViewMode = useDocumentStore((s) => s.setMdViewMode);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null);
+  const tabMenuRef = useRef<HTMLDivElement | null>(null);
 
   const active = openItems.find((i) => i.id === activeId) ?? openItems[0] ?? null;
+
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (tabMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    // Defer so the opening contextmenu event doesn't immediately close.
+    const t = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDown);
+      document.addEventListener("keydown", onKey);
+      window.addEventListener("blur", close);
+      window.addEventListener("resize", close);
+      window.addEventListener("scroll", close, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [tabMenu]);
+
+  const openTabMenu = useCallback(
+    (e: ReactMouseEvent, id: string, index: number) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pad = 4;
+      const menuW = 200;
+      const menuH = 140;
+      const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
+      const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
+      setTabMenu({
+        id,
+        index,
+        x: Math.max(pad, x),
+        y: Math.max(pad, y),
+      });
+    },
+    [],
+  );
 
   const onDragStart = useCallback(
     (index: number, e: DragEvent<HTMLDivElement>) => {
@@ -60,6 +126,14 @@ export function DocumentArea() {
     setDragOver(null);
   }, []);
 
+  const canCloseOthers = openItems.length > 1;
+  const canCloseToRight =
+    tabMenu !== null && tabMenu.index < openItems.length - 1;
+  // Always allow "Close All" when there is anything beyond a lone Welcome.
+  const canCloseAll =
+    openItems.length > 1 ||
+    (openItems.length === 1 && openItems[0]?.kind !== "welcome");
+
   return (
     <section className="document-area">
       <div className="tabs" role="tablist" aria-label="Open items">
@@ -80,6 +154,7 @@ export function DocumentArea() {
               onDrop={(e) => onDrop(index, e)}
               onDragEnd={onDragEnd}
               onClick={() => setActive(item.id)}
+              onContextMenu={(e) => openTabMenu(e, item.id, index)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
@@ -110,6 +185,65 @@ export function DocumentArea() {
           );
         })}
       </div>
+
+      {tabMenu ? (
+        <div
+          ref={tabMenuRef}
+          className="file-tree-menu tab-context-menu"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          role="menu"
+          aria-label="Tab actions"
+        >
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              closeItem(tabMenu.id);
+              setTabMenu(null);
+            }}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            disabled={!canCloseOthers}
+            onClick={() => {
+              closeOtherItems(tabMenu.id);
+              setTabMenu(null);
+            }}
+          >
+            Close Others
+          </button>
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            disabled={!canCloseToRight}
+            onClick={() => {
+              closeItemsToTheRight(tabMenu.id);
+              setTabMenu(null);
+            }}
+          >
+            Close to the Right
+          </button>
+          <div className="tab-context-menu__sep" role="separator" />
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            disabled={!canCloseAll}
+            onClick={() => {
+              closeAllItems();
+              setTabMenu(null);
+            }}
+          >
+            Close All
+          </button>
+        </div>
+      ) : null}
 
       <div className="document-area__content document-area__content--fill">
         {/*

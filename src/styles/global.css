@@ -1200,6 +1200,18 @@ body.files-split-resizing .monaco-editor {
   color: var(--text);
 }
 
+.file-tree-menu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.tab-context-menu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 .files-section__head-actions {
   display: flex;
   align-items: center;

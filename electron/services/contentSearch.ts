@@ -1,7 +1,19 @@
-import type { HostSession } from "../host/types.js";
+import type { HostSession, RunResult } from "../host/types.js";
+import { LocalHostSession } from "../host/localHost.js";
+import { WslHostSession } from "../host/wslHost.js";
 import { hostJoin } from "../host/paths.js";
 import { findWorkspaceFiles } from "./fileIndex.js";
-import { resolveLocalRgPath } from "./rgPath.js";
+import {
+  resolveLocalRgPath,
+  resolveWslLinuxRgPath,
+} from "./rgPath.js";
+
+/** Shared LocalHost only for spawning Windows tools (e.g. rg over \\wsl$\). */
+let windowsRunner: LocalHostSession | null = null;
+function getWindowsRunner(): LocalHostSession {
+  if (!windowsRunner) windowsRunner = new LocalHostSession("content-search-win");
+  return windowsRunner;
+}
 
 export interface ContentSearchHit {
   /** Path relative to workspace root, `/` separators. */
@@ -34,7 +46,11 @@ const SCAN_MAX_FILES = 2_000;
 const SCAN_MAX_FILE_BYTES = 256 * 1024;
 const SCAN_CONCURRENCY = 24;
 
-/** Built-in excludes applied in post-filter / rg globs (not as git pathspecs). */
+/**
+ * Built-in excludes applied in post-filter / rg globs (not as git pathspecs).
+ * Includes common monorepo / CI / build noise — a 48GB tree with ci_analysis +
+ * out alone can make rare-term searches tens of seconds over WSL 9P.
+ */
 const DEFAULT_EXCLUDES = [
   "node_modules",
   ".git",
@@ -47,6 +63,31 @@ const DEFAULT_EXCLUDES = [
   ".venv",
   "venv",
   "target",
+  // Embedded / multi-repo workspace noise
+  "ci_analysis",
+  ".ci_analysis",
+  ".ci_analysis2",
+  "prebuilt",
+  "tmp_test_outputs",
+  "test_results",
+  ".repo",
+  ".cache",
+  ".cargo",
+  ".cargo_home",
+  ".omp",
+  ".anchor-code",
+  ".anch-review",
+  ".claude",
+  ".codex",
+  "Pods",
+  "DerivedData",
+];
+
+/** Extra rg globs always applied (binary / object noise). */
+const DEFAULT_RG_GLOBS = [
+  "!**/*.{o,a,so,dylib,dll,lib,exe,bin,elf,obj,pdb,pyc,pyo,class,jar,wasm}",
+  "!**/*.{png,jpg,jpeg,gif,webp,ico,bmp,pdf,zip,gz,7z,rar,mp3,mp4,webm,woff,woff2,ttf,otf}",
+  "!**/*.{lock,min.js,min.css,map}",
 ];
 
 /**
@@ -248,6 +289,35 @@ export function hasEnoughGrepHits(
   return parseGrepOutput(stdout, maxResults, include, exclude).hits.length >= maxResults;
 }
 
+/**
+ * Incremental hit counter for streaming stdout — avoids re-parsing the whole
+ * buffer on every chunk (O(n) total instead of O(n²)).
+ */
+export function createGrepHitCounter(
+  maxResults: number,
+  include: string[],
+  exclude: string[],
+): (stdout: string) => boolean {
+  let processedLen = 0;
+  let hits = 0;
+  let carry = "";
+  return (stdout: string) => {
+    if (hits >= maxResults) return true;
+    const chunk = carry + stdout.slice(processedLen);
+    processedLen = stdout.length;
+    const lines = chunk.split("\n");
+    carry = lines.pop() ?? "";
+    for (const line of lines) {
+      const hit = parseGrepLine(line);
+      if (!hit) continue;
+      if (!pathMatchesGlobs(hit.path, include, exclude)) continue;
+      hits += 1;
+      if (hits >= maxResults) return true;
+    }
+    return false;
+  };
+}
+
 function normalizeOpts(opts?: ContentSearchOptions): {
   maxResults: number;
   caseSensitive: boolean;
@@ -295,7 +365,7 @@ export async function searchWorkspaceContent(
     }
   }
 
-  // ripgrep first — bundled binary on local (VS Code–class speed).
+  // ripgrep first — bundled binary on local / Windows-rg over WSL UNC.
   const viaRg = await tryRipgrep(host, root, q, o);
   if (viaRg) return viaRg;
 
@@ -341,8 +411,7 @@ async function tryGitGrep(
 
     const r = await host.run(root, "git", args, {
       timeoutMs: 20_000,
-      earlyExit: (stdout) =>
-        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+      earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
     });
     if (r.code !== 0 && r.code !== 1 && !r.earlyExit) return null;
     const { hits, truncated } = parseGrepOutput(
@@ -379,56 +448,221 @@ function toGitPathspec(pattern: string, exclude: boolean): string {
   return exclude ? `:(exclude,glob)${p}` : `:(glob)${p}`;
 }
 
+/** Build standard rg argv (without the executable). */
+function buildRgArgs(
+  query: string,
+  o: ReturnType<typeof normalizeOpts>,
+  minimal = false,
+): string[] {
+  // NOTE: do NOT pass `-I` — in ripgrep that means --no-filename (not
+  // "ignore binary" like git-grep). rg skips binary by default; force paths
+  // with -H so parseGrepLine always sees path:line:text.
+  const args = [
+    "-n",
+    "-H",
+    "--no-heading",
+    "--color",
+    "never",
+    "--glob",
+    "!.git/**",
+    "--max-count",
+    "8",
+  ];
+  if (!minimal) {
+    args.push(
+      "--max-filesize",
+      "512K",
+      "--max-columns",
+      "300",
+      "--max-columns-preview",
+    );
+    for (const g of DEFAULT_RG_GLOBS) {
+      args.push("--glob", g);
+    }
+  }
+  if (!o.useRegex) args.push("-F");
+  if (!o.caseSensitive) args.push("-i");
+  for (const ex of o.exclude) {
+    for (const g of rgExcludeGlobs(ex)) {
+      args.push("--glob", `!${g}`);
+    }
+  }
+  if (o.include.length > 0) {
+    for (const inc of o.include) {
+      args.push("--glob", normalizeRgGlob(inc));
+    }
+  }
+  args.push("--", query, ".");
+  return args;
+}
+
+function resultFromRgStdout(
+  root: string,
+  query: string,
+  r: RunResult,
+  o: ReturnType<typeof normalizeOpts>,
+): ContentSearchResult {
+  const { hits, truncated } = parseGrepOutput(
+    r.stdout,
+    o.maxResults,
+    o.include,
+    o.exclude,
+  );
+  return {
+    root,
+    query,
+    hits,
+    truncated: truncated || Boolean(r.earlyExit),
+    source: "rg",
+  };
+}
+
+/**
+ * WSL: run a *Linux* rg binary *inside* the distro (native FS).
+ * Prefer bundled linux-x64 rg exposed via /mnt/c/…; fall back to PATH `rg`.
+ * This is dramatically faster than Windows rg over \\wsl$\ (9P).
+ */
+async function tryRipgrepWslNative(
+  host: HostSession,
+  root: string,
+  query: string,
+  o: ReturnType<typeof normalizeOpts>,
+): Promise<ContentSearchResult | null> {
+  if (host.kind !== "wsl") return null;
+
+  const cacheKey = `wsl-native:${host.id}`;
+  if (rgCmdCache.get(cacheKey) === false) return null;
+
+  const bundled = process.platform === "win32" ? resolveWslLinuxRgPath() : null;
+  // Bundled path first; then PATH inside the distro.
+  const candidates = bundled ? [bundled, "rg"] : ["rg"];
+
+  for (const rgCmd of candidates) {
+    try {
+      // Ensure execute bit when invoking a /mnt/c binary (drvfs often drops +x).
+      if (rgCmd.startsWith("/mnt/")) {
+        await host.run(root, "chmod", ["+x", rgCmd], { timeoutMs: 5_000 }).catch(
+          () => null,
+        );
+      }
+      const r = await host.run(root, rgCmd, buildRgArgs(query, o), {
+        timeoutMs: 45_000,
+        earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
+      });
+      if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
+        const r2 = await host.run(root, rgCmd, buildRgArgs(query, o, true), {
+          timeoutMs: 45_000,
+          earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
+        });
+        if (r2.code === 0 || r2.code === 1 || r2.earlyExit) {
+          rgCmdCache.set(cacheKey, rgCmd);
+          return resultFromRgStdout(root, query, r2, o);
+        }
+        continue;
+      }
+      if (r.code === 0 || r.code === 1 || r.earlyExit) {
+        rgCmdCache.set(cacheKey, rgCmd);
+        return resultFromRgStdout(root, query, r, o);
+      }
+      // 127 = command not found; try next candidate
+      if (r.code === 127 || /not found|No such file/i.test(r.stderr)) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  rgCmdCache.set(cacheKey, false);
+  return null;
+}
+
+/**
+ * WSL fallback: Windows rg against \\wsl$\… (slow 9P — last resort before scan).
+ */
+async function tryRipgrepWslUnc(
+  host: HostSession,
+  root: string,
+  query: string,
+  o: ReturnType<typeof normalizeOpts>,
+): Promise<ContentSearchResult | null> {
+  if (host.kind !== "wsl" || process.platform !== "win32") return null;
+  if (!(host instanceof WslHostSession)) return null;
+
+  const cacheKey = `wsl-unc:${host.id}`;
+  if (rgCmdCache.get(cacheKey) === false) return null;
+
+  const rgCmd = resolveLocalRgPath() ?? "rg";
+  let uncRoot: string;
+  try {
+    uncRoot = await host.toWindowsUnc(root);
+  } catch {
+    rgCmdCache.set(cacheKey, false);
+    return null;
+  }
+
+  const runner = getWindowsRunner();
+  const makeRunOpts = () => ({
+    // Cap UNC hard — it can hang for minutes on huge trees.
+    timeoutMs: 20_000,
+    earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
+  });
+
+  try {
+    let r = await runner.run(
+      uncRoot,
+      rgCmd,
+      buildRgArgs(query, o),
+      makeRunOpts(),
+    );
+    if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
+      r = await runner.run(
+        uncRoot,
+        rgCmd,
+        buildRgArgs(query, o, true),
+        makeRunOpts(),
+      );
+    }
+    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
+      if (
+        /cannot find|ENOENT|not supported|network path|timed out/i.test(
+          r.stderr || r.stdout,
+        )
+      ) {
+        rgCmdCache.set(cacheKey, false);
+      }
+      return null;
+    }
+    rgCmdCache.set(cacheKey, rgCmd);
+    return resultFromRgStdout(root, query, r, o);
+  } catch {
+    rgCmdCache.set(cacheKey, false);
+    return null;
+  }
+}
+
 async function tryRipgrep(
   host: HostSession,
   root: string,
   query: string,
   o: ReturnType<typeof normalizeOpts>,
 ): Promise<ContentSearchResult | null> {
+  // WSL: native Linux rg first (fast), UNC Windows rg only as last rg fallback.
+  if (host.kind === "wsl") {
+    const viaNative = await tryRipgrepWslNative(host, root, query, o);
+    if (viaNative) return viaNative;
+    const viaUnc = await tryRipgrepWslUnc(host, root, query, o);
+    if (viaUnc) return viaUnc;
+    return null;
+  }
+
   const rgCmd = resolveRgCommand(host);
   if (!rgCmd) return null;
 
   try {
-    // NOTE: do NOT pass `-I` — in ripgrep that means --no-filename (not
-    // "ignore binary" like git-grep). rg skips binary by default; force paths
-    // with -H so parseGrepLine always sees path:line:text.
-    const args = [
-      "-n",
-      "-H",
-      "--no-heading",
-      "--color",
-      "never",
-      "--glob",
-      "!.git/**",
-      "--max-filesize",
-      "512K",
-      // Per-file match cap (keeps noisy files small)
-      "--max-count",
-      "8",
-      "--max-columns",
-      "300",
-      "--max-columns-preview",
-    ];
-
-    if (!o.useRegex) args.push("-F");
-    if (!o.caseSensitive) args.push("-i");
-
-    for (const ex of o.exclude) {
-      for (const g of rgExcludeGlobs(ex)) {
-        args.push("--glob", `!${g}`);
-      }
-    }
-    if (o.include.length > 0) {
-      for (const inc of o.include) {
-        args.push("--glob", normalizeRgGlob(inc));
-      }
-    }
-
-    args.push("--", query, ".");
-    const r = await host.run(root, rgCmd, args, {
+    const r = await host.run(root, rgCmd, buildRgArgs(query, o), {
       timeoutMs: 15_000,
-      earlyExit: (stdout) =>
-        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+      earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
     });
     // 0 match, 1 no match, 2 error — also accept if stderr only complains about unknown flags
     if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
@@ -445,19 +679,7 @@ async function tryRipgrep(
       return null;
     }
     markRgOk(host, rgCmd);
-    const { hits, truncated } = parseGrepOutput(
-      r.stdout,
-      o.maxResults,
-      o.include,
-      o.exclude,
-    );
-    return {
-      root,
-      query,
-      hits,
-      truncated: truncated || Boolean(r.earlyExit),
-      source: "rg",
-    };
+    return resultFromRgStdout(root, query, r, o);
   } catch {
     // spawn ENOENT etc.
     markRgUnavailable(host);
@@ -474,53 +696,16 @@ async function tryRipgrepMinimal(
   rgCmd: string,
 ): Promise<ContentSearchResult | null> {
   try {
-    const args = [
-      "-n",
-      "-H",
-      "--no-heading",
-      "--color",
-      "never",
-      "--glob",
-      "!.git/**",
-      "--max-count",
-      "8",
-    ];
-    if (!o.useRegex) args.push("-F");
-    if (!o.caseSensitive) args.push("-i");
-    for (const ex of o.exclude) {
-      for (const g of rgExcludeGlobs(ex)) {
-        args.push("--glob", `!${g}`);
-      }
-    }
-    if (o.include.length > 0) {
-      for (const inc of o.include) {
-        args.push("--glob", normalizeRgGlob(inc));
-      }
-    }
-    args.push("--", query, ".");
-    const r = await host.run(root, rgCmd, args, {
+    const r = await host.run(root, rgCmd, buildRgArgs(query, o, true), {
       timeoutMs: 15_000,
-      earlyExit: (stdout) =>
-        hasEnoughGrepHits(stdout, o.maxResults, o.include, o.exclude),
+      earlyExit: createGrepHitCounter(o.maxResults, o.include, o.exclude),
     });
     if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
       markRgUnavailable(host);
       return null;
     }
     markRgOk(host, rgCmd);
-    const { hits, truncated } = parseGrepOutput(
-      r.stdout,
-      o.maxResults,
-      o.include,
-      o.exclude,
-    );
-    return {
-      root,
-      query,
-      hits,
-      truncated: truncated || Boolean(r.earlyExit),
-      source: "rg",
-    };
+    return resultFromRgStdout(root, query, r, o);
   } catch {
     markRgUnavailable(host);
     return null;

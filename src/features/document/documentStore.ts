@@ -74,11 +74,18 @@ export interface DocumentState {
   openDiff: (payload: DiffOpenPayload) => void;
   setDiffActiveFile: (id: string, filePath: string) => void;
   closeItem: (id: string) => void;
+  /** Keep only the tab with `id` (activate it). */
+  closeOtherItems: (id: string) => void;
+  /** Close every tab to the right of `id` (strip order). */
+  closeItemsToTheRight: (id: string) => void;
+  /** Close every tab; restores the Welcome tab. */
+  closeAllItems: () => void;
   setActive: (id: string) => void;
   /** Move tab at fromIndex to toIndex (array order = strip order). */
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   setMdViewMode: (id: string, mode: MdViewMode) => void;
   revealInFile: (path: string, line: number) => void;
+  /** Alias of closeAllItems (kept for existing callers). */
   closeAllFiles: () => void;
   updateFileContent: (path: string, content: string) => void;
 }
@@ -281,6 +288,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
   },
 
+  closeOtherItems: (id) => {
+    set((s) => {
+      const keep = s.openItems.find((i) => i.id === id);
+      if (!keep) return s;
+      return { openItems: [keep], activeId: keep.id };
+    });
+  },
+
+  closeItemsToTheRight: (id) => {
+    set((s) => {
+      const idx = s.openItems.findIndex((i) => i.id === id);
+      if (idx < 0) return s;
+      const openItems = s.openItems.slice(0, idx + 1);
+      let activeId = s.activeId;
+      if (!openItems.some((i) => i.id === activeId)) {
+        activeId = openItems[openItems.length - 1]?.id ?? null;
+      }
+      if (openItems.length === 0) {
+        const w = welcomeItem();
+        return { openItems: [w], activeId: w.id };
+      }
+      return { openItems, activeId };
+    });
+  },
+
+  closeAllItems: () => {
+    set({ openItems: [welcomeItem()], activeId: "welcome" });
+  },
+
   setActive: (id) => set({ activeId: id }),
 
   reorderTabs: (fromIndex, toIndex) => {
@@ -331,7 +367,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   closeAllFiles: () => {
-    set({ openItems: [welcomeItem()], activeId: "welcome" });
+    get().closeAllItems();
   },
 
   updateFileContent: (path, content) => {

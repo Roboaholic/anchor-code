@@ -273,7 +273,7 @@ export function FileTree() {
       setSearchError(null);
       return;
     }
-    // Short debounce: bundled rg is fast; cancel via searchGen on retype.
+    // Short debounce; in-flight work is cancelled via searchGen on retype.
     const t = window.setTimeout(() => {
       void runSearch(query, {
         include,
@@ -282,7 +282,7 @@ export function FileTree() {
         caseSensitive,
         workspaceExcludes,
       });
-    }, 180);
+    }, 100);
     return () => window.clearTimeout(t);
   }, [
     query,

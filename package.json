@@ -1,6 +1,6 @@
 {
   "name": "anchor-code",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "A human-in-the-loop reader for agent coding. Agent it. Review it. Feed it back.",
   "license": "Apache-2.0",
   "private": true,
@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "ensure:pty": "node scripts/ensure-node-pty.js",
-    "postinstall": "node scripts/ensure-node-pty.js",
+    "ensure:wsl-rg": "node scripts/ensure-wsl-rg.js",
+    "postinstall": "node scripts/ensure-node-pty.js && node scripts/ensure-wsl-rg.js",
     "pack:win": "npm run build && electron-builder --win --x64 --publish never",
     "pack:win:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
     "pack:mac": "npm run build && electron-builder --mac --publish never",
@@ -80,7 +81,18 @@
     "asarUnpack": [
       "node_modules/node-pty/**",
       "node_modules/@vscode/ripgrep/**",
-      "node_modules/@vscode/ripgrep-*/**"
+      "node_modules/@vscode/ripgrep-*/**",
+      "vendor/ripgrep-linux-*/**"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor",
+        "to": "vendor",
+        "filter": [
+          "**/rg",
+          "**/*"
+        ]
+      }
     ],
     "npmRebuild": false,
     "nodeGypRebuild": false,

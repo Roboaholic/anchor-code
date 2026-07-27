@@ -10,6 +10,7 @@ import {
 import {
   resolveLocalRgPath,
   unpackAsarPath,
+  windowsPathToWsl,
   _resetLocalRgPathCacheForTests,
 } from "./rgPath.js";
 
@@ -119,6 +120,13 @@ describe("rgPath", () => {
     expect(
       unpackAsarPath("C:/app/resources/app.asar/node_modules/x/rg.exe"),
     ).toContain("app.asar.unpacked");
+  });
+
+  it("maps Windows paths to WSL /mnt form", () => {
+    expect(windowsPathToWsl("C:\\Users\\miles\\rg")).toBe(
+      "/mnt/c/Users/miles/rg",
+    );
+    expect(windowsPathToWsl("D:/foo/bar")).toBe("/mnt/d/foo/bar");
   });
 
   it("resolves bundled local rg when platform package is installed", () => {

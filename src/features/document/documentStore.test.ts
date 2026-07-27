@@ -76,3 +76,64 @@ describe("documentStore.reorderTabs", () => {
     expect(useDocumentStore.getState().openItems.map((i) => i.id)).toEqual(ids);
   });
 });
+
+describe("documentStore tab close helpers", () => {
+  beforeEach(() => {
+    useDocumentStore.setState({
+      openItems: [{ id: "welcome", kind: "welcome", title: "Welcome" }],
+      activeId: "welcome",
+    });
+  });
+
+  async function openThree() {
+    mockReadText({
+      "/proj/a.ts": "a",
+      "/proj/b.ts": "b",
+      "/proj/c.ts": "c",
+    });
+    await useDocumentStore.getState().openFile({
+      path: "/proj/a.ts",
+      workspaceRoot: "/proj",
+    });
+    await useDocumentStore.getState().openFile({
+      path: "/proj/b.ts",
+      workspaceRoot: "/proj",
+    });
+    await useDocumentStore.getState().openFile({
+      path: "/proj/c.ts",
+      workspaceRoot: "/proj",
+    });
+  }
+
+  it("closeOtherItems keeps only the target tab", async () => {
+    await openThree();
+    useDocumentStore.getState().closeOtherItems("file:/proj/b.ts");
+    const s = useDocumentStore.getState();
+    expect(s.openItems.map((i) => i.id)).toEqual(["file:/proj/b.ts"]);
+    expect(s.activeId).toBe("file:/proj/b.ts");
+  });
+
+  it("closeItemsToTheRight drops tabs after the target", async () => {
+    await openThree();
+    // welcome, a, b, c — close to the right of a
+    useDocumentStore.getState().closeItemsToTheRight("file:/proj/a.ts");
+    const s = useDocumentStore.getState();
+    expect(s.openItems.map((i) => i.id)).toEqual([
+      "welcome",
+      "file:/proj/a.ts",
+    ]);
+    // active was c; should fall back to a
+    expect(s.activeId).toBe("file:/proj/a.ts");
+  });
+
+  it("closeAllItems restores Welcome", async () => {
+    await openThree();
+    useDocumentStore.getState().closeAllItems();
+    const s = useDocumentStore.getState();
+    expect(s.openItems).toEqual([
+      { id: "welcome", kind: "welcome", title: "Welcome" },
+    ]);
+    expect(s.activeId).toBe("welcome");
+  });
+});
+

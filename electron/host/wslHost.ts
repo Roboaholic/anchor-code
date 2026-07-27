@@ -104,7 +104,13 @@ export class WslHostSession implements HostSession {
   /**
    * Map POSIX WSL path → Windows UNC under \\wsl$\distro\...
    * UI/API still use POSIX; UNC is internal only.
+   * Public so content search can run Windows ripgrep against WSL trees
+   * without spawning wsl.exe (Linux `rg` is often missing).
    */
+  async toWindowsUnc(posixPath: string): Promise<string> {
+    return this.toUnc(posixPath);
+  }
+
   private async toUnc(posixPath: string): Promise<string> {
     const p = hostNormalize("wsl", posixPath);
     const distro = await this.resolveUncDistro();

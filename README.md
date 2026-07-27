@@ -56,4 +56,4 @@ Download a build from [Releases](https://github.com/Roboaholic/anchor-code/relea
 
 ## License
 
-Private / TBD.
+[Apache License 2.0](LICENSE)

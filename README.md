@@ -33,30 +33,26 @@ Repeat until you are satisfied.
 
 ## Requirements
 
-- Node.js 20+
-- Desktop: **Windows**, macOS, or Linux
+- Desktop: Windows, macOS, or Linux
 - Host for the workspace:
   - **Local** — native paths on Windows / macOS / Linux
   - **WSL** — on Windows, open a distro path via the Open Workspace host picker
-- System `git` on PATH **on the chosen host**
-- npm
-- Native build tools for `node-pty` (Visual Studio Build Tools on Windows, Xcode CLT on macOS)
+- System `git` on PATH on the chosen host
 
 ## Install and run
 
-```bash
-npm install
-npm run rebuild:native   # if the terminal fails to start
-npm run dev
-```
+Download a build from [Releases](https://github.com/Roboaholic/anchor-code/releases):
 
-Optional checks:
+| Platform | Installer | Portable / other |
+|----------|-----------|------------------|
+| Windows | `Anchor.Code-*-win-x64.exe` (NSIS setup) | `Anchor.Code-*-win-x64-portable.exe` |
+| macOS | `Anchor.Code-*-mac-*.dmg` | `.zip` |
+| Linux | `.AppImage` or `.deb` | — |
 
-```bash
-npm test                 # unit + integration
-npm run test:unit
-npm run test:integration # needs git
-```
+1. Install or run the downloaded package (unsigned builds may need an OS “Open anyway” / SmartScreen allow).
+2. Open Anchor Code.
+3. **Open Workspace** — pick Local or WSL, then choose a folder.
+4. Use History / Comments / Terminal as in the loop above.
 
 ## License
 

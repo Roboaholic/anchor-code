@@ -2855,14 +2855,44 @@ button.search-field:hover {
   min-width: 0;
 }
 
-.comment-card__path {
+.comment-card__loc {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Filename first — always readable in a narrow sidebar */
+.comment-card__file {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--accent);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.comment-card__line {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Parent dirs (muted); filename is already on the line above */
+.comment-card__dir {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-card__head .chip {
+  flex-shrink: 0;
 }
 
 .comment-card__thread {

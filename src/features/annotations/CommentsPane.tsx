@@ -367,13 +367,27 @@ export function CommentsPane() {
                               <button
                                 type="button"
                                 className="comment-card__jump"
+                                title={`${c.target.file_path}:${c.target.start_line}`}
                                 onClick={() =>
                                   void jumpToComment(c, session.id)
                                 }
                               >
                                 <span className="comment-card__head">
-                                  <span className="comment-card__path">
-                                    {c.target.file_path}:{c.target.start_line}
+                                  <span className="comment-card__loc">
+                                    <span className="comment-card__file">
+                                      {fileBasename(c.target.file_path)}
+                                      <span className="comment-card__line">
+                                        :{c.target.start_line}
+                                      </span>
+                                    </span>
+                                    {fileDirname(c.target.file_path) ? (
+                                      <span
+                                        className="comment-card__dir"
+                                        title={c.target.file_path}
+                                      >
+                                        {fileDirname(c.target.file_path)}
+                                      </span>
+                                    ) : null}
                                   </span>
                                   <span className={`chip chip--${c.status}`}>
                                     {c.status}
@@ -489,4 +503,17 @@ export function CommentsPane() {
       )}
     </div>
   );
+}
+
+function fileBasename(filePath: string): string {
+  const norm = filePath.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+/** Directory portion without trailing slash; empty if path is bare filename. */
+function fileDirname(filePath: string): string {
+  const norm = filePath.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i > 0 ? norm.slice(0, i) : "";
 }

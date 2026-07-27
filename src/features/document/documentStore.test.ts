@@ -64,6 +64,8 @@ describe("documentStore.reorderTabs", () => {
       "file:/proj/a.ts",
       "file:/proj/b.ts",
     ]);
+    // Dragged tab becomes active
+    expect(useDocumentStore.getState().activeId).toBe("file:/proj/c.ts");
 
     // No-op when from === to
     useDocumentStore.getState().reorderTabs(1, 1);

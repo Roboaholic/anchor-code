@@ -12,3 +12,6 @@ release/
 
 # Local HITL sessions created while using Anchor on this repo
 .anchor-code/
+
+# Local design notes / screenshots — keep out of the remote repo
+docs/

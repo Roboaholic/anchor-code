@@ -8,6 +8,8 @@ Use your AI coding CLI (Claude Code, Codex, and similar) in the terminal. Use An
 
 This is not a general-purpose IDE and not an agent orchestrator. Reading, dual-commit compare, annotations, and a multi-tab terminal exist to keep **you** in the loop.
 
+![Anchor Code — History compare and side-by-side diff](assets/screenshot.png)
+
 ## What you can do
 
 | Area | Purpose |
@@ -32,10 +34,13 @@ Repeat until you are satisfied.
 ## Requirements
 
 - Node.js 20+
-- macOS or Linux for Local host (Windows WSL path is a later host mode)
-- System `git` on PATH
+- Desktop: **Windows**, macOS, or Linux
+- Host for the workspace:
+  - **Local** — native paths on Windows / macOS / Linux
+  - **WSL** — on Windows, open a distro path via the Open Workspace host picker
+- System `git` on PATH **on the chosen host**
 - npm
-- Native build tools for `node-pty` (e.g. Xcode CLT on macOS)
+- Native build tools for `node-pty` (Visual Studio Build Tools on Windows, Xcode CLT on macOS)
 
 ## Install and run
 
@@ -52,8 +57,6 @@ npm test                 # unit + integration
 npm run test:unit
 npm run test:integration # needs git
 ```
-
-Deeper product design notes live under [`docs/anchor-code/`](docs/anchor-code/).
 
 ## License
 

@@ -112,25 +112,31 @@ export function DocumentArea() {
       </div>
 
       <div className="document-area__content document-area__content--fill">
-        {openItems.map((item) => {
-          const isActive = item.id === active?.id;
-          return (
-            <div
-              key={item.id}
-              className={`document-area__pane${isActive ? " is-active" : ""}`}
-              // Keep inactive tabs mounted so DiffViewer does not re-fetch on switch.
-              hidden={!isActive}
-              aria-hidden={!isActive}
-            >
-              <ActiveView
-                item={item}
-                onMdMode={(mode) => {
-                  if (item.kind === "file") setMdViewMode(item.id, mode);
-                }}
-              />
-            </div>
-          );
-        })}
+        {/*
+          Pane DOM order is sorted by id, not tab order. Reordering tabs must not
+          move Monaco/DiffEditor containers in the tree — that leaves a blank view.
+        */}
+        {[...openItems]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map((item) => {
+            const isActive = item.id === active?.id;
+            return (
+              <div
+                key={item.id}
+                className={`document-area__pane${isActive ? " is-active" : ""}`}
+                // Keep inactive tabs mounted so DiffViewer does not re-fetch on switch.
+                hidden={!isActive}
+                aria-hidden={!isActive}
+              >
+                <ActiveView
+                  item={item}
+                  onMdMode={(mode) => {
+                    if (item.kind === "file") setMdViewMode(item.id, mode);
+                  }}
+                />
+              </div>
+            );
+          })}
       </div>
     </section>
   );

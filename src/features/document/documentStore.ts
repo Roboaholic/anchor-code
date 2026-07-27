@@ -262,7 +262,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const [moved] = openItems.splice(fromIndex, 1);
       if (!moved) return s;
       openItems.splice(toIndex, 0, moved);
-      return { openItems };
+      // Keep the moved tab active so focus is not lost after drag-and-drop.
+      return { openItems, activeId: moved.id };
     });
   },
 

@@ -540,6 +540,8 @@ export interface AnchorApi {
     setSessionTabLayout: (
       layout: SessionTabLayout,
     ) => Promise<SessionTabLayout>;
+    getFontSize: () => Promise<number>;
+    setFontSize: (fontSize: number) => Promise<number>;
     getWorkspaceFilter: (args: {
       workspaceRoot: string;
       hostProfileId?: string | null;

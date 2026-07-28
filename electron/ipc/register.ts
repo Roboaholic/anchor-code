@@ -67,16 +67,19 @@ import {
 } from "../services/appUpdate.js";
 import {
   getHistoryRecentCompares,
+  getFontSize,
   getHostProfile,
   getSessionTabLayout,
   getUiTheme,
   getWorkspaceFilter,
   loadSettings,
+  normalizeFontSize,
   normalizeSessionTabLayout,
   normalizeTheme,
   pushHistoryRecentCompare,
   pushRecentWorkspace,
   removeHistoryRecentCompare,
+  setFontSize,
   setSessionTabLayout,
   setUiTheme,
   setWorkspaceFilter,
@@ -376,6 +379,25 @@ export function registerIpc(opts: {
     async (_evt, layout: unknown): Promise<SessionTabLayout> => {
       try {
         return await setSessionTabLayout(normalizeSessionTabLayout(layout));
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("settings:getFontSize", async (): Promise<number> => {
+    try {
+      return await getFontSize();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "settings:setFontSize",
+    async (_evt, fontSize: unknown): Promise<number> => {
+      try {
+        return await setFontSize(normalizeFontSize(fontSize));
       } catch (err) {
         rethrowIpc(err);
       }

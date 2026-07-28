@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   accentHex,
+  editorLineHeight,
   isDarkTheme,
   monacoThemeId,
+  normalizeFontSize,
   normalizeTheme,
   xtermThemeFromCss,
 } from "./theme";
@@ -19,6 +21,21 @@ describe("normalizeTheme", () => {
     expect(normalizeTheme(undefined)).toBe("dark-modern");
     expect(normalizeTheme("system")).toBe("dark-modern");
     expect(normalizeTheme(1)).toBe("dark-modern");
+  });
+});
+
+describe("normalizeFontSize", () => {
+  it("clamps and rounds font sizes", () => {
+    expect(normalizeFontSize(13)).toBe(13);
+    expect(normalizeFontSize("15")).toBe(15);
+    expect(normalizeFontSize(10)).toBe(11);
+    expect(normalizeFontSize(40)).toBe(20);
+    expect(normalizeFontSize(undefined)).toBe(13);
+  });
+
+  it("scales monaco line height with font size", () => {
+    expect(editorLineHeight(13)).toBe(20);
+    expect(editorLineHeight(16)).toBe(25);
   });
 });
 

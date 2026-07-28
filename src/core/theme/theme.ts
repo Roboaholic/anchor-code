@@ -8,8 +8,36 @@ export const UI_THEMES: UiTheme[] = ["light", "light-modern", "dark", "dark-mode
 export const EDITOR_FONT_FAMILY =
   "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, 'Courier New', monospace";
 
-export const EDITOR_FONT_SIZE = 13;
-export const EDITOR_LINE_HEIGHT = 20;
+/** Default editor / terminal / markdown reading font size (px). */
+export const DEFAULT_FONT_SIZE = 13;
+export const MIN_FONT_SIZE = 11;
+export const MAX_FONT_SIZE = 20;
+
+export function normalizeFontSize(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_FONT_SIZE;
+  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(n)));
+}
+
+/** Monaco line height scaled from font size (13px → 20). */
+export function editorLineHeight(fontSize: number): number {
+  return Math.max(16, Math.round(normalizeFontSize(fontSize) * (20 / 13)));
+}
+
+/** Rendered Markdown body size — slightly larger than editor mono. */
+export function markdownFontSize(fontSize: number): number {
+  return normalizeFontSize(fontSize) + 1.5;
+}
+
+/** Terminal font size — slightly smaller than editor mono. */
+export function terminalFontSize(fontSize: number): number {
+  return Math.max(11, normalizeFontSize(fontSize) - 0.5);
+}
 
 export function normalizeTheme(value: unknown): UiTheme {
   if (

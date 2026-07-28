@@ -2,7 +2,7 @@ import type { HostSession } from "../host/types.js";
 import { loadSettings, saveSettings } from "../settings.js";
 
 /** Bump to invalidate settings.json agentLaunchCache after discovery semantics change. */
-export const AGENT_LAUNCH_DISCOVERY_VERSION = 3;
+export const AGENT_LAUNCH_DISCOVERY_VERSION = 4;
 
 export interface AgentModelOption {
   id: string;
@@ -71,10 +71,8 @@ export function clearAgentLaunchDiscoveryCache(profileId?: string): void {
 function isDiscoveryShape(v: unknown): v is AgentLaunchDiscovery {
   if (!v || typeof v !== "object") return false;
   const o = v as AgentLaunchDiscovery;
-  // Accept any prior discoveryVersion: only shape matters. Bumping
-  // AGENT_LAUNCH_DISCOVERY_VERSION must not force a re-probe every launch;
-  // use clearAgentLaunchDiscoveryCache() when a breaking change needs wipe.
   return (
+    o.discoveryVersion === AGENT_LAUNCH_DISCOVERY_VERSION &&
     typeof o.profileId === "string" &&
     typeof o.supportsModel === "boolean" &&
     Array.isArray(o.models)
@@ -221,13 +219,27 @@ async function hostHome(host: HostSession): Promise<string> {
     }
     const r = await host.run(cwd, "sh", ["-lc", 'printf %s "$HOME"']);
     if (r.code === 0 && r.stdout.trim()) return r.stdout.trim();
+
+    // Shell startup can fail before $HOME is emitted (for example a stale
+    // ~/.bashrc source). Resolve the login user's home without that profile.
+    if (host.kind !== "local") {
+      const uid = await host.run(cwd, "id", ["-u"]);
+      const uidText = uid.code === 0 ? uid.stdout.trim() : "";
+      if (/^\d+$/.test(uidText)) {
+        const passwd = await host.run(cwd, "getent", ["passwd", uidText]);
+        const fields = passwd.stdout.trim().split(":");
+        const home = fields[5]?.trim();
+        if (passwd.code === 0 && home?.startsWith("/")) return home;
+      }
+    }
   } catch {
     // fall through
   }
   if (host.kind === "local") {
     return process.env.HOME || process.env.USERPROFILE || "";
   }
-  return "/root";
+  // Do not invent /root: WSL normally runs as its configured default user.
+  return "";
 }
 
 async function readHostText(

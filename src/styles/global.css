@@ -2108,6 +2108,40 @@ body.files-split-resizing .monaco-editor {
   flex-shrink: 0;
 }
 
+.md-viewer__toolbar-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.md-width-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.md-width-controls__btn {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+}
+
+.md-width-controls__label {
+  min-width: 40px;
+  padding: 0 4px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: center;
+  user-select: none;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -2147,6 +2181,12 @@ body.files-split-resizing .monaco-editor {
   font-size: 14.5px;
   line-height: 1.65;
   color: var(--text);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.md-body--full {
+  max-width: none;
 }
 
 .md-body h1,
@@ -2263,9 +2303,88 @@ body.files-split-resizing .monaco-editor {
   min-height: 48px;
 }
 
+.md-mermaid__svg--zoomable {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.md-mermaid__svg--zoomable:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  outline-offset: 2px;
+}
+
+.md-mermaid__svg--zoomable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .md-mermaid__svg svg {
   max-width: 100%;
   height: auto;
+}
+
+.md-mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--overlay);
+}
+
+.md-mermaid-lightbox__panel {
+  width: min(1100px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.md-mermaid-lightbox__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.md-mermaid-lightbox__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.md-mermaid-lightbox__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-muted, var(--bg-panel));
+}
+
+.md-mermaid-lightbox__body svg {
+  max-width: none;
+  width: auto;
+  height: auto;
+  min-width: min(100%, 720px);
 }
 
 .md-mermaid__loading {
@@ -4308,6 +4427,7 @@ body.files-split-resizing .monaco-editor {
 }
 
 .diff-viewer__files {
+  position: relative;
   width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
@@ -4315,6 +4435,40 @@ body.files-split-resizing .monaco-editor {
   flex-direction: column;
   min-height: 0;
   background: var(--bg);
+}
+
+.diff-viewer__files-resize-handle {
+  position: absolute;
+  z-index: 10;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.diff-viewer__files-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.diff-viewer__files-resize-handle:hover::after,
+.diff-viewer--files-resizing .diff-viewer__files-resize-handle::after {
+  background: var(--accent);
+}
+
+.diff-viewer--files-resizing,
+.diff-viewer--files-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.diff-viewer--files-resizing .monaco-editor {
+  pointer-events: none;
 }
 
 .diff-viewer__files-head {
@@ -5743,6 +5897,36 @@ select.field__input {
 
 .settings-section__title--spaced {
   margin-top: 18px;
+}
+
+.settings-font-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.settings-font-size__btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.settings-font-size__range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.settings-font-size__value {
+  min-width: 40px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: right;
 }
 
 /* Layout picker (session tabs side vs top) */

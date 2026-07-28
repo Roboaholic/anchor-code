@@ -507,6 +507,10 @@ const anchor = {
       layout: "side" | "top",
     ): Promise<"side" | "top"> =>
       ipcRenderer.invoke("settings:setSessionTabLayout", layout),
+    getFontSize: (): Promise<number> =>
+      ipcRenderer.invoke("settings:getFontSize"),
+    setFontSize: (fontSize: number): Promise<number> =>
+      ipcRenderer.invoke("settings:setFontSize", fontSize),
     getWorkspaceFilter: (args: {
       workspaceRoot: string;
       hostProfileId?: string | null;

@@ -27,8 +27,7 @@ import { useThemeStore } from "@/features/shell/themeStore";
 import {
   accentHex,
   EDITOR_FONT_FAMILY,
-  EDITOR_FONT_SIZE,
-  EDITOR_LINE_HEIGHT,
+  editorLineHeight,
   monacoThemeId,
 } from "@/core/theme/theme";
 import type { CommentRecord } from "@/shared/anchor-api";
@@ -48,6 +47,34 @@ type ComposerState = {
   lineText: string;
   forceNewSession: boolean;
 };
+
+const DIFF_FILES_WIDTH_STORAGE_KEY = "anchor.diffFilesWidth";
+const DIFF_FILES_MIN_WIDTH = 160;
+const DIFF_FILES_MAX_WIDTH = 480;
+const DIFF_FILES_DEFAULT_WIDTH = 220;
+
+function loadDiffFilesWidth(): number {
+  try {
+    const raw = Number.parseInt(
+      localStorage.getItem(DIFF_FILES_WIDTH_STORAGE_KEY) ?? "",
+      10,
+    );
+    if (Number.isFinite(raw)) {
+      return Math.min(DIFF_FILES_MAX_WIDTH, Math.max(DIFF_FILES_MIN_WIDTH, raw));
+    }
+  } catch {
+    // ignore
+  }
+  return DIFF_FILES_DEFAULT_WIDTH;
+}
+
+function persistDiffFilesWidth(width: number): void {
+  try {
+    localStorage.setItem(DIFF_FILES_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // ignore
+  }
+}
 
 type BubbleState = {
   commentId: string;
@@ -168,6 +195,8 @@ function findSpecsAt(
 
 export function DiffViewer({ item }: { item: DiffItem }) {
   const theme = useThemeStore((s) => s.theme);
+  const fontSize = useThemeStore((s) => s.fontSize);
+  const lineHeight = editorLineHeight(fontSize);
   const setDiffActiveFile = useDocumentStore((s) => s.setDiffActiveFile);
   const decorationsFor = useAnnotationsStore((s) => s.decorationsFor);
   const activeSession = useAnnotationsStore((s) => s.activeSession);
@@ -186,6 +215,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [sideBySide, setSideBySide] = useState(true);
   /** Changed-files rail: open by default; user can collapse for more editor space. */
   const [filesOpen, setFilesOpen] = useState(true);
+  const [filesWidth, setFilesWidth] = useState(loadDiffFilesWidth);
+  const [resizingFiles, setResizingFiles] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
@@ -213,6 +244,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const pointerOverAnnoRef = useRef(false);
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
+  const filesResizeStartRef = useRef<{ x: number; width: number } | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
 
@@ -298,6 +330,41 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   useEffect(() => {
     diffEditorRef.current?.updateOptions({ renderSideBySide: sideBySide });
   }, [sideBySide]);
+
+  useEffect(() => {
+    if (!resizingFiles) return;
+    const onPointerMove = (e: PointerEvent) => {
+      const start = filesResizeStartRef.current;
+      if (!start) return;
+      const width = Math.min(
+        DIFF_FILES_MAX_WIDTH,
+        Math.max(DIFF_FILES_MIN_WIDTH, start.width + e.clientX - start.x),
+      );
+      setFilesWidth(width);
+      diffEditorRef.current?.layout();
+    };
+    const onPointerUp = () => {
+      filesResizeStartRef.current = null;
+      setResizingFiles(false);
+      persistDiffFilesWidth(filesWidth);
+      diffEditorRef.current?.layout();
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [filesWidth, resizingFiles]);
+
+  useEffect(() => {
+    const diff = diffEditorRef.current;
+    if (!diff) return;
+    const opts = { fontSize, lineHeight };
+    diff.updateOptions(opts);
+    diff.getOriginalEditor().updateOptions(opts);
+    diff.getModifiedEditor().updateOptions(opts);
+  }, [fontSize, lineHeight]);
 
   const rangeLabel = useMemo(() => {
     const base = shortRev(item.base);
@@ -641,6 +708,11 @@ export function DiffViewer({ item }: { item: DiffItem }) {
           clearHoverOpenTimer();
           // Hide chip immediately when a new drag starts.
           setSelToolbar(null);
+          // New click / reselect while comment bar is open → dismiss bar.
+          if (composerOpenRef.current) {
+            setComposer(null);
+            setBody("");
+          }
         }
       }),
     );
@@ -816,10 +888,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     <div
       className={`diff-viewer${item.hideFileList ? " diff-viewer--focus" : ""}${
         showFilesRail && !filesOpen ? " diff-viewer--files-collapsed" : ""
-      }`}
+      }${resizingFiles ? " diff-viewer--files-resizing" : ""}`}
     >
       {showFilesRail && filesOpen ? (
-        <aside className="diff-viewer__files">
+        <aside className="diff-viewer__files" style={{ width: filesWidth }}>
           <div className="diff-viewer__files-head">
             <div className="diff-viewer__range" title={item.title}>
               {item.title}
@@ -878,6 +950,17 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               Open worktree file
             </button>
           ) : null}
+          <div
+            className="diff-viewer__files-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize changed files panel"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              filesResizeStartRef.current = { x: e.clientX, width: filesWidth };
+              setResizingFiles(true);
+            }}
+          />
         </aside>
       ) : null}
 
@@ -978,8 +1061,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   renderSideBySideInlineBreakpoint: sideBySide ? 0 : 1e9,
                   useInlineViewWhenSpaceIsLimited: !sideBySide,
                   minimap: { enabled: false },
-                  fontSize: EDITOR_FONT_SIZE,
-                  lineHeight: EDITOR_LINE_HEIGHT,
+                  fontSize,
+                  lineHeight,
                   fontFamily: EDITOR_FONT_FAMILY,
                   automaticLayout: true,
                   scrollBeyondLastLine: false,

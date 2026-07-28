@@ -1,6 +1,6 @@
 {
   "name": "anchor-code",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "A human-in-the-loop reader for agent coding. Agent it. Review it. Feed it back.",
   "license": "Apache-2.0",
   "private": true,

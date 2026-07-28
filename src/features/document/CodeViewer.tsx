@@ -1,8 +1,7 @@
 import {
   accentHex,
   EDITOR_FONT_FAMILY,
-  EDITOR_FONT_SIZE,
-  EDITOR_LINE_HEIGHT,
+  editorLineHeight,
   monacoThemeId,
 } from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
@@ -181,6 +180,8 @@ export function CodeViewer({
   kind?: "source" | "markdown";
 }) {
   const theme = useThemeStore((s) => s.theme);
+  const fontSize = useThemeStore((s) => s.fontSize);
+  const lineHeight = editorLineHeight(fontSize);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
@@ -330,6 +331,12 @@ export function CodeViewer({
   useEffect(() => {
     applyDecorations(bubble?.commentId ?? focusCommentId ?? null);
   }, [applyDecorations, bubble?.commentId, focusCommentId]);
+
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.updateOptions({ fontSize, lineHeight });
+  }, [fontSize, lineHeight]);
 
   /**
    * First open often has clientHeight 0 until flex layout settles — revealLineInCenter
@@ -638,6 +645,11 @@ export function CodeViewer({
           clearHoverOpenTimer();
           // Hide chip immediately when a new drag starts.
           setSelToolbar(null);
+          // New click / reselect while comment bar is open → dismiss bar.
+          if (composerOpenRef.current) {
+            setComposer(null);
+            setBody("");
+          }
         }
       }),
     );
@@ -789,8 +801,8 @@ export function CodeViewer({
             // Keep DOM editable enough for reliable select + copy; edits still blocked.
             domReadOnly: false,
             minimap: { enabled: false },
-            fontSize: EDITOR_FONT_SIZE,
-            lineHeight: EDITOR_LINE_HEIGHT,
+            fontSize,
+            lineHeight,
             fontFamily: EDITOR_FONT_FAMILY,
             scrollBeyondLastLine: false,
             wordWrap: "on",

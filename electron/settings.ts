@@ -87,6 +87,11 @@ export interface AppSettings {
      * - top: horizontal tab bar above the terminal body
      */
     sessionTabLayout?: "side" | "top";
+    /**
+     * Editor / Markdown / terminal reading font size in px.
+     * Default 13. Clamped 11–20.
+     */
+    fontSize?: number;
   };
 }
 
@@ -115,6 +120,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     terminalVisible: true,
     theme: "dark-modern",
     sessionTabLayout: "side",
+    fontSize: 13,
   },
 };
 
@@ -343,6 +349,34 @@ export async function setSessionTabLayout(
   const settings = await loadSettings();
   const next = normalizeSessionTabLayout(layout);
   settings.ui = { ...settings.ui, sessionTabLayout: next };
+  await saveSettings(settings);
+  return next;
+}
+
+export const DEFAULT_FONT_SIZE = 13;
+export const MIN_FONT_SIZE = 11;
+export const MAX_FONT_SIZE = 20;
+
+export function normalizeFontSize(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_FONT_SIZE;
+  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(n)));
+}
+
+export async function getFontSize(): Promise<number> {
+  const settings = await loadSettings();
+  return normalizeFontSize(settings.ui?.fontSize);
+}
+
+export async function setFontSize(fontSize: number): Promise<number> {
+  const settings = await loadSettings();
+  const next = normalizeFontSize(fontSize);
+  settings.ui = { ...settings.ui, fontSize: next };
   await saveSettings(settings);
   return next;
 }

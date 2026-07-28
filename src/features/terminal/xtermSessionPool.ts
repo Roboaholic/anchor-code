@@ -55,6 +55,7 @@ export function acquireXtermSession(
   id: string,
   kind: string,
   theme: UiTheme,
+  fontSize = 12.5,
 ): PooledXterm {
   const existing = pool.get(id);
   if (existing) return existing;
@@ -65,7 +66,7 @@ export function acquireXtermSession(
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: 12.5,
+    fontSize,
     fontFamily:
       "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
     theme: xtermThemeFromCss(theme),
@@ -202,6 +203,13 @@ export function setXtermTheme(id: string, theme: UiTheme): void {
   const session = pool.get(id);
   if (!session) return;
   session.term.options.theme = xtermThemeFromCss(theme);
+}
+
+export function setXtermFontSize(id: string, fontSize: number): void {
+  const session = pool.get(id);
+  if (!session) return;
+  session.term.options.fontSize = fontSize;
+  fitXtermSession(id);
 }
 
 export function disposeXtermSession(id: string): void {

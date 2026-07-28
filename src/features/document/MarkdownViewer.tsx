@@ -23,6 +23,8 @@ import { useAnnotationsStore } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import type { CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
+import { markdownFontSize } from "@/core/theme/theme";
+import { useThemeStore } from "@/features/shell/themeStore";
 import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
@@ -38,7 +40,42 @@ type BubbleState = {
   top: number;
 };
 
-type SelToolbar = { left: number; top: number };
+type SelToolbar = { left: number; top: number; text: string };
+
+/** Content-width fractions. Each step is relative to the current viewer width. */
+const MD_WIDTH_STEPS = [0.5, 0.625, 0.75, 0.875, "full"] as const;
+type MdWidthStep = (typeof MD_WIDTH_STEPS)[number];
+const MD_WIDTH_STORAGE_KEY = "anchor.mdRenderedWidthStep";
+
+function loadMdWidthStep(): MdWidthStep {
+  try {
+    const raw = localStorage.getItem(MD_WIDTH_STORAGE_KEY);
+    if (raw === "full") return "full";
+    const n = raw ? Number.parseFloat(raw) : NaN;
+    if (MD_WIDTH_STEPS.includes(n as MdWidthStep)) return n as MdWidthStep;
+  } catch {
+    // ignore
+  }
+  return 0.5;
+}
+
+function persistMdWidthStep(step: MdWidthStep) {
+  try {
+    localStorage.setItem(MD_WIDTH_STORAGE_KEY, String(step));
+  } catch {
+    // ignore
+  }
+}
+
+function mdBodyWidth(step: MdWidthStep): string {
+  if (step === "full") return "100%";
+  return `${Math.round(step * 100)}%`;
+}
+
+function mdWidthLabel(step: MdWidthStep): string {
+  if (step === "full") return "Full";
+  return `${Math.round(step * 100)}%`;
+}
 
 function codeChildToText(children: unknown): string {
   if (typeof children === "string") return children;
@@ -124,6 +161,28 @@ export function MarkdownViewer({
 }) {
   // Prefer raw when jumping from search so the match can be highlighted.
   const effectiveMode = searchHighlight ? "raw" : mode;
+  const [widthStep, setWidthStep] = useState<MdWidthStep>(() => loadMdWidthStep());
+
+  const widthIndex = MD_WIDTH_STEPS.indexOf(widthStep);
+  const canNarrow = widthIndex > 0;
+  const canWiden = widthIndex >= 0 && widthIndex < MD_WIDTH_STEPS.length - 1;
+
+  const setWidth = useCallback((step: MdWidthStep) => {
+    setWidthStep(step);
+    persistMdWidthStep(step);
+  }, []);
+
+  const widen = useCallback(() => {
+    const idx = MD_WIDTH_STEPS.indexOf(widthStep);
+    if (idx < 0 || idx >= MD_WIDTH_STEPS.length - 1) return;
+    setWidth(MD_WIDTH_STEPS[idx + 1]!);
+  }, [setWidth, widthStep]);
+
+  const narrow = useCallback(() => {
+    const idx = MD_WIDTH_STEPS.indexOf(widthStep);
+    if (idx <= 0) return;
+    setWidth(MD_WIDTH_STEPS[idx - 1]!);
+  }, [setWidth, widthStep]);
 
   return (
     <div className="md-viewer">
@@ -133,21 +192,53 @@ export function MarkdownViewer({
             ? "Select text to comment · mermaid fences render as diagrams"
             : "Annotate via Monaco selection"}
         </span>
-        <div className="segmented" role="group" aria-label="Markdown view mode">
-          <button
-            type="button"
-            className={`segmented__btn${effectiveMode === "rendered" ? " is-active" : ""}`}
-            onClick={() => onModeChange("rendered")}
-          >
-            Rendered
-          </button>
-          <button
-            type="button"
-            className={`segmented__btn${effectiveMode === "raw" ? " is-active" : ""}`}
-            onClick={() => onModeChange("raw")}
-          >
-            Raw
-          </button>
+        <div className="md-viewer__toolbar-end">
+          {effectiveMode === "rendered" ? (
+            <div
+              className="md-width-controls"
+              role="group"
+              aria-label="Rendered content width"
+            >
+              <button
+                type="button"
+                className="icon-btn md-width-controls__btn"
+                title="Narrower"
+                aria-label="Narrow rendered content"
+                disabled={!canNarrow}
+                onClick={narrow}
+              >
+                <Icon name="screen-normal" />
+              </button>
+              <span className="md-width-controls__label" title="Content width">
+                {mdWidthLabel(widthStep)}
+              </span>
+              <button
+                type="button"
+                title="Wider"
+                aria-label="Widen rendered content"
+                disabled={!canWiden}
+                onClick={widen}
+              >
+                <Icon name="screen-full" />
+              </button>
+            </div>
+          ) : null}
+          <div className="segmented" role="group" aria-label="Markdown view mode">
+            <button
+              type="button"
+              className={`segmented__btn${effectiveMode === "rendered" ? " is-active" : ""}`}
+              onClick={() => onModeChange("rendered")}
+            >
+              Rendered
+            </button>
+            <button
+              type="button"
+              className={`segmented__btn${effectiveMode === "raw" ? " is-active" : ""}`}
+              onClick={() => onModeChange("raw")}
+            >
+              Raw
+            </button>
+          </div>
         </div>
       </div>
 
@@ -170,6 +261,7 @@ export function MarkdownViewer({
           truncated={truncated}
           focusCommentId={focusCommentId}
           revealNonce={revealNonce}
+          widthStep={widthStep}
         />
       )}
     </div>
@@ -182,17 +274,22 @@ function RenderedMarkdownPane({
   truncated,
   focusCommentId,
   revealNonce,
+  widthStep,
 }: {
   path: string;
   content: string;
   truncated: boolean;
   focusCommentId?: string | null;
   revealNonce?: number;
+  widthStep: MdWidthStep;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
   const bubbleRef = useRef<BubbleState | null>(null);
+  const pendingSelectionTextRef = useRef<string | null>(null);
+  const fontSize = useThemeStore((s) => s.fontSize);
+  const mdFontSize = markdownFontSize(fontSize);
 
   const decorationsFor = useAnnotationsStore((s) => s.decorationsFor);
   const sessions = useAnnotationsStore((s) => s.sessions);
@@ -255,8 +352,10 @@ function RenderedMarkdownPane({
   }, [fileComments]);
 
   useEffect(() => {
-    refreshMarks();
-  }, [refreshMarks, content, revealNonce]);
+    // Width changes reflow the article; remeasure mark overlays after layout.
+    const id = window.requestAnimationFrame(() => refreshMarks());
+    return () => window.cancelAnimationFrame(id);
+  }, [refreshMarks, content, revealNonce, widthStep]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -290,6 +389,7 @@ function RenderedMarkdownPane({
 
   const updateSelectionToolbar = useCallback(() => {
     if (composerOpenRef.current) {
+      pendingSelectionTextRef.current = null;
       setSelToolbar(null);
       return;
     }
@@ -297,12 +397,12 @@ function RenderedMarkdownPane({
     const container = scrollRef.current;
     const sel = readDomSelectionIn(root);
     if (!sel || !container) {
-      setSelToolbar(null);
+      // Keep the chip/cache briefly: button interaction can collapse the
+      // live DOM selection before the click/pointer handler runs.
       return;
     }
     const rect = sel.range.getBoundingClientRect();
     if (!rect || (rect.width === 0 && rect.height === 0)) {
-      setSelToolbar(null);
       return;
     }
     const crect = container.getBoundingClientRect();
@@ -315,7 +415,9 @@ function RenderedMarkdownPane({
       4,
       rect.top - crect.top + container.scrollTop - icon - 4,
     );
-    setSelToolbar({ left, top });
+    // Cache selected text: clicking the chip can clear the live DOM selection.
+    pendingSelectionTextRef.current = sel.text;
+    setSelToolbar({ left, top, text: sel.text });
   }, []);
 
   useEffect(() => {
@@ -327,15 +429,53 @@ function RenderedMarkdownPane({
     return () => document.removeEventListener("selectionchange", onSelChange);
   }, [updateSelectionToolbar]);
 
+  // Dismiss the floating chip when the user clicks outside it.
+  useEffect(() => {
+    if (!selToolbar || composer) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".anno-sel-chip")) return;
+      // New interaction in the body: hide until selectionchange settles.
+      pendingSelectionTextRef.current = null;
+      setSelToolbar(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [selToolbar, composer]);
+
+  // Comment bar open: click elsewhere or start a new selection → dismiss.
+  useEffect(() => {
+    if (!composer) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".composer")) return;
+      setComposer(null);
+      setBody("");
+      setLocateError(null);
+      pendingSelectionTextRef.current = null;
+      setSelToolbar(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [composer]);
+
   const openComposer = useCallback(
-    (forceNewSession: boolean) => {
-      const root = bodyRef.current;
-      const sel = readDomSelectionIn(root);
-      if (!sel) {
+    (forceNewSession: boolean, selectionText?: string | null) => {
+      const text = (
+        selectionText ??
+        pendingSelectionTextRef.current ??
+        readDomSelectionIn(bodyRef.current)?.text ??
+        ""
+      ).trim();
+      if (!text) {
         setLocateError("Select text in the rendered document first.");
         return;
       }
-      const anchor = locateSelectionInMarkdown(content, sel.text);
+      const anchor = locateSelectionInMarkdown(content, text);
       if (!anchor) {
         setLocateError(
           "Could not map the selection back to the Markdown source. Try a longer phrase or switch to Raw.",
@@ -344,6 +484,7 @@ function RenderedMarkdownPane({
       }
       setLocateError(null);
       setBubble(null);
+      pendingSelectionTextRef.current = null;
       setSelToolbar(null);
       setComposer({ ...anchor, forceNewSession });
       setBody("");
@@ -359,7 +500,10 @@ function RenderedMarkdownPane({
       // Only when focus is inside rendered pane.
       const root = scrollRef.current;
       if (!root) return;
-      if (!root.contains(document.activeElement) && document.activeElement !== document.body) {
+      if (
+        !root.contains(document.activeElement) &&
+        document.activeElement !== document.body
+      ) {
         // Still allow when selection is inside root.
         const sel = window.getSelection();
         if (
@@ -425,7 +569,15 @@ function RenderedMarkdownPane({
       ) : null}
 
       <div className="md-viewer__rendered-surface">
-        <article className="md-body" ref={bodyRef}>
+        <article
+          className={`md-body${widthStep === "full" ? " md-body--full" : ""}`}
+          ref={bodyRef}
+          style={{
+            width: mdBodyWidth(widthStep),
+            maxWidth: "none",
+            fontSize: `${mdFontSize}px`,
+          }}
+        >
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -468,13 +620,18 @@ function RenderedMarkdownPane({
             title="Add comment"
             aria-label="Add comment"
             onMouseDown={(e) => {
+              // Open on mousedown so we still have the cached selection even if
+              // focus/click collapses the live DOM selection.
               e.preventDefault();
               e.stopPropagation();
+              openComposer(
+                false,
+                pendingSelectionTextRef.current ?? selToolbar.text,
+              );
             }}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openComposer(false);
             }}
           >
             <Icon name="comment" />
@@ -530,7 +687,10 @@ function RenderedMarkdownPane({
             <button
               type="button"
               className="btn btn--small"
-              onClick={() => openComposer(true)}
+              onClick={() => {
+                if (!composer) return;
+                setComposer({ ...composer, forceNewSession: true });
+              }}
               title="End active session and save under a new one"
             >
               New session

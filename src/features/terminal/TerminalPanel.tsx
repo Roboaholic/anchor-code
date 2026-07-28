@@ -1,4 +1,5 @@
 import { useThemeStore } from "@/features/shell/themeStore";
+import { terminalFontSize } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
 import {
   useCallback,
@@ -21,6 +22,7 @@ import {
   fitXtermSession,
   getPooledXterm,
   scheduleFitXtermSession,
+  setXtermFontSize,
   setXtermTheme,
 } from "./xtermSessionPool";
 
@@ -296,6 +298,7 @@ function XtermHost({
   kind: string;
 }) {
   const theme = useThemeStore((s) => s.theme);
+  const fontSize = useThemeStore((s) => s.fontSize);
   /** React slot that receives the pooled xterm host element. */
   const slotRef = useRef<HTMLDivElement>(null);
   const [ctxMenu, setCtxMenu] = useState<TermContextMenu | null>(null);
@@ -344,8 +347,12 @@ function XtermHost({
   useEffect(() => {
     const slot = slotRef.current;
     if (!slot) return;
-
-    const session = acquireXtermSession(id, kind, theme);
+    const session = acquireXtermSession(
+      id,
+      kind,
+      theme,
+      terminalFontSize(fontSize),
+    );
     attachXtermSession(id, slot);
 
     const onContextMenu = (ev: MouseEvent) => {
@@ -378,13 +385,17 @@ function XtermHost({
       ro.disconnect();
       detachXtermSession(id);
     };
-    // theme applied separately; only identity remounts attach
+    // theme/font applied separately; only identity remounts attach
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, kind]);
 
   useEffect(() => {
     setXtermTheme(id, theme);
   }, [id, theme]);
+
+  useEffect(() => {
+    setXtermFontSize(id, terminalFontSize(fontSize));
+  }, [id, fontSize]);
 
   useEffect(() => {
     if (!active) {

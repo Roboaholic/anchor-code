@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  DEFAULT_FONT_SIZE,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+} from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
 import type {
   AppUpdateState,
@@ -73,6 +78,8 @@ export function SettingsPanel() {
   const setTheme = useThemeStore((s) => s.setTheme);
   const sessionTabLayout = useThemeStore((s) => s.sessionTabLayout);
   const setSessionTabLayout = useThemeStore((s) => s.setSessionTabLayout);
+  const fontSize = useThemeStore((s) => s.fontSize);
+  const setFontSize = useThemeStore((s) => s.setFontSize);
   const versionLabel = useShellStore((s) => s.versionLabel);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const [section, setSection] = useState<SettingsSection>("appearance");
@@ -303,7 +310,68 @@ export function SettingsPanel() {
           <div className="settings-modal__main">
             {section === "appearance" ? (
               <section className="settings-section" aria-label="Appearance">
-                <h3 className="settings-section__title">Color theme</h3>
+                <h3 className="settings-section__title">Font size</h3>
+                <p className="settings-section__desc muted">
+                  Editor, Markdown, and terminal reading size. Default{" "}
+                  {DEFAULT_FONT_SIZE}px.
+                </p>
+                <div
+                  className="settings-font-size"
+                  role="group"
+                  aria-label="Font size"
+                >
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Smaller"
+                    aria-label="Decrease font size"
+                    disabled={fontSize <= MIN_FONT_SIZE}
+                    onClick={() => void setFontSize(fontSize - 1)}
+                  >
+                    <Icon name="remove" />
+                  </button>
+                  <input
+                    className="settings-font-size__range"
+                    type="range"
+                    min={MIN_FONT_SIZE}
+                    max={MAX_FONT_SIZE}
+                    step={1}
+                    value={fontSize}
+                    onChange={(e) =>
+                      void setFontSize(Number.parseInt(e.target.value, 10))
+                    }
+                    aria-valuemin={MIN_FONT_SIZE}
+                    aria-valuemax={MAX_FONT_SIZE}
+                    aria-valuenow={fontSize}
+                    aria-label="Font size in pixels"
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Larger"
+                    aria-label="Increase font size"
+                    disabled={fontSize >= MAX_FONT_SIZE}
+                    onClick={() => void setFontSize(fontSize + 1)}
+                  >
+                    <Icon name="add" />
+                  </button>
+                  <span className="settings-font-size__value" aria-live="polite">
+                    {fontSize}px
+                  </span>
+                  {fontSize !== DEFAULT_FONT_SIZE ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => void setFontSize(DEFAULT_FONT_SIZE)}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </div>
+
+                <h3 className="settings-section__title settings-section__title--spaced">
+                  Color theme
+                </h3>
                 <p className="settings-section__desc muted">
                   Choose a workbench color theme. Applied immediately.
                 </p>
@@ -398,6 +466,7 @@ export function SettingsPanel() {
                     );
                   })}
                 </div>
+
               </section>
             ) : null}
 

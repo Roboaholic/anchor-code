@@ -160,9 +160,10 @@
         }
       ],
       "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "identity": null
     },
     "dmg": {
       "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}"

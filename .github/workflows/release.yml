@@ -84,11 +84,25 @@ jobs:
 
       - name: Package ${{ matrix.platform }}
         shell: bash
-        run: npm run ${{ matrix.pack }}
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            # Unsigned CI builds: disable identity discovery and avoid
+            # hardenedRuntime requirements that can abort electron-builder
+            # with exit 134 on macos-latest when no Apple cert is present.
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            export CSC_IDENTITY=""
+            # Prefer zip-first packaging; dmg still configured in package.json.
+            npm run pack:mac || {
+              echo "::warning::mac package failed once; retrying once"
+              npm run pack:mac
+            }
+          else
+            npm run ${{ matrix.pack }}
+          fi
         env:
           ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
-          # Unsigned mac builds still produce dmg/zip (Gatekeeper warning for users).
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: List release output

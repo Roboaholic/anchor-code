@@ -293,16 +293,22 @@ export async function loadLog(
 export async function loadRepoStatus(
   host: HostSession,
   repoRoot: string,
+  opts?: { badgeOnly?: boolean; timeoutMs?: number },
 ): Promise<RepoStatus> {
-  // "normal" (default) — not "all". Listing every untracked path under huge trees
-  // (SDK out/, .repo, build dumps) freezes WSL and stalls the History UI on "…".
+  // badgeOnly: skip untracked walk (huge SDK trees). Full list when expanding Changes.
   // `-b` adds `## branch...upstream [ahead N, behind M]` so we get tracking in one call.
-  const result = await host.run(repoRoot, "git", [
-    "status",
-    "--porcelain",
-    "-b",
-    "--untracked-files=normal",
-  ]);
+  const badgeOnly = opts?.badgeOnly === true;
+  const result = await host.run(
+    repoRoot,
+    "git",
+    [
+      "status",
+      "--porcelain",
+      "-b",
+      badgeOnly ? "--untracked-files=no" : "--untracked-files=normal",
+    ],
+    { timeoutMs: opts?.timeoutMs ?? (badgeOnly ? 12_000 : 30_000) },
+  );
   if (result.code !== 0 && !result.stdout) {
     throw new HostError(
       "failed",
@@ -328,6 +334,151 @@ export async function loadRepoStatus(
     added,
     deleted,
     untracked,
+    branch: tracking.branch,
+    ahead: tracking.ahead,
+    behind: tracking.behind,
+  };
+}
+
+/**
+ * Badge-only status for many repos in one host process.
+ * Critical on WSL: N parallel `wsl.exe` invocations hang/timeout; one bash
+ * loop over roots is ~1s for 50+ repos.
+ *
+ * When `onStatus` is provided, each finished repo is reported as soon as its
+ * block ends (progressive UI dots clear per-repo).
+ */
+export async function loadRepoStatusesBulk(
+  host: HostSession,
+  repoRoots: string[],
+  opts?: {
+    badgeOnly?: boolean;
+    timeoutMs?: number;
+    onStatus?: (status: RepoStatus) => void;
+  },
+): Promise<RepoStatus[]> {
+  const roots = [
+    ...new Set(
+      repoRoots
+        .map((r) => hostNormalize(host.kind, r))
+        .filter(Boolean),
+    ),
+  ];
+  if (roots.length === 0) return [];
+  const badgeOnly = opts?.badgeOnly !== false;
+  const untracked = badgeOnly ? "no" : "normal";
+  const collected: RepoStatus[] = [];
+  const seen = new Set<string>();
+
+  const emit = (st: RepoStatus) => {
+    if (seen.has(st.repoRoot)) return;
+    seen.add(st.repoRoot);
+    collected.push(st);
+    try {
+      opts?.onStatus?.(st);
+    } catch {
+      // ignore listener errors
+    }
+  };
+
+  // WSL/SSH: one bash process with progressive stdout parsing.
+  if (host.kind === "wsl" || host.kind === "ssh") {
+    const rootsLit = roots
+      .map((r) => `'${r.replace(/'/g, `'\\''`)}'`)
+      .join(" ");
+    const script = [
+      `untracked='${untracked}'`,
+      `for root in ${rootsLit}; do`,
+      `  printf '__AC_BEGIN__\\t%s\\n' "$root"`,
+      `  if ! git -C "$root" status --porcelain -b --untracked-files="$untracked" 2>/dev/null; then`,
+      `    printf '__AC_ERR__\\n'`,
+      `  fi`,
+      `  printf '__AC_END__\\n'`,
+      `done`,
+    ].join("\n");
+
+    let carry = "";
+    let currentRoot: string | null = null;
+    let buf: string[] = [];
+    let failed = false;
+
+    const flushBlock = () => {
+      if (!currentRoot) return;
+      if (!failed) {
+        const st = statusFromPorcelain(currentRoot, buf.join("\n"));
+        emit(st);
+      }
+      currentRoot = null;
+      buf = [];
+      failed = false;
+    };
+
+    const consumeLine = (line: string) => {
+      if (line.startsWith("__AC_BEGIN__\t")) {
+        flushBlock();
+        currentRoot = line.slice("__AC_BEGIN__\t".length).trim();
+        return;
+      }
+      if (line === "__AC_END__") {
+        flushBlock();
+        return;
+      }
+      if (line === "__AC_ERR__") {
+        failed = true;
+        return;
+      }
+      if (currentRoot) buf.push(line);
+    };
+
+    await host.run(roots[0]!, "bash", ["-s"], {
+      stdin: script,
+      timeoutMs: opts?.timeoutMs ?? Math.max(45_000, roots.length * 500),
+      onStdoutChunk: (chunk) => {
+        carry += chunk;
+        const parts = carry.split(/\r?\n/);
+        carry = parts.pop() ?? "";
+        for (const line of parts) consumeLine(line);
+      },
+    });
+    if (carry) consumeLine(carry);
+    flushBlock();
+    return collected;
+  }
+
+  // Local: sequential, emit as each finishes.
+  for (const root of roots) {
+    try {
+      const st = await loadRepoStatus(host, root, {
+        badgeOnly,
+        timeoutMs: opts?.timeoutMs,
+      });
+      emit(st);
+    } catch {
+      // skip — caller keeps previous status for missing roots
+    }
+  }
+  return collected;
+}
+
+function statusFromPorcelain(repoRoot: string, body: string): RepoStatus {
+  const { entries, tracking } = parsePorcelainStatusDetailed(body);
+  let modified = 0;
+  let added = 0;
+  let deleted = 0;
+  let untrackedCount = 0;
+  for (const e of entries) {
+    if (e.status === "M" || e.status === "R" || e.status === "C") modified += 1;
+    else if (e.status === "A") added += 1;
+    else if (e.status === "D") deleted += 1;
+    else if (e.status === "?") untrackedCount += 1;
+  }
+  return {
+    repoRoot,
+    entries,
+    modified,
+    added,
+    deleted,
+    untracked: untrackedCount,
     branch: tracking.branch,
     ahead: tracking.ahead,
     behind: tracking.behind,

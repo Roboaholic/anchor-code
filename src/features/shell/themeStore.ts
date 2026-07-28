@@ -28,13 +28,18 @@ function cacheLayoutLocally(layout: SessionTabLayout): void {
   }
 }
 
+export type SettingsFocusSection = "appearance" | "agent-skill" | "updates";
+
 export interface ThemeState {
   theme: UiTheme;
   /** Terminal / Agent session tab strip: side (default) or top. */
   sessionTabLayout: SessionTabLayout;
   ready: boolean;
   settingsOpen: boolean;
+  /** When set, SettingsPanel selects this section on open. */
+  settingsFocusSection: SettingsFocusSection | null;
   setSettingsOpen: (open: boolean) => void;
+  openSettings: (section?: SettingsFocusSection) => void;
   /** Apply theme locally (DOM + store). Does not persist. */
   applyTheme: (theme: UiTheme) => void;
   /** Load from main process settings (falls back to local cache). */
@@ -50,7 +55,18 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   sessionTabLayout: readCachedLayout(),
   ready: false,
   settingsOpen: false,
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  settingsFocusSection: null,
+  setSettingsOpen: (open) =>
+    set(
+      open
+        ? { settingsOpen: true }
+        : { settingsOpen: false, settingsFocusSection: null },
+    ),
+  openSettings: (section) =>
+    set({
+      settingsOpen: true,
+      settingsFocusSection: section ?? null,
+    }),
   applyTheme: (theme) => {
     const next = normalizeTheme(theme);
     applyDocumentTheme(next);

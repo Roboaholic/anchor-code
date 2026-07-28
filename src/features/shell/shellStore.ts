@@ -14,6 +14,11 @@ export interface ShellState {
   terminalVisible: boolean;
   versionLabel: string | null;
   openWorkspaceDialog: boolean;
+  /**
+   * Prompt to install the Anchor Review agent skill into the opened workspace.
+   * Set after Open Workspace when `.agents/skills/anchor-review` is missing.
+   */
+  skillInstallPromptRoot: string | null;
   /** Quick Open (Ctrl+P) or Open Path (Ctrl+O). */
   palette: PaletteMode | null;
   setLeftMode: (mode: LeftMode) => void;
@@ -25,6 +30,8 @@ export interface ShellState {
   setTerminalVisible: (visible: boolean) => void;
   setVersionLabel: (label: string | null) => void;
   setOpenWorkspaceDialog: (open: boolean) => void;
+  setSkillInstallPromptRoot: (root: string | null) => void;
+  dismissSkillInstallPrompt: () => void;
   openPalette: (mode: PaletteMode) => void;
   closePalette: () => void;
 }
@@ -37,6 +44,7 @@ export const useShellStore = create<ShellState>((set) => ({
   terminalVisible: false,
   versionLabel: null,
   openWorkspaceDialog: false,
+  skillInstallPromptRoot: null,
   palette: null,
   setLeftMode: (mode) => set({ leftMode: mode }),
   toggleLeft: () => set((s) => ({ leftVisible: !s.leftVisible })),
@@ -48,6 +56,8 @@ export const useShellStore = create<ShellState>((set) => ({
   setTerminalVisible: (visible) => set({ terminalVisible: visible }),
   setVersionLabel: (label) => set({ versionLabel: label }),
   setOpenWorkspaceDialog: (open) => set({ openWorkspaceDialog: open }),
+  setSkillInstallPromptRoot: (root) => set({ skillInstallPromptRoot: root }),
+  dismissSkillInstallPrompt: () => set({ skillInstallPromptRoot: null }),
   openPalette: (mode) => set({ palette: mode }),
   closePalette: () => set({ palette: null }),
 }));

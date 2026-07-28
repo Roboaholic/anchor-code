@@ -83,8 +83,6 @@ const DEFAULT_RG_GLOBS = [
   "!**/*.{lock,min.js,min.css,map}",
 ];
 
-/** Max concurrent per-directory rg processes (generic fan-out, not project-specific). */
-const RG_DIR_CONCURRENCY = 6;
 
 /**
  * rg command resolution cache:
@@ -513,6 +511,9 @@ function buildRgArgs(
     "--no-heading",
     "--color",
     "never",
+    // Piped stdout is fully buffered by default — without this the UI
+    // only receives hits after rg exits (feels like "wait for full scan").
+    "--line-buffered",
     "--glob",
     "!.git/**",
     "--max-count",
@@ -547,39 +548,6 @@ function buildRgArgs(
   return args;
 }
 
-/**
- * Top-level entries under the workspace (dirs + files), minus plain-name excludes.
- * Used only for concurrent fan-out — no preferred project directory names.
- */
-async function listTopLevelSearchTargets(
-  host: HostSession,
-  root: string,
-  o: ReturnType<typeof normalizeOpts>,
-): Promise<string[]> {
-  if (o.include.length > 0) return ["."];
-  try {
-    const entries = await host.listDir(root);
-    const excluded = new Set(
-      o.exclude
-        .map((ex) => ex.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""))
-        .filter((e) => e && !e.includes("*") && !e.includes("/")),
-    );
-    const names = entries
-      .map((e) => e.name)
-      .filter(
-        (n) =>
-          n &&
-          n !== "." &&
-          n !== ".." &&
-          // Skip hidden VCS/tool dirs at root; user can include via filters if needed.
-          !n.startsWith(".") &&
-          !excluded.has(n),
-      );
-    return names.length > 0 ? names : ["."];
-  } catch {
-    return ["."];
-  }
-}
 
 function finishGrepStream(
   root: string,
@@ -744,9 +712,9 @@ async function tryRipgrepWslUnc(
 }
 
 /**
- * Ripgrep entry: fan out over top-level workspace entries concurrently so the
- * first matching subtree can stream hits without waiting for sibling trees.
- * No project-specific directory names — only structure-based parallelism.
+ * Ripgrep over the whole tree. Starts immediately (no listDir wait) so the
+ * first match can stream to the UI as soon as rg prints a line.
+ * `--line-buffered` is required — piped stdout is fully buffered otherwise.
  */
 async function tryRipgrep(
   host: HostSession,
@@ -756,114 +724,9 @@ async function tryRipgrep(
   onHits?: (hits: ContentSearchHit[]) => void,
   onSource?: (source: ContentSearchResult["source"]) => void,
 ): Promise<ContentSearchResult | null> {
-  const targets = await listTopLevelSearchTargets(host, root, o);
-  if (targets.length <= 1) {
-    return runRipgrepOnce(
-      host,
-      root,
-      query,
-      o,
-      onHits,
-      onSource,
-      targets.length === 1 ? targets : ["."],
-    );
-  }
-  return runRipgrepParallel(host, root, query, o, onHits, onSource, targets);
+  return runRipgrepOnce(host, root, query, o, onHits, onSource, ["."]);
 }
 
-/**
- * Concurrent per-entry rg. Shared hit budget; whichever subtree matches first
- * reports first. Generic — works for any workspace layout.
- */
-async function runRipgrepParallel(
-  host: HostSession,
-  root: string,
-  query: string,
-  o: ReturnType<typeof normalizeOpts>,
-  onHits: ((hits: ContentSearchHit[]) => void) | undefined,
-  onSource: ((source: ContentSearchResult["source"]) => void) | undefined,
-  targets: string[],
-): Promise<ContentSearchResult | null> {
-  onSource?.("rg");
-
-  const allHits: ContentSearchHit[] = [];
-  let stop = false;
-  let anyEngine = false;
-  let hardFailAll = true;
-
-  const acceptBatch = (batch: ContentSearchHit[]) => {
-    if (stop || batch.length === 0) return;
-    const room = o.maxResults - allHits.length;
-    if (room <= 0) {
-      stop = true;
-      return;
-    }
-    const take = batch.length > room ? batch.slice(0, room) : batch;
-    allHits.push(...take);
-    onHits?.(take);
-    if (allHits.length >= o.maxResults) stop = true;
-  };
-
-  const shouldStop = () => stop || allHits.length >= o.maxResults;
-
-  const runOneTarget = async (target: string): Promise<void> => {
-    if (shouldStop()) return;
-    const localOnHits = (batch: ContentSearchHit[]) => acceptBatch(batch);
-    const r = await runRipgrepOnce(
-      host,
-      root,
-      query,
-      o,
-      localOnHits,
-      undefined, // don't re-fire onSource per worker
-      [target],
-      shouldStop,
-    );
-    if (r) {
-      anyEngine = true;
-      hardFailAll = false;
-      if (!shouldStop() && r.hits.length > 0) {
-        // Dedup any flush-only hits not already streamed.
-        const seen = new Set(allHits.map((h) => `${h.path}:${h.line}`));
-        const extra = r.hits.filter((h) => !seen.has(`${h.path}:${h.line}`));
-        acceptBatch(extra);
-      }
-    }
-  };
-
-  // Bounded pool over top-level entries.
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(RG_DIR_CONCURRENCY, targets.length) },
-    async () => {
-      while (!shouldStop()) {
-        const i = next++;
-        if (i >= targets.length) return;
-        try {
-          await runOneTarget(targets[i]!);
-        } catch {
-          // one subtree failed — continue others
-        }
-      }
-    },
-  );
-
-  await Promise.all(workers);
-
-  if (!anyEngine && hardFailAll) {
-    // Fall back to a single full-tree run (engine probe / simple trees).
-    return runRipgrepOnce(host, root, query, o, onHits, onSource, ["."]);
-  }
-  if (!anyEngine) return null;
-
-  return {
-    root,
-    query,
-    hits: allHits.slice(0, o.maxResults),
-    truncated: allHits.length >= o.maxResults,
-    source: "rg",
-  };
-}
 
 /** One ripgrep invocation over the given relative paths (local / WSL / UNC). */
 async function runRipgrepOnce(

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   Panel,
   PanelGroup,
@@ -8,6 +8,7 @@ import {
 import { DocumentArea } from "@/features/document/DocumentArea";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { Icon } from "@/shared/Icon";
 import { LeftNav } from "./LeftNav";
 import { QuickOpenPalette, invalidateFileIndexCache } from "./QuickOpen";
 import { NewAgentDialogHost } from "@/features/terminal/NewAgentDialogHost";
@@ -72,6 +73,14 @@ export function Shell() {
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
   const openWorkspaceDialog = useShellStore((s) => s.openWorkspaceDialog);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
+  const skillInstallPromptRoot = useShellStore((s) => s.skillInstallPromptRoot);
+  const dismissSkillInstallPrompt = useShellStore(
+    (s) => s.dismissSkillInstallPrompt,
+  );
+  const [skillInstallBusy, setSkillInstallBusy] = useState(false);
+  const [skillInstallError, setSkillInstallError] = useState<string | null>(
+    null,
+  );
   const openPalette = useShellStore((s) => s.openPalette);
   const closePalette = useShellStore((s) => s.closePalette);
   const palette = useShellStore((s) => s.palette);
@@ -221,6 +230,94 @@ export function Shell() {
   return (
     <div className="shell">
       <TopBar />
+      {skillInstallPromptRoot &&
+      workspaceRoot &&
+      skillInstallPromptRoot === workspaceRoot ? (
+        <div className="skill-install-toast" role="status" aria-live="polite">
+          <div className="skill-install-toast__card">
+            <div className="skill-install-toast__icon" aria-hidden>
+              <Icon name="robot" />
+            </div>
+            <div className="skill-install-toast__body">
+              <div className="skill-install-toast__title-row">
+                <strong className="skill-install-toast__title">
+                  Install Anchor Review skill?
+                </strong>
+                <button
+                  type="button"
+                  className="icon-btn skill-install-toast__dismiss"
+                  aria-label="Dismiss"
+                  disabled={skillInstallBusy}
+                  onClick={() => {
+                    setSkillInstallError(null);
+                    dismissSkillInstallPrompt();
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+              <p className="skill-install-toast__desc">
+                Teach agent CLIs how to read{" "}
+                <code>.anchor-code</code> comments, implement{" "}
+                <code>need_modify</code>, then mark them{" "}
+                <code>closed</code>.
+              </p>
+              <p className="skill-install-toast__path muted">
+                Installs to{" "}
+                <code>.agents/skills/anchor-review/</code>
+              </p>
+              {skillInstallError ? (
+                <p className="skill-install-toast__err" role="alert">
+                  {skillInstallError}
+                </p>
+              ) : null}
+              <div className="skill-install-toast__actions">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  disabled={skillInstallBusy}
+                  onClick={() => {
+                    setSkillInstallError(null);
+                    dismissSkillInstallPrompt();
+                  }}
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--accent btn--small"
+                  disabled={skillInstallBusy}
+                  onClick={() => {
+                    void (async () => {
+                      setSkillInstallBusy(true);
+                      setSkillInstallError(null);
+                      try {
+                        const r =
+                          await window.anchor.skill.installWorkspace(
+                            workspaceRoot,
+                          );
+                        if (!r.ok) {
+                          setSkillInstallError(r.error ?? "Install failed");
+                          return;
+                        }
+                        dismissSkillInstallPrompt();
+                      } catch (err) {
+                        setSkillInstallError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setSkillInstallBusy(false);
+                      }
+                    })();
+                  }}
+                >
+                  {skillInstallBusy ? "Installing…" : "Install"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="shell__body">
         {/*
           Stable PanelGroup (no remount keys). Toggling left / agent / terminal

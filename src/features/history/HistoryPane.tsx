@@ -31,6 +31,8 @@ export function HistoryPane() {
   const toast = useHistoryStore((s) => s.toast);
   const clearToast = useHistoryStore((s) => s.clearToast);
   const discover = useHistoryStore((s) => s.discover);
+  const softRefreshStatuses = useHistoryStore((s) => s.softRefreshStatuses);
+  const refreshAllStatuses = useHistoryStore((s) => s.refreshAllStatuses);
 
   useEffect(() => {
     if (!workspaceRoot) return;
@@ -39,6 +41,44 @@ export function HistoryPane() {
     if (discoverStatus === "error") return;
     void discover(workspaceRoot);
   }, [workspaceRoot, discoverStatus, repos.length, discover]);
+
+  // Badge-first (VS Code SCM style):
+  // - While HISTORY is open: quiet-poll M/A/D/? + ahead/behind for all repos
+  // - Expanding a repo / Changes / History section: refresh that repo's detail
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    if (repos.length === 0) return;
+    if (discoverStatus === "loading") return;
+
+    let cancelled = false;
+    let inFlight = false;
+    const tick = () => {
+      if (cancelled || inFlight) return;
+      if (document.visibilityState !== "visible") return;
+      inFlight = true;
+      // Quiet badge refresh only — no commit logs, no loading flicker.
+      void softRefreshStatuses().finally(() => {
+        inFlight = false;
+      });
+    };
+
+    tick();
+
+    const onFocus = () => tick();
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    const interval = window.setInterval(tick, 12_000);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(interval);
+    };
+  }, [workspaceRoot, repos.length, discoverStatus, softRefreshStatuses]);
 
   if (!workspaceRoot) {
     return (
@@ -105,9 +145,9 @@ export function HistoryPane() {
         <button
           type="button"
           className="icon-btn"
-          onClick={() => void discover(workspaceRoot)}
-          title="Rescan for git roots"
-          aria-label="Rescan for git roots"
+          onClick={() => void refreshAllStatuses()}
+          title="Refresh status"
+          aria-label="Refresh status"
         >
           <Icon name="refresh" />
         </button>
@@ -206,9 +246,7 @@ function RepoCard({
         </button>
         <BranchSwitcher card={card} branchLabel={branchLabel} />
         <span className="repo-row__meta">
-          {card.statusState === "loading" ? (
-            <span className="repo-row__count is-muted">…</span>
-          ) : card.statusState === "error" ? (
+          {card.statusState === "error" && !card.status ? (
             <span
               className="repo-row__count is-muted"
               title={card.statusError ?? "Status failed"}
@@ -257,7 +295,22 @@ function RepoCard({
                   ↓{card.status.behind}
                 </span>
               ) : null}
+              {card.statusState === "loading" ? (
+                <span className="repo-row__count is-muted" title="Refreshing…">
+                  …
+                </span>
+              ) : null}
+              {card.statusState === "error" && card.statusError ? (
+                <span
+                  className="repo-row__count is-muted"
+                  title={card.statusError}
+                >
+                  err
+                </span>
+              ) : null}
             </>
+          ) : card.statusState === "loading" ? (
+            <span className="repo-row__count is-muted">…</span>
           ) : null}
         </span>
       </div>
@@ -610,9 +663,11 @@ function BranchSwitcher({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-
-  const label = branchLabel ?? (card.switchingBranch ? "…" : "detached");
+  // Only show "detached" after a successful status with branch === null.
+  // While first-load / switching, show "…" — never wipe a known branch.
   const busy = card.switchingBranch;
+  const label =
+    branchLabel ?? (busy || !card.status ? "…" : "detached");
 
   const toggle = () => {
     if (busy) return;
@@ -640,7 +695,9 @@ function BranchSwitcher({
         title={
           branchLabel
             ? `Current branch: ${branchLabel}. Click to switch.`
-            : "Detached HEAD. Click to switch to a branch."
+            : card.status
+              ? "Detached HEAD. Click to switch to a branch."
+              : "Loading branch…"
         }
         aria-haspopup="listbox"
         aria-expanded={open}

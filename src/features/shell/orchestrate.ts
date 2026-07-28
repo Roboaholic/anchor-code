@@ -56,6 +56,7 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
   // Agent / terminal panels stay closed until the user toggles them.
   useShellStore.getState().setAgentVisible(false);
   useShellStore.getState().setTerminalVisible(false);
+  useShellStore.getState().setSkillInstallPromptRoot(null);
   // History / terminal must not block a successful workspace open.
   try {
     await useHistoryStore.getState().discover(root);
@@ -66,6 +67,15 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
     await useTerminalStore.getState().resetForWorkspace(root);
   } catch (err) {
     console.warn("[shell] terminal.resetForWorkspace failed:", err);
+  }
+  try {
+    const installed =
+      (await window.anchor?.skill?.isWorkspaceInstalled?.(root)) ?? false;
+    if (!installed) {
+      useShellStore.getState().setSkillInstallPromptRoot(root);
+    }
+  } catch (err) {
+    console.warn("[shell] skill install check failed:", err);
   }
 }
 

@@ -57,8 +57,19 @@ export interface HistoryState {
   toast: string | null;
 
   discover: (workspaceRoot: string) => Promise<void>;
-  refreshStatus: (repoRoot: string) => Promise<void>;
-  refreshAllStatuses: () => Promise<void>;
+  refreshStatus: (
+    repoRoot: string,
+    opts?: { quiet?: boolean; badgeOnly?: boolean },
+  ) => Promise<void>;
+  refreshAllStatuses: (opts?: {
+    quiet?: boolean;
+    badgeOnly?: boolean;
+  }) => Promise<void>;
+  /**
+   * Quiet badge-only refresh (M/A/D/?, ahead/behind).
+   * Does not reload commit logs — expand History for that.
+   */
+  softRefreshStatuses: () => Promise<void>;
   toggleExpanded: (repoRoot: string) => void;
   toggleChanges: (repoRoot: string) => void;
   toggleHistory: (repoRoot: string) => Promise<void>;
@@ -148,19 +159,12 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   discover: async (workspaceRoot) => {
-    set((s) => ({
+    set({
       workspaceRoot,
       discoverStatus: "loading",
       discoverError: null,
       toast: null,
-      // Wipe prior clean/dirty badges immediately so Rescan never shows stale clean.
-      repos: s.repos.map((r) => ({
-        ...r,
-        status: null,
-        statusState: "loading" as const,
-        statusError: null,
-      })),
-    }));
+    });
     try {
       const found = await Promise.race([
         window.anchor.history.discover(workspaceRoot),
@@ -176,10 +180,24 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           );
         }),
       ]);
-      const repos = found.map(emptyCard);
+      // Keep prior status/branch/UI expand state for roots that still exist.
+      // Replacing with emptyCard made every row flash "detached" until status returned.
+      const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));
+      const repos = found.map((info) => {
+        const prev = prevByRoot.get(info.root);
+        if (prev) {
+          return {
+            ...prev,
+            root: info.root,
+            name: info.name,
+          };
+        }
+        return emptyCard(info);
+      });
       set({ repos, discoverStatus: "idle", discoverError: null });
       void get().loadRecent(workspaceRoot);
-      void get().refreshAllStatuses();
+      // Quiet: don't wipe badges mid-refresh; only update under the hood.
+      void get().refreshAllStatuses({ quiet: true });
     } catch (err) {
       set({
         discoverStatus: "error",
@@ -188,19 +206,116 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
   },
 
-  refreshAllStatuses: async () => {
+  refreshAllStatuses: async (opts) => {
+    const quiet = opts?.quiet === true;
+    // Badge-only is the default for bulk refresh: branch + M/A/D/↑↓ without
+    // walking every untracked path. Full status happens when a repo expands.
+    const badgeOnly = opts?.badgeOnly !== false;
     const { repos } = get();
-    // Drop stale badges (especially "clean") so mid-scan never looks finished.
-    set({
-      repos: repos.map((r) => ({
-        ...r,
-        status: null,
-        statusState: "loading" as const,
-        statusError: null,
-      })),
-    });
-    // Cap concurrency — WSL chokes on many parallel git status / wsl.exe.
-    const concurrency = 3;
+    if (repos.length === 0) return;
+
+    // Visible refresh: show a small "…" on every row until that row is updated.
+    // Quiet polls keep the UI still.
+    if (!quiet) {
+      set({
+        repos: repos.map((r) => ({
+          ...r,
+          statusState: "loading" as const,
+          statusError: null,
+        })),
+      });
+    }
+
+    // One bulk call on WSL/SSH (N×wsl.exe hangs). Progressive events clear dots.
+    if (badgeOnly && typeof window.anchor.history.statusBulk === "function") {
+      const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));
+      const applyOne = (st: {
+        repoRoot: string;
+        entries: { path: string; status: string; code: string }[];
+        modified: number;
+        added: number;
+        deleted: number;
+        untracked: number;
+        branch: string | null;
+        ahead: number | null;
+        behind: number | null;
+      }) => {
+        const prev = prevByRoot.get(st.repoRoot);
+        const merged =
+          prev?.status?.entries?.length && st.entries.length === 0
+            ? {
+                ...st,
+                entries: prev.status.entries,
+                untracked:
+                  st.untracked > 0
+                    ? st.untracked
+                    : (prev.status.untracked ?? 0),
+              }
+            : st;
+        set((s) => ({
+          repos: mapCard(s.repos, st.repoRoot, {
+            status: merged,
+            statusState: "idle",
+            statusError: null,
+          }),
+        }));
+      };
+
+      const unsub =
+        typeof window.anchor.history.onStatusBulkOne === "function"
+          ? window.anchor.history.onStatusBulkOne(applyOne)
+          : null;
+
+      try {
+        const statuses = await Promise.race([
+          window.anchor.history.statusBulk({
+            repoRoots: repos.map((r) => r.root),
+            badgeOnly: true,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Bulk status timed out. WSL may be busy — try Refresh.",
+                  ),
+                ),
+              60_000,
+            );
+          }),
+        ]);
+        // Apply any that the stream missed (or if no progressive channel).
+        for (const st of statuses) applyOne(st);
+        // Anything still loading: clear dots, keep prior status.
+        set((s) => ({
+          repos: s.repos.map((r) =>
+            r.statusState === "loading"
+              ? { ...r, statusState: "idle" as const, statusError: null }
+              : r,
+          ),
+        }));
+        return;
+      } catch (err) {
+        set((s) => ({
+          repos: s.repos.map((r) =>
+            r.statusState === "loading"
+              ? { ...r, statusState: "idle" as const }
+              : r,
+          ),
+          toast: quiet
+            ? s.toast
+            : err instanceof Error
+              ? err.message
+              : "Failed to refresh statuses",
+        }));
+        return;
+      } finally {
+        unsub?.();
+      }
+    }
+
+    // Full status / no bulk: low concurrency per-repo (shows/clears per card).
+    const concurrency = 2;
     let i = 0;
     const roots = repos.map((r) => r.root);
     async function worker() {
@@ -208,7 +323,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         const idx = i++;
         const root = roots[idx];
         if (!root) break;
-        await get().refreshStatus(root);
+        await get().refreshStatus(root, { quiet, badgeOnly });
       }
     }
     await Promise.all(
@@ -219,36 +334,72 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     );
   },
 
-  refreshStatus: async (repoRoot) => {
-    set((s) => ({
-      repos: mapCard(s.repos, repoRoot, {
-        statusState: "loading",
-        statusError: null,
-      }),
-    }));
+  refreshStatus: async (repoRoot, opts) => {
+    const quiet = opts?.quiet === true;
+    const badgeOnly = opts?.badgeOnly === true;
+    const existing = findCard(get().repos, repoRoot);
+    if (quiet && existing?.statusState === "loading") return;
+
+    // Only show loading chrome when this card has never loaded status.
+    if (!quiet && !existing?.status) {
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
+          statusState: "loading",
+          statusError: null,
+        }),
+      }));
+    }
     try {
       const status = await Promise.race([
-        window.anchor.history.status(repoRoot),
+        window.anchor.history.status(repoRoot, { badgeOnly }),
         new Promise<never>((_, reject) => {
           setTimeout(
             () =>
               reject(
                 new Error(
-                  "Status timed out (20s). Repo may be huge or WSL is busy — try Refresh.",
+                  "Status timed out. Repo may be huge or WSL is busy — try Refresh.",
                 ),
               ),
-            20_000,
+            badgeOnly ? 20_000 : 30_000,
           );
         }),
       ]);
+      const merged =
+        badgeOnly && existing?.status?.entries?.length
+          ? {
+              ...status,
+              entries:
+                status.entries.length > 0
+                  ? status.entries
+                  : existing.status.entries,
+              untracked:
+                status.untracked > 0
+                  ? status.untracked
+                  : (existing.status.untracked ?? 0),
+            }
+          : status;
       set((s) => ({
         repos: mapCard(s.repos, repoRoot, {
-          status,
+          status: merged,
           statusState: "idle",
           statusError: null,
         }),
       }));
     } catch (err) {
+      // Keep last good status — never flip known branches to err/….
+      if (existing?.status) {
+        set((s) => ({
+          repos: mapCard(s.repos, repoRoot, {
+            statusState: "idle",
+            statusError: quiet
+              ? null
+              : err instanceof Error
+                ? err.message
+                : String(err),
+          }),
+        }));
+        return;
+      }
       set((s) => ({
         repos: mapCard(s.repos, repoRoot, {
           statusState: "error",
@@ -258,26 +409,40 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
   },
 
+  softRefreshStatuses: async () => {
+    const { repos, discoverStatus } = get();
+    if (discoverStatus === "loading" || repos.length === 0) return;
+    await get().refreshAllStatuses({ quiet: true, badgeOnly: true });
+  },
+
   toggleExpanded: (repoRoot) => {
-    set((s) => {
-      const card = findCard(s.repos, repoRoot);
-      if (!card) return s;
-      return {
-        repos: mapCard(s.repos, repoRoot, { expanded: !card.expanded }),
-      };
-    });
+    const card = findCard(get().repos, repoRoot);
+    if (!card) return;
+    const next = !card.expanded;
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, { expanded: next }),
+    }));
+    // Opening a repo: full status (file list) for Changes.
+    // Collapsed repos only get quiet badge polls from HistoryPane.
+    if (next) {
+      void get().refreshStatus(repoRoot, { badgeOnly: false });
+    }
   },
 
   toggleChanges: (repoRoot) => {
-    set((s) => {
-      const card = findCard(s.repos, repoRoot);
-      if (!card) return s;
-      return {
-        repos: mapCard(s.repos, repoRoot, {
-          changesOpen: !card.changesOpen,
-        }),
-      };
-    });
+    const card = findCard(get().repos, repoRoot);
+    if (!card) return;
+    const nextOpen = !card.changesOpen;
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, {
+        changesOpen: nextOpen,
+        expanded: nextOpen ? true : card.expanded,
+      }),
+    }));
+    // Opening Changes (including first expand of a collapsed repo): full status.
+    if (nextOpen) {
+      void get().refreshStatus(repoRoot, { badgeOnly: false });
+    }
   },
 
   toggleCompares: (repoRoot) => {

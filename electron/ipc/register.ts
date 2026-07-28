@@ -35,6 +35,7 @@ import {
   listBranches,
   loadLog,
   loadRepoStatus,
+  loadRepoStatusesBulk,
 } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import {
@@ -49,6 +50,12 @@ import {
   buildAgentLaunchArgs,
   discoverAgentLaunchOptions,
 } from "../services/agentLaunch.js";
+import {
+  getSkillInstallStatus,
+  installSkill,
+  installSkillToWorkspace,
+  isWorkspaceSkillInstalled,
+} from "../services/skillInstall.js";
 import { findWorkspaceFiles } from "../services/fileIndex.js";
 import { searchWorkspaceContent } from "../services/contentSearch.js";
 import {
@@ -573,7 +580,7 @@ export function registerIpc(opts: {
       root: string;
       files: string[];
       truncated: boolean;
-      source: "git" | "walk";
+      source: "git" | "walk" | "multi-git";
     }> => {
       try {
         const h = host();
@@ -764,9 +771,37 @@ export function registerIpc(opts: {
 
   ipcMain.handle(
     "history:status",
-    async (_evt, repoRoot: string) => {
+    async (
+      _evt,
+      repoRoot: string,
+      opts?: { badgeOnly?: boolean },
+    ) => {
       try {
-        return await loadRepoStatus(host(), repoRoot);
+        return await loadRepoStatus(host(), repoRoot, opts);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:statusBulk",
+    async (
+      evt,
+      args: { repoRoots: string[]; badgeOnly?: boolean },
+    ) => {
+      try {
+        const roots = Array.isArray(args?.repoRoots) ? args.repoRoots : [];
+        return await loadRepoStatusesBulk(host(), roots, {
+          badgeOnly: args?.badgeOnly !== false,
+          onStatus: (status) => {
+            try {
+              evt.sender.send("history:statusBulk:one", status);
+            } catch {
+              // window gone
+            }
+          },
+        });
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1267,6 +1302,71 @@ export function registerIpc(opts: {
           effort: args.effort,
           prompt: args.prompt,
         });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "skill:status",
+    async (
+      _evt,
+      args?: { workspaceRoot?: string | null },
+    ) => {
+      try {
+        return await getSkillInstallStatus(
+          host(),
+          args?.workspaceRoot ?? host().workspaceRoot,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "skill:install",
+    async (
+      _evt,
+      args?: {
+        workspaceRoot?: string | null;
+        targetIds?: string[];
+      },
+    ) => {
+      try {
+        return await installSkill(host(), {
+          workspaceRoot: args?.workspaceRoot ?? host().workspaceRoot,
+          targetIds: args?.targetIds,
+        });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "skill:installWorkspace",
+    async (_evt, workspaceRoot: string) => {
+      try {
+        if (!workspaceRoot || typeof workspaceRoot !== "string") {
+          throw new HostError("failed", "workspaceRoot required");
+        }
+        return await installSkillToWorkspace(host(), workspaceRoot);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "skill:isWorkspaceInstalled",
+    async (_evt, workspaceRoot: string) => {
+      try {
+        if (!workspaceRoot || typeof workspaceRoot !== "string") {
+          return false;
+        }
+        return await isWorkspaceSkillInstalled(host(), workspaceRoot);
       } catch (err) {
         rethrowIpc(err);
       }

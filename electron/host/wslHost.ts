@@ -235,24 +235,25 @@ export class WslHostSession implements HostSession {
       const parent = path.win32.dirname(unc);
       await fsp.mkdir(parent, { recursive: true });
       await fsp.writeFile(unc, data, "utf8");
-    } catch (err) {
-      if (!this.isUncGap(err)) {
-        throw this.mapFsError(err, `Cannot write file: ${p}`);
-      }
-      const dir = p.includes("/")
-        ? p.slice(0, p.lastIndexOf("/")) || "/"
-        : "/";
-      const b64 = Buffer.from(data, "utf8").toString("base64");
-      const r = await this.runBash(
-        `mkdir -p ${this.escapeSingle(dir)} && printf '%s' ${this.escapeSingle(b64)} | base64 -d > ${this.escapeSingle(p)}`,
+      return;
+    } catch {
+      // UNC mkdir/write often fails for nested trees / 9P — use Linux shell.
+    }
+    const dir = p.includes("/")
+      ? p.slice(0, p.lastIndexOf("/")) || "/"
+      : "/";
+    const b64 = Buffer.from(data, "utf8").toString("base64");
+    // bash -s + stdin avoids double-quoting issues in run()'s -lc path.
+    const script = `mkdir -p ${this.escapeSingle(dir)} && printf '%s' ${this.escapeSingle(b64)} | base64 -d > ${this.escapeSingle(p)}\n`;
+    const r = await this.run(dir === "/" ? "/" : dir, "bash", ["-s"], {
+      stdin: script,
+    });
+    if (r.code !== 0) {
+      throw new HostError(
+        "failed",
+        `Cannot write file: ${p}`,
+        r.stderr || r.stdout,
       );
-      if (r.code !== 0) {
-        throw new HostError(
-          "failed",
-          `Cannot write file: ${p}`,
-          r.stderr || r.stdout,
-        );
-      }
     }
   }
 
@@ -350,11 +351,25 @@ export class WslHostSession implements HostSession {
 
   async mkdirp(dirPath: string): Promise<void> {
     const p = hostNormalize("wsl", dirPath);
+    if (p === "/" || p === ".") return;
     try {
       const unc = await this.toUnc(p);
       await fsp.mkdir(unc, { recursive: true });
+      return;
     } catch (err) {
-      throw this.mapFsError(err, `Cannot create directory: ${p}`);
+      // \\wsl$\ recursive mkdir often fails for nested trees / 9P quirks —
+      // same gap writeFile already handles via bash.
+      if (!this.isUncGap(err)) {
+        // Still try bash: some EACCES / EINVAL on UNC work fine inside Linux.
+      }
+    }
+    const r = await this.runBash(`mkdir -p ${this.escapeSingle(p)}`);
+    if (r.code !== 0) {
+      throw new HostError(
+        "failed",
+        `Cannot create directory: ${p}`,
+        r.stderr || r.stdout,
+      );
     }
   }
 

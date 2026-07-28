@@ -86,6 +86,14 @@ describe("WslHostSession", () => {
       expect(readBack).toBe(payload);
       // best-effort cleanup via wsl
       await host.run("/", "rm", ["-f", probe]);
+
+      // Nested mkdirp must work even when UNC recursive create fails.
+      const nested = `/tmp/anchor-wsl-mkdir-${Date.now()}/.agents/skills/anchor-review`;
+      await host.mkdirp(nested);
+      expect(await host.exists(nested)).toBe(true);
+      await host.writeFile(`${nested}/SKILL.md`, "# skill\n");
+      expect(await host.readFile(`${nested}/SKILL.md`)).toBe("# skill\n");
+      await host.run("/", "rm", ["-rf", nested.replace(/\/\.agents.*/, "")]);
     },
     60_000,
   );

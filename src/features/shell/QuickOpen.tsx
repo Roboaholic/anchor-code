@@ -19,7 +19,7 @@ type IndexCache = {
   root: string;
   files: string[];
   truncated: boolean;
-  source?: "git" | "walk";
+  source?: "git" | "walk" | "multi-git";
   at: number;
 };
 
@@ -123,7 +123,9 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [truncated, setTruncated] = useState(false);
-  const [source, setSource] = useState<"git" | "walk" | null>(null);
+  const [source, setSource] = useState<"git" | "walk" | "multi-git" | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState(0);

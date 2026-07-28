@@ -1,10 +1,48 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/shared/Icon";
+import type { AppUpdateState } from "@/shared/anchor-api";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
+
+function updateBadgeMeta(state: AppUpdateState | null): {
+  show: boolean;
+  title: string;
+  label: string;
+} {
+  if (!state) return { show: false, title: "", label: "" };
+  if (state.status === "available") {
+    return {
+      show: true,
+      title: state.latestVersion
+        ? `Update available: v${state.latestVersion}`
+        : "Update available",
+      label: state.latestVersion ? `v${state.latestVersion}` : "Update",
+    };
+  }
+  if (state.status === "downloaded") {
+    return {
+      show: true,
+      title: state.latestVersion
+        ? `Update ready: v${state.latestVersion} — restart to install`
+        : "Update ready — restart to install",
+      label: "Restart",
+    };
+  }
+  if (state.status === "downloading") {
+    return {
+      show: true,
+      title:
+        state.progress != null
+          ? `Downloading update… ${state.progress}%`
+          : "Downloading update…",
+      label: state.progress != null ? `${state.progress}%` : "…",
+    };
+  }
+  return { show: false, title: "", label: "" };
+}
 
 export function TopBar() {
   const agentVisible = useShellStore((s) => s.agentVisible);
@@ -16,9 +54,25 @@ export function TopBar() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const settingsOpen = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
+  const openSettings = useThemeStore((s) => s.openSettings);
   const rightRailRef = useRef<HTMLDivElement>(null);
   const [rightRailTip, setRightRailTip] = useState(false);
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.anchor?.updates?.getState?.().then((s) => {
+      if (!cancelled) setUpdateState(s);
+    });
+    const off = window.anchor?.updates?.onState?.((s) => {
+      setUpdateState(s);
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -110,9 +164,42 @@ export function TopBar() {
 
         <div className="topbar__right">
           {versionLabel ? (
-            <span className="topbar__version" title="shell.getVersion">
-              {versionLabel}
-            </span>
+            <div className="topbar__version-wrap">
+              <span className="topbar__version" title="shell.getVersion">
+                {versionLabel}
+              </span>
+              {(() => {
+                const badge = updateBadgeMeta(updateState);
+                if (!badge.show) return null;
+                return (
+                  <button
+                    type="button"
+                    className={`topbar__update-badge${
+                      updateState?.status === "downloaded"
+                        ? " is-ready"
+                        : updateState?.status === "downloading"
+                          ? " is-busy"
+                          : ""
+                    }`}
+                    title={badge.title}
+                    aria-label={badge.title}
+                    onClick={() => openSettings("updates")}
+                  >
+                    <Icon
+                      name={
+                        updateState?.status === "downloading"
+                          ? "refresh"
+                          : "desktop-download"
+                      }
+                      className="topbar__update-badge-icon"
+                    />
+                    <span className="topbar__update-badge-label">
+                      {badge.label}
+                    </span>
+                  </button>
+                );
+              })()}
+            </div>
           ) : null}
 
           {/* Settings / Agent / Terminal — one rail, equal spacing, mode-btn highlight */}

@@ -77,4 +77,31 @@ describe("findWorkspaceFiles", () => {
     // ignored by git
     expect(result.files).not.toContain("skip-me.log");
   });
+
+  it("merges nested git repos for multi-repo workspaces", async () => {
+    // Workspace root is NOT a usable git worktree (empty .git like repo stubs).
+    await fs.mkdir(path.join(tmp, ".git"), { recursive: true });
+
+    // Nested project A
+    const a = path.join(tmp, "hardware", "chip");
+    await fs.mkdir(path.join(a, "src"), { recursive: true });
+    execFileSync("git", ["init"], { cwd: a, stdio: "ignore" });
+    await fs.writeFile(path.join(a, "src", "AmbaRTSL_SPI.c"), "int x;\n");
+    execFileSync("git", ["add", "src/AmbaRTSL_SPI.c"], {
+      cwd: a,
+      stdio: "ignore",
+    });
+
+    // Nested project B
+    const b = path.join(tmp, "common", "svc");
+    await fs.mkdir(b, { recursive: true });
+    execFileSync("git", ["init"], { cwd: b, stdio: "ignore" });
+    await fs.writeFile(path.join(b, "readme.md"), "hi\n");
+    execFileSync("git", ["add", "readme.md"], { cwd: b, stdio: "ignore" });
+
+    const result = await findWorkspaceFiles(host, tmp);
+    expect(result.source).toBe("multi-git");
+    expect(result.files).toContain("hardware/chip/src/AmbaRTSL_SPI.c");
+    expect(result.files).toContain("common/svc/readme.md");
+  });
 });

@@ -302,6 +302,31 @@ export interface AnchReviewExportPayload {
   entries: Array<Record<string, unknown>>;
 }
 
+export interface SkillInstallTarget {
+  id: string;
+  kind: "workspace" | "user";
+  label: string;
+  dir: string;
+  skillPath: string;
+  installed: boolean;
+  upToDate: boolean;
+}
+
+export interface SkillInstallStatus {
+  skillId: string;
+  sourcePath: string | null;
+  sourceVersionHint: string | null;
+  targets: SkillInstallTarget[];
+  workspaceRoot: string | null;
+}
+
+export interface SkillInstallResult {
+  ok: boolean;
+  installed: Array<{ id: string; skillPath: string }>;
+  skipped: Array<{ id: string; reason: string }>;
+  error?: string;
+}
+
 export interface AnchorApi {
   shell: {
     getVersion: () => Promise<AppVersionInfo>;
@@ -349,7 +374,7 @@ export interface AnchorApi {
       root: string;
       files: string[];
       truncated: boolean;
-      source?: "git" | "walk";
+      source?: "git" | "walk" | "multi-git";
     }>;
     searchContent: (args: {
       root?: string;
@@ -385,7 +410,15 @@ export interface AnchorApi {
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
     loadLog: (repoRoot: string) => Promise<CommitRow[]>;
-    status: (repoRoot: string) => Promise<RepoStatus>;
+    status: (
+      repoRoot: string,
+      opts?: { badgeOnly?: boolean },
+    ) => Promise<RepoStatus>;
+    statusBulk: (args: {
+      repoRoots: string[];
+      badgeOnly?: boolean;
+    }) => Promise<RepoStatus[]>;
+    onStatusBulkOne: (cb: (status: RepoStatus) => void) => () => void;
     listBranches: (repoRoot: string) => Promise<BranchInfo[]>;
     checkout: (args: {
       repoRoot: string;
@@ -541,5 +574,16 @@ export interface AnchorApi {
       effort?: string;
       prompt?: string;
     }) => Promise<string[]>;
+  };
+  skill: {
+    status: (args?: {
+      workspaceRoot?: string | null;
+    }) => Promise<SkillInstallStatus>;
+    install: (args?: {
+      workspaceRoot?: string | null;
+      targetIds?: string[];
+    }) => Promise<SkillInstallResult>;
+    installWorkspace: (workspaceRoot: string) => Promise<SkillInstallResult>;
+    isWorkspaceInstalled: (workspaceRoot: string) => Promise<boolean>;
   };
 }

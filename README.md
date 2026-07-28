@@ -20,13 +20,13 @@ This is not a general-purpose IDE and not an agent orchestrator. Reading, dual-c
 | **Comments** | Select text, add annotations, store them in session YAML |
 | **Terminal** | Multi-tab shell with cwd set to the workspace — run your agent CLI here |
 
-Feedback is meant to go back to the agent: copy the session YAML path from Comments and paste it into the terminal for the CLI to read.
+Feedback is meant to go back to the agent: copy the session YAML path from Comments and paste it into the terminal for the CLI to read. Install the **Anchor Review** agent skill from **Settings → Agent skill** (or accept the prompt when opening a workspace) so agents know how to process `need_modify` comments and close them.
 
 ## Typical loop
 
-1. **Open a workspace** — files, code, and docs in one place.
+1. **Open a workspace** — files, code, and docs in one place. If prompted, install the Anchor Review skill into `.agents/skills/`.
 2. **Review the change** — in History, select commits and Compare (or compare with the worktree).
-3. **Leave feedback** — open a file or diff, select text, add a comment (or use ⌘/Ctrl+M).
+3. **Leave feedback** — open a file or diff, select text, add a comment (or use ⌘/Ctrl+M). Mark actionable items `need_modify`.
 4. **Close the loop** — in Comments, **Copy path** (session YAML absolute path), paste it into the agent terminal, and ask the agent to apply the feedback.
 
 Repeat until you are satisfied.

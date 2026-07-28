@@ -55,6 +55,10 @@ let state: UpdateState = {
 const listeners = new Set<Listener>();
 let wired = false;
 let getMainWindow: (() => BrowserWindow | null) | null = null;
+/** Periodic background check handle (packaged + dev). */
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+/** Default: 30 minutes between automatic checks. */
+export const UPDATE_POLL_INTERVAL_MS = 30 * 60 * 1000;
 
 function emit() {
   const snapshot = { ...state };
@@ -157,7 +161,6 @@ function wireAutoUpdater() {
     });
   });
 }
-
 export function initAppUpdater(opts: {
   getMainWindow: () => BrowserWindow | null;
 }): void {
@@ -169,6 +172,48 @@ export function initAppUpdater(opts: {
   };
   if (app.isPackaged) {
     wireAutoUpdater();
+  }
+  startUpdatePolling();
+}
+
+/**
+ * Background check every UPDATE_POLL_INTERVAL_MS.
+ * Quiet: network errors do not flip UI to a sticky error during poll.
+ * First check is delayed slightly so window/IPC is ready.
+ */
+export function startUpdatePolling(
+  intervalMs: number = UPDATE_POLL_INTERVAL_MS,
+): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  const tick = () => {
+    void quietCheckForUpdates();
+  };
+  // Initial delay ~45s after launch, then every interval.
+  const initial = setTimeout(tick, 45_000);
+  // Unref so this doesn't keep the process alive on quit in edge cases.
+  if (typeof (initial as NodeJS.Timeout).unref === "function") {
+    (initial as NodeJS.Timeout).unref();
+  }
+  pollTimer = setInterval(tick, intervalMs);
+  if (typeof (pollTimer as NodeJS.Timeout).unref === "function") {
+    (pollTimer as NodeJS.Timeout).unref();
+  }
+}
+
+/** Check without treating "already latest" / network blips as user-facing errors. */
+async function quietCheckForUpdates(): Promise<void> {
+  // Skip if user is already mid-download / ready to install.
+  if (state.status === "downloading" || state.status === "downloaded") {
+    return;
+  }
+  if (state.status === "checking") return;
+  try {
+    await checkForAppUpdates();
+  } catch {
+    // Quiet background poll — leave previous state alone.
   }
 }
 

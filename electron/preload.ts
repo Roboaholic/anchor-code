@@ -206,7 +206,7 @@ const anchor = {
       root: string;
       files: string[];
       truncated: boolean;
-      source?: "git" | "walk";
+      source?: "git" | "walk" | "multi-git";
     }> => ipcRenderer.invoke("workspace:findFiles", args ?? {}),
     searchContent: (args: {
       root?: string;
@@ -266,7 +266,10 @@ const anchor = {
       ipcRenderer.invoke("history:discover", workspaceRoot),
     loadLog: (repoRoot: string): Promise<CommitRow[]> =>
       ipcRenderer.invoke("history:loadLog", repoRoot),
-    status: (repoRoot: string): Promise<{
+    status: (
+      repoRoot: string,
+      opts?: { badgeOnly?: boolean },
+    ): Promise<{
       repoRoot: string;
       entries: { path: string; status: string; code: string }[];
       modified: number;
@@ -276,7 +279,54 @@ const anchor = {
       branch: string | null;
       ahead: number | null;
       behind: number | null;
-    }> => ipcRenderer.invoke("history:status", repoRoot),
+    }> => ipcRenderer.invoke("history:status", repoRoot, opts),
+    statusBulk: (args: {
+      repoRoots: string[];
+      badgeOnly?: boolean;
+    }): Promise<
+      Array<{
+        repoRoot: string;
+        entries: { path: string; status: string; code: string }[];
+        modified: number;
+        added: number;
+        deleted: number;
+        untracked: number;
+        branch: string | null;
+        ahead: number | null;
+        behind: number | null;
+      }>
+    > => ipcRenderer.invoke("history:statusBulk", args),
+    onStatusBulkOne: (
+      cb: (status: {
+        repoRoot: string;
+        entries: { path: string; status: string; code: string }[];
+        modified: number;
+        added: number;
+        deleted: number;
+        untracked: number;
+        branch: string | null;
+        ahead: number | null;
+        behind: number | null;
+      }) => void,
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        status: {
+          repoRoot: string;
+          entries: { path: string; status: string; code: string }[];
+          modified: number;
+          added: number;
+          deleted: number;
+          untracked: number;
+          branch: string | null;
+          ahead: number | null;
+          behind: number | null;
+        },
+      ) => cb(status);
+      ipcRenderer.on("history:statusBulk:one", listener);
+      return () =>
+        ipcRenderer.removeListener("history:statusBulk:one", listener);
+    },
     listBranches: (
       repoRoot: string,
     ): Promise<Array<{ name: string; current: boolean }>> =>
@@ -515,6 +565,18 @@ const anchor = {
       effort?: string;
       prompt?: string;
     }) => ipcRenderer.invoke("agent:buildLaunchArgs", args),
+  },
+  skill: {
+    status: (args?: { workspaceRoot?: string | null }) =>
+      ipcRenderer.invoke("skill:status", args ?? {}),
+    install: (args?: {
+      workspaceRoot?: string | null;
+      targetIds?: string[];
+    }) => ipcRenderer.invoke("skill:install", args ?? {}),
+    installWorkspace: (workspaceRoot: string) =>
+      ipcRenderer.invoke("skill:installWorkspace", workspaceRoot),
+    isWorkspaceInstalled: (workspaceRoot: string) =>
+      ipcRenderer.invoke("skill:isWorkspaceInstalled", workspaceRoot),
   },
 };
 

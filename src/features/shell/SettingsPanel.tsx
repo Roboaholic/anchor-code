@@ -3,8 +3,10 @@ import { Icon } from "@/shared/Icon";
 import type {
   AppUpdateState,
   SessionTabLayout,
+  SkillInstallStatus,
   UiTheme,
 } from "@/shared/anchor-api";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
 
@@ -52,10 +54,11 @@ const LAYOUT_OPTIONS: Array<{
   },
 ];
 
-type SettingsSection = "appearance" | "updates";
+type SettingsSection = "appearance" | "agent-skill" | "updates";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
+  { id: "agent-skill", label: "Agent skill" },
   { id: "updates", label: "Updates" },
 ];
 
@@ -65,14 +68,25 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
 export function SettingsPanel() {
   const open = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
+  const settingsFocusSection = useThemeStore((s) => s.settingsFocusSection);
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const sessionTabLayout = useThemeStore((s) => s.sessionTabLayout);
   const setSessionTabLayout = useThemeStore((s) => s.setSessionTabLayout);
   const versionLabel = useShellStore((s) => s.versionLabel);
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const [section, setSection] = useState<SettingsSection>("appearance");
   const [update, setUpdate] = useState<AppUpdateState | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [skillStatus, setSkillStatus] = useState<SkillInstallStatus | null>(
+    null,
+  );
+  const [skillBusy, setSkillBusy] = useState(false);
+  const [skillMessage, setSkillMessage] = useState<string | null>(null);
+  const [skillError, setSkillError] = useState<string | null>(null);
+  const [selectedTargets, setSelectedTargets] = useState<Record<string, true>>(
+    {},
+  );
 
   const onClose = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
 
@@ -91,6 +105,17 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
+    if (
+      settingsFocusSection === "appearance" ||
+      settingsFocusSection === "agent-skill" ||
+      settingsFocusSection === "updates"
+    ) {
+      setSection(settingsFocusSection);
+    }
+  }, [open, settingsFocusSection]);
+
+  useEffect(() => {
+    if (!open) return;
     let cancelled = false;
     void window.anchor?.updates?.getState?.().then((s) => {
       if (!cancelled) setUpdate(s);
@@ -101,6 +126,33 @@ export function SettingsPanel() {
       off?.();
     };
   }, [open]);
+
+  const refreshSkillStatus = useCallback(async () => {
+    if (!window.anchor?.skill?.status) return;
+    try {
+      const status = await window.anchor.skill.status({
+        workspaceRoot,
+      });
+      setSkillStatus(status);
+      const next: Record<string, true> = {};
+      for (const t of status.targets) {
+        if (!t.installed || !t.upToDate) next[t.id] = true;
+      }
+      if (Object.keys(next).length === 0) {
+        for (const t of status.targets) next[t.id] = true;
+      }
+      setSelectedTargets(next);
+    } catch (err) {
+      setSkillError(err instanceof Error ? err.message : String(err));
+    }
+  }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSkillMessage(null);
+    setSkillError(null);
+    void refreshSkillStatus();
+  }, [open, refreshSkillStatus]);
 
   const runCheck = useCallback(async () => {
     if (!window.anchor?.updates?.check) return;
@@ -160,6 +212,41 @@ export function SettingsPanel() {
       setUpdateBusy(false);
     }
   }, []);
+
+  const runSkillInstall = useCallback(async () => {
+    if (!window.anchor?.skill?.install) return;
+    const targetIds = Object.keys(selectedTargets);
+    if (targetIds.length === 0) {
+      setSkillError("Select at least one install target.");
+      return;
+    }
+    setSkillBusy(true);
+    setSkillError(null);
+    setSkillMessage(null);
+    try {
+      const result = await window.anchor.skill.install({
+        workspaceRoot,
+        targetIds,
+      });
+      if (!result.ok) {
+        setSkillError(result.error ?? "Install failed");
+      } else {
+        const paths = result.installed.map((i) => i.skillPath).join(", ");
+        setSkillMessage(
+          `Installed ${result.installed.length} target(s): ${paths}`,
+        );
+        if (result.installed.some((i) => i.id === "workspace")) {
+          useShellStore.getState().dismissSkillInstallPrompt();
+        }
+      }
+      await refreshSkillStatus();
+    } catch (err) {
+      setSkillError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSkillBusy(false);
+    }
+  }, [refreshSkillStatus, selectedTargets, workspaceRoot]);
+
 
   if (!open) return null;
 
@@ -304,6 +391,116 @@ export function SettingsPanel() {
                       </button>
                     );
                   })}
+                </div>
+              </section>
+            ) : null}
+
+            {section === "agent-skill" ? (
+              <section className="settings-section" aria-label="Agent skill">
+                <h3 className="settings-section__title">Anchor Review skill</h3>
+                <p className="settings-section__desc muted">
+                  Install the agent skill that teaches coding CLIs how to read{" "}
+                  <code>.anchor-code</code> session YAML, honor{" "}
+                  <code>need_modify</code>, and mark finished comments{" "}
+                  <code>closed</code>. Prefer workspace install so the skill
+                  travels with the repo; optional user homes install into
+                  detected agent skill directories on this host.
+                </p>
+
+                {!workspaceRoot ? (
+                  <p className="settings-update-card__hint">
+                    Open a workspace to enable workspace install. User-level
+                    targets still appear when agent homes exist on the host.
+                  </p>
+                ) : null}
+
+                {skillStatus?.targets?.length ? (
+                  <ul className="settings-skill-targets">
+                    {skillStatus.targets.map((t) => {
+                      const checked = Boolean(selectedTargets[t.id]);
+                      const statusLabel = t.installed
+                        ? t.upToDate
+                          ? "Installed · up to date"
+                          : "Installed · outdated"
+                        : "Not installed";
+                      return (
+                        <li key={t.id} className="settings-skill-target">
+                          <label className="settings-skill-target__label">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setSelectedTargets((prev) => {
+                                  const next = { ...prev };
+                                  if (next[t.id]) delete next[t.id];
+                                  else next[t.id] = true;
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span className="settings-skill-target__meta">
+                              <span className="settings-skill-target__name">
+                                {t.label}
+                              </span>
+                              <span className="settings-skill-target__path muted">
+                                {t.skillPath}
+                              </span>
+                              <span
+                                className={`settings-skill-target__status${
+                                  t.installed && t.upToDate
+                                    ? " is-ok"
+                                    : t.installed
+                                      ? " is-stale"
+                                      : ""
+                                }`}
+                              >
+                                {statusLabel}
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="settings-update-card__hint">
+                    No install targets found yet. Open a workspace, or ensure an
+                    agent skill home exists (for example{" "}
+                    <code>~/.codex</code> or <code>~/.claude</code>) on this
+                    host.
+                  </p>
+                )}
+
+                {skillMessage ? (
+                  <p className="settings-update-card__msg" role="status">
+                    {skillMessage}
+                  </p>
+                ) : null}
+                {skillError ? (
+                  <p className="settings-update-card__err" role="alert">
+                    {skillError}
+                  </p>
+                ) : null}
+
+                <div className="settings-update-card__actions">
+                  <button
+                    type="button"
+                    className="btn btn--accent btn--small"
+                    disabled={
+                      skillBusy || !(skillStatus?.targets?.length)
+                    }
+                    onClick={() => void runSkillInstall()}
+                  >
+                    {skillBusy ? "Installing…" : "Install selected"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    disabled={skillBusy}
+                    onClick={() => void refreshSkillStatus()}
+                  >
+                    Refresh status
+                  </button>
                 </div>
               </section>
             ) : null}

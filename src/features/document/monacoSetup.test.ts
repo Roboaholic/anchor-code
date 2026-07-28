@@ -19,5 +19,16 @@ describe("monacoSetup source contract", () => {
     expect(src).not.toMatch(/unpkg\.com/);
     expect(src).toContain("MonacoEnvironment");
     expect(src).toContain("?worker");
+    // Variables / C tokens must not stay monochrome.
+    expect(src).toContain('token: "identifier"');
+    expect(src).toContain("9cdcfe");
+    expect(src).toContain('setMonarchTokensProvider("c"');
+    expect(src).toContain('setMonarchTokensProvider("cpp"');
+    // Type suffixes: _t/_e/_s/… — not bare `_type` (would paint buffer_type).
+    expect(src).toContain("_(?:t|e|s|st|et|tt|handle)");
+    expect(src).toContain("do NOT match bare `_type`");
+    // No PascalCase→type heuristic (Amba vars like AmbaImu…RingCtrl stay identifier).
+    expect(src).toContain("never paint variables green");
+    expect(src).toContain("(?=\\s*\\()");
   });
 });

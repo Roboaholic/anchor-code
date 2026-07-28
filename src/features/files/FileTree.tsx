@@ -231,9 +231,10 @@ export function FileTree() {
 
       const requestId = `ui-${gen}-${Date.now()}`;
       const maxResults = 200;
-      // Batch streamed hits onto animation frames (feel like VS Code progressive UI).
+      // Stream hits ASAP: first hit paints immediately; further hits coalesce on rAF.
       let pending: SearchHit[] = [];
       let raf = 0;
+      let paintedAny = false;
       const flushPending = () => {
         raf = 0;
         if (gen !== searchGen.current || pending.length === 0) {
@@ -247,6 +248,7 @@ export function FileTree() {
           const next = [...prev, ...batch];
           return next.length > maxResults ? next.slice(0, maxResults) : next;
         });
+        paintedAny = true;
       };
 
       const offHits = window.anchor.workspace.onSearchHits?.((payload) => {
@@ -261,7 +263,17 @@ export function FileTree() {
           }
           pending.push(h);
         }
-        if (pending.length > 0 && !raf) {
+        if (pending.length === 0) return;
+        // First hit(s): paint this frame without waiting for more chunks.
+        if (!paintedAny) {
+          if (raf) {
+            window.cancelAnimationFrame(raf);
+            raf = 0;
+          }
+          flushPending();
+          return;
+        }
+        if (!raf) {
           raf = window.requestAnimationFrame(flushPending);
         }
       });

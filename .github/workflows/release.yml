@@ -142,16 +142,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # mermaid + monaco vite build needs >2GB on macOS runners.
+          export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=8192"
           if [ "${{ matrix.platform }}" = "mac" ]; then
-            # Unsigned CI builds: disable identity discovery and avoid
-            # hardenedRuntime requirements that can abort electron-builder
-            # with exit 134 on macos-latest when no Apple cert is present.
+            # Unsigned CI builds: no Apple identity.
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             export CSC_IDENTITY=""
-            npm run pack:mac || {
-              echo "::warning::mac package failed once; retrying once"
-              npm run pack:mac
-            }
+            npm run pack:mac
           else
             npm run ${{ matrix.pack }}
           fi
@@ -159,6 +156,7 @@ jobs:
           ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NODE_OPTIONS: "--max-old-space-size=8192"
 
       - name: List release output
         if: steps.want.outputs.build == 'true'

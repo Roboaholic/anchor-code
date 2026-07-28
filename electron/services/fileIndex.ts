@@ -1,3 +1,7 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createHash } from "node:crypto";
 import type { HostSession } from "../host/types.js";
 import {
   hostBasename,
@@ -33,16 +37,16 @@ const SKIP_DIR_NAMES = new Set([
   ".ci-analysis",
   ".ci_analysis",
   ".ci_failure_analysis",
+  // Huge third-party trees; still openable via path / content search.
+  "external",
 ]);
 
-const DEFAULT_MAX_FILES = 300_000;
+const DEFAULT_MAX_FILES = 200_000;
 const DEFAULT_MAX_DEPTH = 32;
-/** Concurrent directory reads for the fallback walk. */
 const WALK_CONCURRENCY = 8;
-/** Nested git discovery depth (repo layouts need ~6–8). */
 const GIT_SCAN_DEPTH = 8;
-/** Cap concurrent git ls-files (WSL). */
 const GIT_LS_CONCURRENCY = 6;
+const DISK_CACHE_TTL_MS = 30 * 60_000;
 
 export interface FindFilesResult {
   root: string;
@@ -56,11 +60,8 @@ export interface FindFilesResult {
  *
  * Prefer git:
  * 1) single-repo `git ls-files` when workspace root is a valid git worktree
- * 2) multi-repo: discover nested git roots (Android `repo` style) and merge
- *    each repo's `git ls-files` with a path prefix
+ * 2) multi-repo one-shot discover+ls-files (WSL/SSH), with disk cache
  * Fall back to concurrent listDir walk.
- *
- * Paths always use `/` for stable UI matching across Local/WSL.
  */
 export async function findWorkspaceFiles(
   host: HostSession,
@@ -71,25 +72,108 @@ export async function findWorkspaceFiles(
   const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_DEPTH;
   const workspace = hostNormalize(host.kind, root);
 
-  // 1) Workspace root is a real git worktree → single ls-files.
+  const cached = await readDiskCache(host.kind, workspace, maxFiles);
+  if (cached) return cached;
+
   if (await isUsableGitRoot(host, workspace)) {
-    const viaGit = await tryGitLsFiles(host, workspace, maxFiles, "");
-    if (viaGit && viaGit.files.length > 0) {
+    const viaGit = await tryGitLsFiles(host, workspace, maxFiles, "", true);
+    if (viaGit) {
+      await writeDiskCache(host.kind, workspace, maxFiles, viaGit);
       return { ...viaGit, source: "git" };
     }
-    // Empty but valid repo: still better than a huge walk of ignored trees.
-    if (viaGit) return { ...viaGit, source: "git" };
   }
 
-  // 2) Multi-repo workspace (repo tool / monorepo with nested checkouts).
+  if (host.kind === "wsl" || host.kind === "ssh") {
+    const oneShot = await multiRepoIndexOneShot(host, workspace, maxFiles);
+    if (oneShot && oneShot.files.length > 0) {
+      await writeDiskCache(host.kind, workspace, maxFiles, oneShot);
+      return oneShot;
+    }
+  }
+
   const nested = await discoverNestedGitRoots(host, workspace);
   if (nested.length > 0) {
     const multi = await mergeGitRepos(host, workspace, nested, maxFiles);
-    if (multi.files.length > 0) return multi;
+    if (multi.files.length > 0) {
+      await writeDiskCache(host.kind, workspace, maxFiles, multi);
+      return multi;
+    }
   }
 
-  // 3) Fallback walk.
-  return walkFiles(host, workspace, maxFiles, maxDepth);
+  const walked = await walkFiles(host, workspace, maxFiles, maxDepth);
+  await writeDiskCache(host.kind, workspace, maxFiles, walked);
+  return walked;
+}
+
+function cacheDir(): string {
+  return path.join(os.homedir(), ".cache", "anchor-code", "file-index");
+}
+
+function cacheKey(hostKind: string, workspace: string, maxFiles: number): string {
+  return createHash("sha1")
+    .update(`${hostKind}\0${workspace}\0${maxFiles}\0v3-cached`)
+    .digest("hex");
+}
+
+async function readDiskCache(
+  hostKind: string,
+  workspace: string,
+  maxFiles: number,
+): Promise<FindFilesResult | null> {
+  try {
+    const file = path.join(
+      cacheDir(),
+      `${cacheKey(hostKind, workspace, maxFiles)}.json`,
+    );
+    const raw = await fs.readFile(file, "utf8");
+    const data = JSON.parse(raw) as {
+      at: number;
+      root: string;
+      files: string[];
+      truncated: boolean;
+      source: FindFilesResult["source"];
+    };
+    if (!data?.files?.length) return null;
+    if (Date.now() - data.at > DISK_CACHE_TTL_MS) return null;
+    if (data.root !== workspace) return null;
+    return {
+      root: data.root,
+      files: data.files,
+      truncated: Boolean(data.truncated),
+      source: data.source || "multi-git",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskCache(
+  hostKind: string,
+  workspace: string,
+  maxFiles: number,
+  result: FindFilesResult,
+): Promise<void> {
+  try {
+    if (result.files.length === 0) return;
+    const dir = cacheDir();
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(
+      dir,
+      `${cacheKey(hostKind, workspace, maxFiles)}.json`,
+    );
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        at: Date.now(),
+        root: workspace,
+        files: result.files,
+        truncated: result.truncated,
+        source: result.source,
+      }),
+    );
+  } catch {
+    // best-effort
+  }
 }
 
 async function isUsableGitRoot(
@@ -109,10 +193,92 @@ async function isUsableGitRoot(
 }
 
 /**
- * Discover nested git worktrees under workspace.
- * WSL/SSH: one `find` via bash -s (handles symlink `.git` used by `repo`).
- * Local: bounded walk.
+ * One WSL/SSH process: find nested .git roots + git ls-files --cached.
+ * Skips untracked (big win) and prunes external/.
  */
+async function multiRepoIndexOneShot(
+  host: HostSession,
+  workspaceRoot: string,
+  maxFiles: number,
+): Promise<FindFilesResult | null> {
+  const maxdepth = String(GIT_SCAN_DEPTH + 1);
+  const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
+  const pruneNames = [...SKIP_DIR_NAMES].filter((d) => d !== ".git");
+  const pruneExpr = pruneNames.map((d) => `-name ${d}`).join(" -o ");
+  const script = [
+    `ws='${rootQ}'`,
+    `maxdepth=${maxdepth}`,
+    `roots=$(find "$ws" -maxdepth $maxdepth \\( ${pruneExpr} \\) -prune -o -name .git -print 2>/dev/null | while IFS= read -r g; do`,
+    `  d=$(dirname "$g")`,
+    `  case "$d" in */.repo|*/.repo/*) continue ;; esac`,
+    `  if [ -f "$g/HEAD" ] || [ -f "$g" ]; then printf '%s\\n' "$d"; fi`,
+    `done)`,
+    `while IFS= read -r root; do`,
+    `  [ -z "$root" ] && continue`,
+    `  if [ "$root" = "$ws" ]; then pref=''; else pref="\${root#\$ws/}/"; fi`,
+    `  printf '__P__%s\\n' "$pref"`,
+    `  git -C "$root" ls-files --cached 2>/dev/null || true`,
+    `done <<EOF`,
+    `$roots`,
+    `EOF`,
+  ].join("\n");
+
+  try {
+    const t0 = Date.now();
+    const result = await host.run(workspaceRoot, "bash", ["-s"], {
+      stdin: script,
+      timeoutMs: 90_000,
+    });
+    if (!result.stdout && result.code !== 0) return null;
+    const parsed = parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles);
+    console.log(
+      `[fileIndex] one-shot multi-git ${parsed.files.length} files in ${Date.now() - t0}ms`,
+    );
+    return parsed;
+  } catch (err) {
+    console.warn("[fileIndex] one-shot multi-git failed:", err);
+    return null;
+  }
+}
+
+function parsePrefixedLsFiles(
+  stdout: string,
+  workspaceRoot: string,
+  maxFiles: number,
+): FindFilesResult {
+  const files: string[] = [];
+  const seen = new Set<string>();
+  let truncated = false;
+  let prefix = "";
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (!line) continue;
+    if (line.startsWith("__P__")) {
+      // Marker is 5 chars: __P__  (slice(4) wrongly kept a leading _)
+      prefix = line.slice("__P__".length);
+      continue;
+    }
+    if (line.endsWith("/")) continue;
+    if (/\.(o|a|so|dylib|dll|bin|elf|obj|pyc|pyo|class)$/i.test(line)) continue;
+    if (/(^|\/)(output|output\.\d+|out|build|dist)(\/|$)/i.test(line)) continue;
+    const rel = `${prefix}${line}`.replace(/\\/g, "/");
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    files.push(rel);
+    if (files.length >= maxFiles) {
+      truncated = true;
+      break;
+    }
+  }
+  files.sort((a, b) => a.localeCompare(b));
+  return {
+    root: workspaceRoot,
+    files: truncated ? files.slice(0, maxFiles) : files,
+    truncated,
+    source: "multi-git",
+  };
+}
+
 async function discoverNestedGitRoots(
   host: HostSession,
   workspaceRoot: string,
@@ -132,8 +298,6 @@ async function discoverGitRootsViaFind(
   const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
   const pruneNames = [...SKIP_DIR_NAMES].filter((d) => d !== ".git");
   const pruneExpr = pruneNames.map((d) => `-name ${d}`).join(" -o ");
-  // -L: follow directory symlinks only when resolving; still print .git path.
-  // Validate HEAD after following symlink `.git` → .repo/projects/….git
   const script = [
     `root='${rootQ}'`,
     `find "$root" -maxdepth ${maxdepth} \\( ${pruneExpr} \\) -prune -o -name .git -print 2>/dev/null | while IFS= read -r g; do`,
@@ -152,10 +316,10 @@ async function discoverGitRootsViaFind(
     for (const line of result.stdout.split("\n")) {
       const p = line.trim().replace(/\\/g, "/");
       if (!p) continue;
-      // Skip .repo internals and empty workspace stubs.
       if (/(^|\/)\.repo(\/|$)/.test(p)) continue;
-      if (hostNormalize(host.kind, p) === hostNormalize(host.kind, workspaceRoot)) {
-        // Only keep if usable (caller may already know root is empty stub).
+      if (
+        hostNormalize(host.kind, p) === hostNormalize(host.kind, workspaceRoot)
+      ) {
         if (!(await isUsableGitRoot(host, p))) continue;
       }
       roots.push(hostNormalize(host.kind, p));
@@ -185,10 +349,7 @@ async function walkDiscoverGitRoots(
     for (const e of entries) {
       if (e.type !== "dir") continue;
       if (SKIP_DIR_NAMES.has(e.name)) continue;
-      if (e.name.startsWith(".") && e.name !== ".git") {
-        // allow nothing else under dot-dirs for index discovery
-        continue;
-      }
+      if (e.name.startsWith(".") && e.name !== ".git") continue;
       const child = hostJoin(host.kind, job.dir, e.name);
       if (await isUsableGitRoot(host, child)) {
         roots.push(hostNormalize(host.kind, child));
@@ -210,7 +371,6 @@ function toWorkspaceRelative(
   workspaceRoot: string,
   absPath: string,
 ): string {
-  // Always compare with `/` so Windows local path.resolve() output works.
   const w = hostNormalize(hostKind, workspaceRoot)
     .replace(/\\/g, "/")
     .replace(/\/+$/, "");
@@ -224,17 +384,14 @@ async function tryGitLsFiles(
   host: HostSession,
   repoRoot: string,
   maxFiles: number,
-  /** Prefix under workspace (no trailing slash), empty for workspace-root repo. */
   pathPrefix: string,
+  includeUntracked: boolean,
 ): Promise<FindFilesResult | null> {
   try {
-    const r = await host.run(repoRoot, "git", [
-      "ls-files",
-      "-z",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-    ]);
+    const args = includeUntracked
+      ? ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+      : ["ls-files", "-z", "--cached"];
+    const r = await host.run(repoRoot, "git", args);
     if (r.code !== 0) return null;
     const raw = r.stdout;
     if (!raw) {
@@ -246,7 +403,6 @@ async function tryGitLsFiles(
       if (!part) continue;
       if (part.endsWith("/")) continue;
       const rel = part.replace(/\\/g, "/");
-      // Skip heavy generated/object noise even if tracked.
       if (/\.(o|a|so|dylib|dll|bin|elf|obj|pyc|pyo|class)$/i.test(rel)) continue;
       if (/(^|\/)(output|output\.\d+|out|build|dist)\//i.test(rel)) continue;
       const full = pathPrefix ? `${pathPrefix}/${rel}` : rel;
@@ -269,10 +425,15 @@ async function mergeGitRepos(
   repoRoots: string[],
   maxFiles: number,
 ): Promise<FindFilesResult> {
-  // Stable order: shorter roots first (parents), then path.
   const ordered = [...repoRoots].sort(
     (a, b) => a.length - b.length || a.localeCompare(b),
   );
+
+  if ((host.kind === "wsl" || host.kind === "ssh") && ordered.length > 1) {
+    const bulk = await bulkGitLsFiles(host, workspaceRoot, ordered, maxFiles);
+    if (bulk) return bulk;
+  }
+
   const perRepo: string[][] = new Array(ordered.length);
   let i = 0;
 
@@ -285,16 +446,19 @@ async function mergeGitRepos(
         perRepo[idx] = [];
         continue;
       }
-      // No per-repo room cap — collect full then truncate once at the end so
-      // concurrent workers don't race which repo's files get dropped.
-      const one = await tryGitLsFiles(host, absRoot, maxFiles, prefix);
+      const one = await tryGitLsFiles(host, absRoot, maxFiles, prefix, false);
       perRepo[idx] = one?.files ?? [];
     }
   }
 
   await Promise.all(
     Array.from(
-      { length: Math.min(GIT_LS_CONCURRENCY, Math.max(ordered.length, 1)) },
+      {
+        length: Math.min(
+          host.kind === "local" ? GIT_LS_CONCURRENCY : 2,
+          Math.max(ordered.length, 1),
+        ),
+      },
       () => worker(),
     ),
   );
@@ -317,6 +481,37 @@ async function mergeGitRepos(
     truncated,
     source: "multi-git",
   };
+}
+
+async function bulkGitLsFiles(
+  host: HostSession,
+  workspaceRoot: string,
+  orderedRoots: string[],
+  maxFiles: number,
+): Promise<FindFilesResult | null> {
+  const rootsLit = orderedRoots
+    .map((r) => `'${r.replace(/'/g, `'\\''`)}'`)
+    .join(" ");
+  const workspaceQ = workspaceRoot.replace(/'/g, `'\\''`);
+  const script = [
+    `ws='${workspaceQ}'`,
+    `for root in ${rootsLit}; do`,
+    `  if [ "$root" = "$ws" ]; then pref=''; else pref="\${root#\$ws/}/"; fi`,
+    `  printf '__P__%s\\n' "$pref"`,
+    `  git -C "$root" ls-files --cached 2>/dev/null || true`,
+    `done`,
+  ].join("\n");
+
+  try {
+    const result = await host.run(workspaceRoot, "bash", ["-s"], {
+      stdin: script,
+      timeoutMs: Math.max(60_000, orderedRoots.length * 400),
+    });
+    if (!result.stdout && result.code !== 0) return null;
+    return parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles);
+  } catch {
+    return null;
+  }
 }
 
 async function walkFiles(
@@ -344,8 +539,6 @@ async function walkFiles(
       return;
     }
 
-    // Collect files at this level first (breadth-first preference), then enqueue dirs.
-    // Avoids the old DFS “dirs-first” bug that burned maxFiles in one deep tree.
     const dirs: Job[] = [];
     for (const ent of entries) {
       if (truncated) return;

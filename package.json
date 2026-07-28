@@ -145,16 +145,8 @@
       "category": "public.app-category.developer-tools",
       "target": [
         {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
           "target": "zip",
           "arch": [
-            "x64",
             "arm64"
           ]
         }
@@ -162,8 +154,8 @@
       "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "icon": "build/icon.icns",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     },
     "dmg": {
       "artifactName": "Anchor.Code-${version}-${os}-${arch}.${ext}"

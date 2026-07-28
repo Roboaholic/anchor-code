@@ -176,6 +176,12 @@ export function SettingsPanel() {
     }
   }, []);
 
+  // Open Settings → Updates: always re-check so the Download button can appear.
+  useEffect(() => {
+    if (!open || section !== "updates") return;
+    void runCheck();
+  }, [open, section, runCheck]);
+
   const runDownload = useCallback(async () => {
     if (!window.anchor?.updates?.download) return;
     setUpdateBusy(true);

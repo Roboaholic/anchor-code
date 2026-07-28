@@ -13,7 +13,7 @@ import { Icon } from "@/shared/Icon";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { openFileFromTree } from "./orchestrate";
 import { useShellStore, type PaletteMode } from "./shellStore";
-const FILE_INDEX_CACHE_TTL_MS = 60_000;
+const FILE_INDEX_CACHE_TTL_MS = 5 * 60_000;
 
 type IndexCache = {
   root: string;
@@ -24,6 +24,8 @@ type IndexCache = {
 };
 
 let fileIndexCache: IndexCache | null = null;
+/** In-flight warm so open-workspace + first Ctrl+P share one findFiles. */
+let fileIndexInflight: Promise<IndexCache> | null = null;
 
 async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
   if (
@@ -35,19 +37,58 @@ async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
   ) {
     return fileIndexCache;
   }
-  const result = await window.anchor.workspace.findFiles({ root });
-  fileIndexCache = {
-    root: result.root,
-    files: result.files,
-    truncated: result.truncated,
-    source: result.source,
-    at: Date.now(),
-  };
-  return fileIndexCache;
+
+  // Share one in-flight findFiles between workspace warm and first Ctrl+P.
+  if (!force && fileIndexInflight) {
+    try {
+      const pending = await fileIndexInflight;
+      if (pending.root === root) return pending;
+    } catch {
+      // fall through to a fresh load
+    }
+  }
+
+  const run = (async (): Promise<IndexCache> => {
+    const result = await window.anchor.workspace.findFiles({ root });
+    const next: IndexCache = {
+      root: result.root,
+      files: result.files,
+      truncated: result.truncated,
+      source: result.source,
+      at: Date.now(),
+    };
+    fileIndexCache = next;
+    return next;
+  })();
+
+  fileIndexInflight = run;
+  try {
+    return await run;
+  } finally {
+    if (fileIndexInflight === run) fileIndexInflight = null;
+  }
 }
 
 export function invalidateFileIndexCache(): void {
   fileIndexCache = null;
+  fileIndexInflight = null;
+}
+
+/** Background warm so the first Ctrl+P is not a cold multi-repo scan. */
+export function warmFileIndexCache(root: string | null | undefined): void {
+  if (!root) return;
+  if (
+    fileIndexCache &&
+    fileIndexCache.root === root &&
+    fileIndexCache.files.length > 0 &&
+    Date.now() - fileIndexCache.at < FILE_INDEX_CACHE_TTL_MS
+  ) {
+    return;
+  }
+  if (fileIndexInflight) return;
+  void loadFileIndex(root).catch(() => {
+    // quiet warm — Quick Open will surface errors on demand
+  });
 }
 
 function highlightText(text: string, indices: number[]): ReactNode {
@@ -127,6 +168,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
     null,
   );
   const [loading, setLoading] = useState(false);
+  const [indexMs, setIndexMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState(0);
 
@@ -144,6 +186,8 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setIndexMs(null);
+    const t0 = performance.now();
     // Always re-fetch when dialog opens if last cache was empty (bad prior index).
     const force = !fileIndexCache || fileIndexCache.files.length === 0;
     void loadFileIndex(workspaceRoot, force)
@@ -152,6 +196,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
         setFiles(idx.files);
         setTruncated(idx.truncated);
         setSource(idx.source ?? null);
+        setIndexMs(Math.round(performance.now() - t0));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -244,12 +289,15 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
       </div>
 
       {error ? <p className="quick-open__status quick-open__status--error">{error}</p> : null}
-      {loading ? <p className="quick-open__status">Indexing workspace…</p> : null}
+      {loading ? (
+        <p className="quick-open__status">Indexing multi-repo workspace…</p>
+      ) : null}
       {!loading && !error && workspaceRoot ? (
         <p className="quick-open__status">
           {matches.length} match{matches.length === 1 ? "" : "es"}
-          {query.trim() ? "" : ` · ${files.length} files`}
+          {query.trim() ? "" : ` · ${files.length.toLocaleString()} files`}
           {source ? ` · via ${source}` : ""}
+          {indexMs != null ? ` · ${indexMs}ms` : ""}
           {truncated ? " · index truncated" : ""}
         </p>
       ) : null}

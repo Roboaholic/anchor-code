@@ -186,11 +186,7 @@ export function TopBar() {
                     onClick={() => openSettings("updates")}
                   >
                     <Icon
-                      name={
-                        updateState?.status === "downloading"
-                          ? "refresh"
-                          : "desktop-download"
-                      }
+                      name="refresh"
                       className="topbar__update-badge-icon"
                     />
                     <span className="topbar__update-badge-label">

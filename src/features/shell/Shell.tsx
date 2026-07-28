@@ -10,7 +10,11 @@ import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { Icon } from "@/shared/Icon";
 import { LeftNav } from "./LeftNav";
-import { QuickOpenPalette, invalidateFileIndexCache } from "./QuickOpen";
+import {
+  QuickOpenPalette,
+  invalidateFileIndexCache,
+  warmFileIndexCache,
+} from "./QuickOpen";
 import { NewAgentDialogHost } from "@/features/terminal/NewAgentDialogHost";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { TerminalPanel } from "./TerminalPanel";
@@ -181,6 +185,8 @@ export function Shell() {
   const setTerminalVisible = useShellStore((s) => s.setTerminalVisible);
   useEffect(() => {
     invalidateFileIndexCache();
+    // Start multi-repo indexing before the user hits Ctrl+P.
+    warmFileIndexCache(workspaceRoot);
   }, [workspaceRoot]);
 
   // Agent / terminal only when a workspace is open.

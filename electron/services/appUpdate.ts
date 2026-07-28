@@ -89,14 +89,35 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+function applyDevFeedFromEnv(): void {
+  const url = (process.env.ANCHOR_UPDATE_URL || "").trim().replace(/\/+$/, "");
+  if (!url) return;
+  // Generic provider: serve a folder containing latest.yml + installers.
+  // Example: ANCHOR_UPDATE_URL=http://127.0.0.1:4040  (folder has latest.yml)
+  try {
+    autoUpdater.setFeedURL({ provider: "generic", url });
+    console.log("[appUpdate] using local feed:", url);
+  } catch (err) {
+    console.warn(
+      "[appUpdate] setFeedURL failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 function wireAutoUpdater() {
   if (wired) return;
   wired = true;
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
-  // Avoid noisy logs in production; still useful when debugging.
-  autoUpdater.logger = null;
+  // Local update demos: verbose logs help see check/download progress.
+  if (process.env.ANCHOR_UPDATE_URL) {
+    autoUpdater.logger = console;
+  } else {
+    autoUpdater.logger = null;
+  }
+  applyDevFeedFromEnv();
 
   autoUpdater.on("checking-for-update", () => {
     setState({
@@ -161,6 +182,7 @@ function wireAutoUpdater() {
     });
   });
 }
+
 export function initAppUpdater(opts: {
   getMainWindow: () => BrowserWindow | null;
 }): void {
@@ -170,7 +192,9 @@ export function initAppUpdater(opts: {
     currentVersion: app.getVersion(),
     packaged: app.isPackaged,
   };
-  if (app.isPackaged) {
+  // Packaged builds always wire updater. Dev can also wire when a local feed
+  // is set so Settings → Updates can exercise check UI against a mock server.
+  if (app.isPackaged || process.env.ANCHOR_UPDATE_URL) {
     wireAutoUpdater();
   }
   startUpdatePolling();
@@ -191,8 +215,10 @@ export function startUpdatePolling(
   const tick = () => {
     void quietCheckForUpdates();
   };
-  // Initial delay ~45s after launch, then every interval.
-  const initial = setTimeout(tick, 45_000);
+  // Local feed demos: check almost immediately so the badge/button appears.
+  // Packaged production: delay ~45s after launch.
+  const delayMs = process.env.ANCHOR_UPDATE_URL?.trim() ? 2_000 : 45_000;
+  const initial = setTimeout(tick, delayMs);
   // Unref so this doesn't keep the process alive on quit in edge cases.
   if (typeof (initial as NodeJS.Timeout).unref === "function") {
     (initial as NodeJS.Timeout).unref();
@@ -285,7 +311,9 @@ async function checkViaGithubApi(): Promise<UpdateState> {
 }
 
 export async function checkForAppUpdates(): Promise<UpdateState> {
-  if (!app.isPackaged) {
+  // Full electron-updater path when packaged, or when a local feed is configured.
+  const useUpdater = app.isPackaged || Boolean(process.env.ANCHOR_UPDATE_URL?.trim());
+  if (!useUpdater) {
     return checkViaGithubApi();
   }
   wireAutoUpdater();
@@ -307,7 +335,8 @@ export async function checkForAppUpdates(): Promise<UpdateState> {
 }
 
 export async function downloadAppUpdate(): Promise<UpdateState> {
-  if (!app.isPackaged) {
+  const useUpdater = app.isPackaged || Boolean(process.env.ANCHOR_UPDATE_URL?.trim());
+  if (!useUpdater) {
     setState({
       status: "error",
       error:
@@ -337,7 +366,8 @@ export async function downloadAppUpdate(): Promise<UpdateState> {
 }
 
 export function installAppUpdate(): { ok: boolean; error?: string } {
-  if (!app.isPackaged) {
+  const useUpdater = app.isPackaged || Boolean(process.env.ANCHOR_UPDATE_URL?.trim());
+  if (!useUpdater) {
     return {
       ok: false,
       error: "Install only works in a packaged build.",

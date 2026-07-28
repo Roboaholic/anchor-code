@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import {
   Panel,
   PanelGroup,
   PanelResizeHandle,
+  type ImperativePanelHandle,
 } from "react-resizable-panels";
 import { DocumentArea } from "@/features/document/DocumentArea";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
@@ -12,10 +13,57 @@ import { QuickOpenPalette, invalidateFileIndexCache } from "./QuickOpen";
 import { NewAgentDialogHost } from "@/features/terminal/NewAgentDialogHost";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { TerminalPanel } from "./TerminalPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
 import { openWorkspaceWithHost } from "./orchestrate";
+
+/**
+ * Drive collapsible panel open/closed without remounting siblings.
+ * Retries a few frames so expand isn't lost on first paint.
+ */
+function useCollapsiblePanel(
+  ref: RefObject<ImperativePanelHandle | null>,
+  expanded: boolean,
+  expandSize: number,
+) {
+  useEffect(() => {
+    let cancelled = false;
+    let tries = 0;
+
+    const apply = () => {
+      if (cancelled) return;
+      const p = ref.current;
+      if (!p) {
+        if (tries++ < 20) requestAnimationFrame(apply);
+        return;
+      }
+      try {
+        if (expanded) {
+          if (p.isCollapsed()) p.expand(expandSize);
+          // Stuck at ~0 while "open" (bad autoSave / race) → force size.
+          if (p.getSize() < Math.min(8, expandSize * 0.3)) {
+            p.resize(expandSize);
+          }
+        } else if (!p.isCollapsed()) {
+          p.collapse();
+        }
+      } catch {
+        if (tries++ < 20) requestAnimationFrame(apply);
+      }
+    };
+
+    apply();
+    const t = window.setTimeout(apply, 40);
+    const t2 = window.setTimeout(apply, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      window.clearTimeout(t2);
+    };
+  }, [ref, expanded, expandSize]);
+}
 
 export function Shell() {
   const leftVisible = useShellStore((s) => s.leftVisible);
@@ -29,6 +77,10 @@ export function Shell() {
   const palette = useShellStore((s) => s.palette);
   const loadRecent = useWorkspaceStore((s) => s.loadRecent);
   const hydrateTheme = useThemeStore((s) => s.hydrate);
+
+  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+  const agentPanelRef = useRef<ImperativePanelHandle>(null);
+  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
 
   useEffect(() => {
     void hydrateTheme();
@@ -161,95 +213,88 @@ export function Shell() {
   const showAgent = Boolean(agentVisible && workspaceRoot);
   const showTerminal = Boolean(terminalVisible && workspaceRoot);
 
-  // Horizontal default sizes must sum ~100 for the panels that exist.
-  const centerDefault = leftVisible
-    ? showAgent
-      ? 48
-      : 78
-    : showAgent
-      ? 70
-      : 100;
-  const leftDefault = 22;
-  const agentDefault = leftVisible ? 30 : 30;
+  // Never remount PanelGroup for these toggles — only collapse/expand.
+  useCollapsiblePanel(leftPanelRef, leftVisible, 22);
+  useCollapsiblePanel(agentPanelRef, showAgent, 28);
+  useCollapsiblePanel(terminalPanelRef, showTerminal, 28);
 
   return (
     <div className="shell">
       <TopBar />
       <div className="shell__body">
         {/*
-          Remount when panel set changes so defaultSize is applied.
-          Dynamic Panel add with the same group often leaves the new panel at ~0 size.
+          Stable PanelGroup (no remount keys). Toggling left / agent / terminal
+          only collapses panels so xterm React trees stay mounted — no reload flash.
         */}
         <PanelGroup
-          key={`h-l${leftVisible ? 1 : 0}-a${showAgent ? 1 : 0}`}
           direction="horizontal"
-          autoSaveId="anchor-shell-v3"
+          autoSaveId="anchor-shell-v7"
           className="shell__panels"
         >
-          {leftVisible ? (
-            <>
-              <Panel
-                order={1}
-                defaultSize={leftDefault}
-                minSize={14}
-                maxSize={36}
-                id="left"
-              >
-                <LeftNav />
-              </Panel>
-              <PanelResizeHandle className="resize-handle" />
-            </>
-          ) : null}
+          <Panel
+            ref={leftPanelRef}
+            order={1}
+            collapsible
+            collapsedSize={0}
+            defaultSize={leftVisible ? 22 : 0}
+            minSize={14}
+            maxSize={36}
+            id="left"
+          >
+            <LeftNav />
+          </Panel>
+          <PanelResizeHandle
+            className="resize-handle"
+            style={{ display: leftVisible ? undefined : "none" }}
+          />
 
-          <Panel order={2} defaultSize={centerDefault} minSize={30} id="center">
+          <Panel order={2} defaultSize={50} minSize={30} id="center">
             <div className="shell__center-stack">
               <PanelGroup
-                key={`v-t${showTerminal ? 1 : 0}`}
                 direction="vertical"
-                autoSaveId="anchor-shell-center-v3"
+                autoSaveId="anchor-shell-center-v7"
                 className="shell__panels shell__panels--col"
               >
-                <Panel
-                  order={1}
-                  defaultSize={showTerminal ? 70 : 100}
-                  minSize={25}
-                  id="document"
-                >
+                <Panel order={1} defaultSize={72} minSize={25} id="document">
                   <DocumentArea />
                 </Panel>
 
-                {showTerminal ? (
-                  <>
-                    <PanelResizeHandle className="resize-handle resize-handle--row" />
-                    <Panel
-                      order={2}
-                      defaultSize={30}
-                      minSize={12}
-                      maxSize={60}
-                      id="terminal-bottom"
-                    >
-                      <TerminalPanel mode="terminal" />
-                    </Panel>
-                  </>
-                ) : null}
+                <PanelResizeHandle
+                  className="resize-handle resize-handle--row"
+                  style={{ display: showTerminal ? undefined : "none" }}
+                />
+                <Panel
+                  ref={terminalPanelRef}
+                  order={2}
+                  collapsible
+                  collapsedSize={0}
+                  defaultSize={showTerminal ? 28 : 0}
+                  minSize={12}
+                  maxSize={60}
+                  id="terminal-bottom"
+                >
+                  {workspaceRoot ? <TerminalPanel mode="terminal" /> : null}
+                </Panel>
               </PanelGroup>
             </div>
           </Panel>
 
-          {showAgent ? (
-            <>
-              <PanelResizeHandle className="resize-handle" />
-              <Panel
-                order={3}
-                defaultSize={agentDefault}
-                minSize={18}
-                maxSize={50}
-                id="agent"
-              >
-                <TerminalPanel mode="agent" />
-              </Panel>
-            </>
-          ) : null}
+          <PanelResizeHandle
+            className="resize-handle"
+            style={{ display: showAgent ? undefined : "none" }}
+          />
+          <Panel
+            ref={agentPanelRef}
+            order={3}
+            collapsible
+            collapsedSize={0}
+            defaultSize={showAgent ? 28 : 0}
+            minSize={18}
+            maxSize={50}
+            id="agent"
+          >
+            {workspaceRoot ? <TerminalPanel mode="agent" /> : null}
+          </Panel>
         </PanelGroup>
       </div>
 
@@ -264,6 +309,9 @@ export function Shell() {
       <QuickOpenPalette />
 
       <NewAgentDialogHost />
+
+      {/* Floating overlay — not a center tab */}
+      <SettingsPanel />
     </div>
   );
 }

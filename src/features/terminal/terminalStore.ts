@@ -4,22 +4,42 @@ import type {
   TerminalSessionKind,
   TerminalTabInfo,
 } from "@/shared/anchor-api";
+import {
+  disposeAllXtermSessions,
+  disposeXtermSession,
+} from "./xtermSessionPool";
 
 export type RightTermMode = "terminal" | "agent";
 
-const SESSION_LIST_KEY = "anchor.terminal.sessionListOpen";
+const SESSION_LIST_KEY = "anchor.terminal.sessionListOpenByMode";
+/** Legacy single-flag key (migrated once). */
+const SESSION_LIST_KEY_LEGACY = "anchor.terminal.sessionListOpen";
 
-function readSessionListOpen(): boolean {
+function readSessionListOpenByMode(): Record<RightTermMode, boolean> {
   try {
-    return localStorage.getItem(SESSION_LIST_KEY) === "1";
+    const raw = localStorage.getItem(SESSION_LIST_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Record<RightTermMode, boolean>>;
+      return {
+        terminal: parsed.terminal === true,
+        agent: parsed.agent === true,
+      };
+    }
+    // Migrate old shared flag → both modes get the same value once.
+    const legacy = localStorage.getItem(SESSION_LIST_KEY_LEGACY);
+    if (legacy === "1" || legacy === "0") {
+      const open = legacy === "1";
+      return { terminal: open, agent: open };
+    }
   } catch {
-    return false;
+    // ignore
   }
+  return { terminal: false, agent: false };
 }
 
-function writeSessionListOpen(open: boolean) {
+function writeSessionListOpenByMode(state: Record<RightTermMode, boolean>) {
   try {
-    localStorage.setItem(SESSION_LIST_KEY, open ? "1" : "0");
+    localStorage.setItem(SESSION_LIST_KEY, JSON.stringify(state));
   } catch {
     // ignore
   }
@@ -30,7 +50,8 @@ export interface TerminalState {
   /** Active tab per mode so switching modes keeps both sides alive. */
   activeByMode: Record<RightTermMode, string | null>;
   mode: RightTermMode;
-  sessionListOpen: boolean;
+  /** Session rail open state — independent for Terminal vs Agent. */
+  sessionListOpenByMode: Record<RightTermMode, boolean>;
   error: string | null;
   workspaceCwd: string | null;
   agentProfiles: AgentCliProfile[];
@@ -39,8 +60,8 @@ export interface TerminalState {
 
   resetForWorkspace: (cwd: string) => Promise<void>;
   setMode: (mode: RightTermMode) => void;
-  toggleSessionList: () => void;
-  setSessionListOpen: (open: boolean) => void;
+  toggleSessionList: (mode: RightTermMode) => void;
+  setSessionListOpen: (mode: RightTermMode, open: boolean) => void;
   createShellTab: () => Promise<void>;
   createAgentTab: (
     profile: AgentCliProfile,
@@ -86,7 +107,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
   activeByMode: { terminal: null, agent: null },
   mode: "agent",
-  sessionListOpen: readSessionListOpen(),
+  sessionListOpenByMode: readSessionListOpenByMode(),
   error: null,
   workspaceCwd: null,
   agentProfiles: [],
@@ -95,6 +116,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   resetForWorkspace: async (cwd) => {
     try {
+      disposeAllXtermSessions();
       await window.anchor.terminal.disposeAll();
       const tab = await window.anchor.terminal.create({
         cwd,
@@ -114,6 +136,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       void get().loadAgentProfiles();
       void get().detectAgents();
     } catch (err) {
+      disposeAllXtermSessions();
       set({
         workspaceCwd: cwd,
         tabs: [],
@@ -146,16 +169,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       };
     }),
 
-  toggleSessionList: () =>
+  toggleSessionList: (mode) =>
     set((s) => {
-      const sessionListOpen = !s.sessionListOpen;
-      writeSessionListOpen(sessionListOpen);
-      return { sessionListOpen };
+      const sessionListOpenByMode = {
+        ...s.sessionListOpenByMode,
+        [mode]: !s.sessionListOpenByMode[mode],
+      };
+      writeSessionListOpenByMode(sessionListOpenByMode);
+      return { sessionListOpenByMode };
     }),
 
-  setSessionListOpen: (open) => {
-    writeSessionListOpen(open);
-    set({ sessionListOpen: open });
+  setSessionListOpen: (mode, open) => {
+    set((s) => {
+      const sessionListOpenByMode = {
+        ...s.sessionListOpenByMode,
+        [mode]: open,
+      };
+      writeSessionListOpenByMode(sessionListOpenByMode);
+      return { sessionListOpenByMode };
+    });
   },
 
   createShellTab: async () => {
@@ -177,6 +209,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         error: null,
         agentMenuOpen: false,
       }));
+      // Ensure bottom terminal rail is open so the new session is visible.
+      try {
+        const { useShellStore } = await import("@/features/shell/shellStore");
+        useShellStore.getState().setTerminalVisible(true);
+      } catch {
+        // ignore
+      }
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : String(err),
@@ -278,6 +317,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   removeTabLocal: (id) => {
+    disposeXtermSession(id);
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const closed = s.tabs.find((t) => t.id === id);

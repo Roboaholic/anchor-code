@@ -52,21 +52,32 @@ import {
 import { findWorkspaceFiles } from "../services/fileIndex.js";
 import { searchWorkspaceContent } from "../services/contentSearch.js";
 import {
+  checkForAppUpdates,
+  downloadAppUpdate,
+  getUpdateState,
+  installAppUpdate,
+  openReleasePage,
+} from "../services/appUpdate.js";
+import {
   getHistoryRecentCompares,
   getHostProfile,
+  getSessionTabLayout,
   getUiTheme,
   getWorkspaceFilter,
   loadSettings,
+  normalizeSessionTabLayout,
   normalizeTheme,
   pushHistoryRecentCompare,
   pushRecentWorkspace,
   removeHistoryRecentCompare,
+  setSessionTabLayout,
   setUiTheme,
   setWorkspaceFilter,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
+  type SessionTabLayout,
   type UiTheme,
   type WorkspaceFilter,
 } from "../settings.js";
@@ -291,6 +302,35 @@ export function registerIpc(opts: {
     return true;
   });
 
+  ipcMain.handle("clipboard:readText", async () => {
+    return clipboard.readText() ?? "";
+  });
+
+  // ── app updates ────────────────────────────────────
+  ipcMain.handle("app:getUpdateState", async () => getUpdateState());
+  ipcMain.handle("app:checkForUpdates", async () => {
+    try {
+      return await checkForAppUpdates();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle("app:downloadUpdate", async () => {
+    try {
+      return await downloadAppUpdate();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle("app:installUpdate", async () => installAppUpdate());
+  ipcMain.handle("app:openReleasePage", async () => {
+    try {
+      return await openReleasePage();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
   // ── settings / appearance ──────────────────────────
   ipcMain.handle("settings:getTheme", async (): Promise<UiTheme> => {
     try {
@@ -307,6 +347,28 @@ export function registerIpc(opts: {
         const next = await setUiTheme(normalizeTheme(theme));
         applyWindowChromeTheme(getMainWindow(), next);
         return next;
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:getSessionTabLayout",
+    async (): Promise<SessionTabLayout> => {
+      try {
+        return await getSessionTabLayout();
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:setSessionTabLayout",
+    async (_evt, layout: unknown): Promise<SessionTabLayout> => {
+      try {
+        return await setSessionTabLayout(normalizeSessionTabLayout(layout));
       } catch (err) {
         rethrowIpc(err);
       }
@@ -534,7 +596,7 @@ export function registerIpc(opts: {
   ipcMain.handle(
     "workspace:searchContent",
     async (
-      _evt,
+      evt,
       args?: {
         root?: string;
         query?: string;
@@ -543,6 +605,8 @@ export function registerIpc(opts: {
         useRegex?: boolean;
         include?: string | string[];
         exclude?: string | string[];
+        /** Correlates progressive hit events with this request. */
+        requestId?: string;
       },
     ) => {
       try {
@@ -554,13 +618,38 @@ export function registerIpc(opts: {
           throw new HostError("failed", "No workspace open");
         }
         const query = typeof args?.query === "string" ? args.query : "";
-        return await searchWorkspaceContent(h, root, query, {
+        const requestId =
+          typeof args?.requestId === "string" && args.requestId
+            ? args.requestId
+            : `s${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const result = await searchWorkspaceContent(h, root, query, {
           maxResults: args?.maxResults,
           caseSensitive: args?.caseSensitive,
           useRegex: args?.useRegex,
           include: args?.include,
           exclude: args?.exclude,
+          onHits: (hits) => {
+            try {
+              evt.sender.send("workspace:searchContent:hits", {
+                requestId,
+                hits,
+              });
+            } catch {
+              // window closed
+            }
+          },
+          onSource: (source) => {
+            try {
+              evt.sender.send("workspace:searchContent:meta", {
+                requestId,
+                source,
+              });
+            } catch {
+              // ignore
+            }
+          },
         });
+        return { ...result, requestId };
       } catch (err) {
         console.error("[ipc] workspace:searchContent failed:", err);
         rethrowIpc(err);

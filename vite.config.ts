@@ -20,6 +20,7 @@ export default defineConfig({
             rollupOptions: {
               external: [
                 "electron",
+                "electron-updater",
                 "node-pty",
                 "yaml",
                 "ssh2",

@@ -18,6 +18,9 @@ export interface CommentBubbleProps {
   top: number;
   onClose: () => void;
   onMutated?: () => void;
+  /** Hover keep-alive: parent opens bubble on highlight dwell. */
+  onPointerEnter?: () => void;
+  onPointerLeave?: () => void;
 }
 
 function isInsideBubbleOrSelect(
@@ -41,6 +44,8 @@ export function CommentBubble({
   top,
   onClose,
   onMutated,
+  onPointerEnter,
+  onPointerLeave,
 }: CommentBubbleProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const threads = [comment, ...relatedComments];
@@ -80,6 +85,8 @@ export function CommentBubble({
       aria-label={multi ? `${threads.length} overlapping comments` : "Comment"}
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
     >
       {multi ? (
         <div className="anno-bubble__header">

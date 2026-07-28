@@ -51,11 +51,19 @@ type ComposerState = {
 
 type BubbleState = {
   commentId: string;
-  /** Every annotation thread hit at the clicked source position. */
+  /** Every annotation thread hit at the same source position. */
   relatedCommentIds: string[];
   left: number;
   top: number;
 };
+
+type SelectionToolbarState = {
+  left: number;
+  top: number;
+};
+
+const HOVER_OPEN_MS = 420;
+const HOVER_CLOSE_MS = 220;
 
 /**
  * Map a decoration anchor to overlay-local coords.
@@ -84,6 +92,51 @@ function positionForSpec(
     Math.max(8, overlay.clientWidth - 320),
   );
   const top = Math.max(8, rawTop);
+  return { left, top };
+}
+
+/** Top-right of the selection block → overlay-local coords for the add-comment chip. */
+function positionForSelectionTopRight(
+  ed: MonacoEditor.IStandaloneCodeEditor,
+  sel: {
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+  },
+  overlay: HTMLElement,
+): { left: number; top: number } | null {
+  const model = ed.getModel();
+  if (!model) return null;
+  const startLine = Math.min(sel.startLineNumber, sel.endLineNumber);
+  const endLine = Math.max(sel.startLineNumber, sel.endLineNumber);
+  const forward =
+    sel.startLineNumber < sel.endLineNumber ||
+    (sel.startLineNumber === sel.endLineNumber &&
+      sel.startColumn <= sel.endColumn);
+  const startCol = forward ? sel.startColumn : sel.endColumn;
+  const endCol = forward ? sel.endColumn : sel.startColumn;
+  const colOnFirst =
+    startLine === endLine
+      ? Math.max(startCol, endCol)
+      : model.getLineMaxColumn(startLine);
+  const pos = ed.getScrolledVisiblePosition({
+    lineNumber: startLine,
+    column: colOnFirst,
+  });
+  if (!pos) return null;
+  const edDom = ed.getDomNode();
+  if (!edDom) return null;
+  const edRect = edDom.getBoundingClientRect();
+  const overlayRect = overlay.getBoundingClientRect();
+  const iconSize = 28;
+  const rawLeft = edRect.left - overlayRect.left + pos.left + 2;
+  const rawTop = edRect.top - overlayRect.top + pos.top - iconSize - 4;
+  const left = Math.min(
+    Math.max(4, rawLeft),
+    Math.max(4, overlay.clientWidth - iconSize - 4),
+  );
+  const top = Math.max(4, rawTop);
   return { left, top };
 }
 
@@ -137,6 +190,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [bubble, setBubble] = useState<BubbleState | null>(null);
+  const [selToolbar, setSelToolbar] = useState<SelectionToolbarState | null>(
+    null,
+  );
   const modifiedEditorRef =
     useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
@@ -151,7 +207,14 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const specsRef = useRef<DecorationSpec[]>([]);
   const bubbleRef = useRef<BubbleState | null>(null);
   const applyDecorationsRef = useRef<(id?: string | null) => void>(() => {});
+  const hoverOpenTimerRef = useRef<number | null>(null);
+  const hoverCloseTimerRef = useRef<number | null>(null);
+  const pointerOverBubbleRef = useRef(false);
+  const pointerOverAnnoRef = useRef(false);
+  const mouseDownRef = useRef(false);
+  const composerOpenRef = useRef(false);
   bubbleRef.current = bubble;
+  composerOpenRef.current = Boolean(composer);
 
   useEffect(() => {
     if (!activePath || !activeMeta) {
@@ -244,6 +307,20 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     return `${br}${base} → ${head}`;
   }, [item.base, item.head, item.branch]);
 
+  const clearHoverOpenTimer = () => {
+    if (hoverOpenTimerRef.current != null) {
+      window.clearTimeout(hoverOpenTimerRef.current);
+      hoverOpenTimerRef.current = null;
+    }
+  };
+
+  const clearHoverCloseTimer = () => {
+    if (hoverCloseTimerRef.current != null) {
+      window.clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  };
+
   const openComposer = (
     ed: MonacoEditor.IStandaloneCodeEditor,
     forceNewSession = false,
@@ -261,7 +338,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     const afterContext =
       endLine < model.getLineCount() ? model.getLineContent(endLine + 1) : "";
     const lineText = model.getLineContent(startLine);
+    clearHoverOpenTimer();
+    bubbleRef.current = null;
     setBubble(null);
+    setSelToolbar(null);
     setComposer({
       startLine,
       endLine,
@@ -406,33 +486,96 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     applyDecorations(bubble?.commentId ?? null);
   }, [applyDecorations, bubble?.commentId]);
 
-  const openBubbleForSpecs = (hits: DecorationSpec[]) => {
-    const ed = modifiedEditorRef.current;
-    const overlay = overlayRef.current;
-    if (!ed || !overlay || hits.length === 0) return;
-    const primary = hits[0]!;
-    const pos = positionForSpec(ed, primary, overlay);
-    if (!pos) return;
-    setComposer(null);
-    const next = {
-      commentId: primary.commentId,
-      relatedCommentIds: hits.slice(1).map((h) => h.commentId),
-      ...pos,
-    };
-    bubbleRef.current = next;
-    setBubble(next);
-    applyDecorations(primary.commentId);
-  };
+  const openBubbleForSpecs = useCallback(
+    (hits: DecorationSpec[]) => {
+      const ed = modifiedEditorRef.current;
+      const overlay = overlayRef.current;
+      if (!ed || !overlay || hits.length === 0) return;
+      const primary = hits[0]!;
+      const pos = positionForSpec(ed, primary, overlay);
+      if (!pos) return;
+      setComposer(null);
+      setSelToolbar(null);
+      const next = {
+        commentId: primary.commentId,
+        relatedCommentIds: hits.slice(1).map((h) => h.commentId),
+        ...pos,
+      };
+      bubbleRef.current = next;
+      setBubble(next);
+      applyDecorations(primary.commentId);
+    },
+    [applyDecorations],
+  );
 
   const closeBubble = useCallback(() => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    pointerOverAnnoRef.current = false;
+    pointerOverBubbleRef.current = false;
     bubbleRef.current = null;
     setBubble(null);
     requestAnimationFrame(() => applyDecorations(null));
   }, [applyDecorations]);
 
+  const scheduleHoverClose = useCallback(() => {
+    clearHoverCloseTimer();
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      if (pointerOverBubbleRef.current || pointerOverAnnoRef.current) return;
+      closeBubble();
+    }, HOVER_CLOSE_MS);
+  }, [closeBubble]);
+
+  const updateSelectionToolbar = useCallback(() => {
+    const ed = modifiedEditorRef.current;
+    const overlay = overlayRef.current;
+    // Only show after selection finishes — never while the mouse is still dragging.
+    if (
+      !ed ||
+      !overlay ||
+      composerOpenRef.current ||
+      !sideBySide ||
+      mouseDownRef.current
+    ) {
+      setSelToolbar(null);
+      return;
+    }
+    const sel = ed.getSelection();
+    if (!sel || sel.isEmpty()) {
+      setSelToolbar(null);
+      return;
+    }
+    const pos = positionForSelectionTopRight(ed, sel, overlay);
+    setSelToolbar(pos);
+  }, [sideBySide]);
+
+  /** End a mouse-drag selection and show the chip after Monaco commits the range. */
+  const finishMouseSelection = useCallback(() => {
+    if (!mouseDownRef.current) return;
+    mouseDownRef.current = false;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        updateSelectionToolbarRef.current();
+      });
+    });
+  }, []);
+
+  const openBubbleForSpecsRef = useRef(openBubbleForSpecs);
+  openBubbleForSpecsRef.current = openBubbleForSpecs;
+  const scheduleHoverCloseRef = useRef(scheduleHoverClose);
+  scheduleHoverCloseRef.current = scheduleHoverClose;
+  const updateSelectionToolbarRef = useRef(updateSelectionToolbar);
+  updateSelectionToolbarRef.current = updateSelectionToolbar;
+  const finishMouseSelectionRef = useRef(finishMouseSelection);
+  finishMouseSelectionRef.current = finishMouseSelection;
+  const openComposerRef = useRef(openComposer);
+  openComposerRef.current = openComposer;
+
   const onDiffMount: DiffOnMount = (editor, monaco) => {
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
 
     diffEditorRef.current = editor;
     editor.updateOptions({ renderSideBySide: sideBySide });
@@ -456,6 +599,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
 
     // Only register comment actions in side-by-side mode (newer column).
     if (!sideBySide) {
+      setSelToolbar(null);
       repaint();
       requestAnimationFrame(repaint);
       return;
@@ -469,7 +613,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         contextMenuGroupId: "navigation",
         contextMenuOrder: 1.5,
         run: (ed) =>
-          openComposer(ed as MonacoEditor.IStandaloneCodeEditor, false),
+          openComposerRef.current(
+            ed as MonacoEditor.IStandaloneCodeEditor,
+            false,
+          ),
       }),
     );
     disposablesRef.current.push(
@@ -479,26 +626,118 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         contextMenuGroupId: "navigation",
         contextMenuOrder: 1.6,
         run: (ed) =>
-          openComposer(ed as MonacoEditor.IStandaloneCodeEditor, true),
+          openComposerRef.current(
+            ed as MonacoEditor.IStandaloneCodeEditor,
+            true,
+          ),
+      }),
+    );
+
+    // Hover dwell on annotation → open bubble (not click).
+    disposablesRef.current.push(
+      modified.onMouseDown((e) => {
+        if (e.event.leftButton === true) {
+          mouseDownRef.current = true;
+          clearHoverOpenTimer();
+          // Hide chip immediately when a new drag starts.
+          setSelToolbar(null);
+        }
+      }),
+    );
+    // Capture-phase pointer/mouse up so we always end the drag even if
+    // release is outside the editor (Monaco often skips onMouseUp then).
+    const onGlobalPointerUp = () => {
+      finishMouseSelectionRef.current();
+    };
+    window.addEventListener("pointerup", onGlobalPointerUp, true);
+    window.addEventListener("mouseup", onGlobalPointerUp, true);
+    window.addEventListener("blur", onGlobalPointerUp);
+    disposablesRef.current.push({
+      dispose: () => {
+        window.removeEventListener("pointerup", onGlobalPointerUp, true);
+        window.removeEventListener("mouseup", onGlobalPointerUp, true);
+        window.removeEventListener("blur", onGlobalPointerUp);
+      },
+    });
+    disposablesRef.current.push(
+      modified.onMouseLeave(() => {
+        pointerOverAnnoRef.current = false;
+        clearHoverOpenTimer();
+        scheduleHoverCloseRef.current();
       }),
     );
     disposablesRef.current.push(
-      modified.onMouseDown((e) => {
-        if (!e.target.position) return;
-        // Left click on text — open bubble if hitting an annotation.
-        if (e.event.leftButton !== true) return;
+      modified.onMouseMove((e) => {
+        if (mouseDownRef.current || composerOpenRef.current) return;
+        if (!e.target.position) {
+          if (pointerOverAnnoRef.current) {
+            pointerOverAnnoRef.current = false;
+            clearHoverOpenTimer();
+            scheduleHoverCloseRef.current();
+          }
+          return;
+        }
         const hits = findSpecsAt(
           specsRef.current,
           e.target.position.lineNumber,
           e.target.position.column,
         );
-        if (hits.length > 0) {
-          openBubbleForSpecs(hits);
-        } else if (bubbleRef.current) {
-          closeBubble();
+        if (hits.length === 0) {
+          if (pointerOverAnnoRef.current) {
+            pointerOverAnnoRef.current = false;
+            clearHoverOpenTimer();
+            scheduleHoverCloseRef.current();
+          }
+          return;
+        }
+        pointerOverAnnoRef.current = true;
+        clearHoverCloseTimer();
+        const primaryId = hits[0]!.commentId;
+        if (bubbleRef.current?.commentId === primaryId) return;
+        clearHoverOpenTimer();
+        hoverOpenTimerRef.current = window.setTimeout(() => {
+          openBubbleForSpecsRef.current(hits);
+        }, HOVER_OPEN_MS);
+      }),
+    );
+
+    disposablesRef.current.push(
+      modified.onDidChangeCursorSelection(() => {
+        if (mouseDownRef.current) {
+          setSelToolbar(null);
+          return;
+        }
+        updateSelectionToolbarRef.current();
+      }),
+    );
+    disposablesRef.current.push(
+      modified.onDidScrollChange(() => {
+        updateSelectionToolbarRef.current();
+        const open = bubbleRef.current;
+        if (!open) return;
+        const spec = specsRef.current.find(
+          (s) => s.commentId === open.commentId,
+        );
+        if (!spec) {
+          bubbleRef.current = null;
+          setBubble(null);
+          return;
+        }
+        const overlay = overlayRef.current;
+        if (!overlay) return;
+        const pos = positionForSpec(modified, spec, overlay);
+        if (pos) {
+          const next = {
+            commentId: open.commentId,
+            relatedCommentIds: open.relatedCommentIds ?? [],
+            ...pos,
+          };
+          bubbleRef.current = next;
+          setBubble(next);
         }
       }),
     );
+
     repaint();
     // Second pass after Monaco finishes first layout/diff computation.
     requestAnimationFrame(repaint);
@@ -510,11 +749,14 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     if (!sideBySide) {
       setComposer(null);
       setBubble(null);
+      setSelToolbar(null);
     }
   }, [sideBySide]);
 
   useEffect(() => {
     return () => {
+      clearHoverOpenTimer();
+      clearHoverCloseTimer();
       for (const d of disposablesRef.current) d.dispose();
       disposablesRef.current = [];
       decorationsRef.current?.clear();
@@ -730,6 +972,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 onMount={onDiffMount}
                 options={{
                   readOnly: true,
+                  // Keep DOM selectable for reliable copy; edits still blocked.
+                  domReadOnly: false,
                   renderSideBySide: sideBySide,
                   renderSideBySideInlineBreakpoint: sideBySide ? 0 : 1e9,
                   useInlineViewWhenSpaceIsLimited: !sideBySide,
@@ -741,6 +985,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   scrollBeyondLastLine: false,
                   wordWrap: "on",
                   originalEditable: false,
+                  contextmenu: true,
                   // Hide +/- in the line-number gutter (side-by-side).
                   renderIndicators: false,
                   renderMarginRevertIcon: false,
@@ -759,6 +1004,27 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   },
                 }}
               />
+              {selToolbar && sideBySide && !composer ? (
+                <button
+                  type="button"
+                  className="anno-sel-chip"
+                  style={{ left: selToolbar.left, top: selToolbar.top }}
+                  title="Add comment"
+                  aria-label="Add comment"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const ed = modifiedEditorRef.current;
+                    if (ed) openComposer(ed, false);
+                  }}
+                >
+                  <Icon name="comment" />
+                </button>
+              ) : null}
               {bubble && bubbleComment && sideBySide ? (
                 <CommentBubble
                   key={bubble.commentId}
@@ -767,6 +1033,14 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   left={bubble.left}
                   top={bubble.top}
                   onClose={closeBubble}
+                  onPointerEnter={() => {
+                    pointerOverBubbleRef.current = true;
+                    clearHoverCloseTimer();
+                  }}
+                  onPointerLeave={() => {
+                    pointerOverBubbleRef.current = false;
+                    scheduleHoverClose();
+                  }}
                   onMutated={() => {
                     applyDecorations();
                     if (bubble && !liveComment(bubble.commentId)) {

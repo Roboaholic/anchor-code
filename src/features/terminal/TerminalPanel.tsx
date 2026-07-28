@@ -1,4 +1,3 @@
-import { xtermThemeFromCss } from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
 import { Icon } from "@/shared/Icon";
 import {
@@ -8,8 +7,6 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import {
   sessionsForMode,
@@ -17,13 +14,22 @@ import {
   type RightTermMode,
 } from "./terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import {
+  acquireXtermSession,
+  attachXtermSession,
+  detachXtermSession,
+  fitXtermSession,
+  getPooledXterm,
+  scheduleFitXtermSession,
+  setXtermTheme,
+} from "./xtermSessionPool";
 
 export function TerminalPanel({ mode }: { mode: RightTermMode }) {
   // Guard: never fall through to the other mode if prop is missing after HMR.
   const panelMode: RightTermMode = mode === "agent" ? "agent" : "terminal";
   const tabs = useTerminalStore((s) => s.tabs);
   const activeByMode = useTerminalStore((s) => s.activeByMode);
-  const sessionListOpen = useTerminalStore((s) => s.sessionListOpen);
+  const sessionListOpenByMode = useTerminalStore((s) => s.sessionListOpenByMode);
   const error = useTerminalStore((s) => s.error);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const closeTab = useTerminalStore((s) => s.closeTab);
@@ -33,11 +39,16 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
   const renameTab = useTerminalStore((s) => s.renameTab);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const resetForWorkspace = useTerminalStore((s) => s.resetForWorkspace);
+  const sessionTabLayout = useThemeStore((s) => s.sessionTabLayout);
 
   const activeTabId = activeByMode[panelMode];
   const modeTabs = sessionsForMode(tabs, panelMode);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isAgent = panelMode === "agent";
+  const tabsPlacement = sessionTabLayout === "top" ? "top" : "side";
+  const sessionListOpen = sessionListOpenByMode[panelMode];
+  // Both layouts use the expand button; top layout just defaults open (see effect).
+  const showSessionList = sessionListOpen;
 
   // Ensure at least one shell when workspace open (owned by terminal panel).
   useEffect(() => {
@@ -46,6 +57,17 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
       void resetForWorkspace(workspaceRoot);
     }
   }, [panelMode, workspaceRoot, tabs.length, error, resetForWorkspace]);
+
+  // Top layout: expand this mode's session strip by default once when switching to top.
+  const topDefaultedRef = useRef<Partial<Record<RightTermMode, boolean>>>({});
+  useEffect(() => {
+    if (tabsPlacement !== "top") return;
+    if (topDefaultedRef.current[panelMode]) return;
+    topDefaultedRef.current[panelMode] = true;
+    if (!sessionListOpenByMode[panelMode]) {
+      useTerminalStore.getState().setSessionListOpen(panelMode, true);
+    }
+  }, [tabsPlacement, panelMode, sessionListOpenByMode]);
 
   const onAdd = useCallback(() => {
     if (!workspaceRoot) return;
@@ -63,7 +85,7 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
 
   return (
     <aside
-      className={`terminal-panel ${placementClass}`}
+      className={`terminal-panel ${placementClass} terminal-panel--tabs-${tabsPlacement}`}
       aria-label={isAgent ? "Agent panel" : "Terminal panel"}
     >
       <header className="terminal-panel__header">
@@ -73,8 +95,12 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
             className={`icon-btn${sessionListOpen ? " is-active" : ""}`}
             aria-label="Session list"
             aria-pressed={sessionListOpen}
-            title="Session list"
-            onClick={() => toggleSessionList()}
+            title={
+              tabsPlacement === "top"
+                ? "Show or hide session tabs"
+                : "Session list"
+            }
+            onClick={() => toggleSessionList(panelMode)}
           >
             <Icon name="list-flat" />
           </button>
@@ -91,7 +117,7 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
           <span className="terminal-panel__title">
             {isAgent ? "AGENT" : "TERMINAL"}
           </span>
-          {activeTab ? (
+          {activeTab && tabsPlacement === "side" ? (
             <span className="terminal-panel__active-title" title={activeTab.title}>
               {activeTab.title}
               {activeTab.status === "exited" ? " · exited" : ""}
@@ -100,17 +126,29 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
         </div>
       </header>
 
-      <div className="terminal-panel__main">
-        {sessionListOpen ? (
+      <div
+        className={`terminal-panel__main terminal-panel__main--tabs-${tabsPlacement}`}
+      >
+        {/*
+          Always mount the session rail; collapse with CSS so top-tab toggle
+          does not remount React around xterm (reduces flash).
+        */}
+        <div
+          className={`terminal-session-rail-slot terminal-session-rail-slot--${tabsPlacement}${
+            showSessionList ? "" : " is-collapsed"
+          }`}
+          aria-hidden={!showSessionList}
+        >
           <SessionRail
             mode={panelMode}
+            layout={tabsPlacement}
             tabs={modeTabs}
             activeTabId={activeTabId}
             onSelect={setActive}
             onClose={(id) => void closeTab(id)}
             onRename={(id, title) => void renameTab(id, title)}
           />
-        ) : null}
+        </div>
 
         <div className="terminal-panel__body">
           {error ? (
@@ -144,6 +182,7 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
 
 function SessionRail({
   mode,
+  layout,
   tabs,
   activeTabId,
   onSelect,
@@ -151,6 +190,7 @@ function SessionRail({
   onRename,
 }: {
   mode: RightTermMode;
+  layout: "side" | "top";
   tabs: { id: string; title: string; status: string; kind: string }[];
   activeTabId: string | null;
   onSelect: (id: string) => void;
@@ -183,7 +223,7 @@ function SessionRail({
 
   return (
     <nav
-      className="terminal-session-rail"
+      className={`terminal-session-rail terminal-session-rail--${layout}`}
       aria-label={mode === "agent" ? "Agent sessions" : "Terminal sessions"}
     >
       <div className="terminal-session-rail__label">
@@ -240,6 +280,12 @@ function SessionRail({
   );
 }
 
+type TermContextMenu = {
+  x: number;
+  y: number;
+  canCopy: boolean;
+};
+
 function XtermHost({
   id,
   active,
@@ -250,100 +296,168 @@ function XtermHost({
   kind: string;
 }) {
   const theme = useThemeStore((s) => s.theme);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const write = useTerminalStore((s) => s.write);
-  const resize = useTerminalStore((s) => s.resize);
-  const applyTitleFromTerm = useTerminalStore((s) => s.applyTitleFromTerm);
-  const removeTabLocal = useTerminalStore((s) => s.removeTabLocal);
+  /** React slot that receives the pooled xterm host element. */
+  const slotRef = useRef<HTMLDivElement>(null);
+  const [ctxMenu, setCtxMenu] = useState<TermContextMenu | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 12.5,
-      fontFamily:
-        "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
-      theme: xtermThemeFromCss(theme),
-      allowProposedApi: true,
-      windowOptions: {
-        setWinLines: false,
-      },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(containerRef.current);
-    fit.fit();
-    termRef.current = term;
-    fitRef.current = fit;
-
-    const dim = fit.proposeDimensions();
-    if (dim) resize(id, dim.cols, dim.rows);
-
-    const offData = window.anchor.terminal.onData((payload) => {
-      if (payload.id === id) term.write(payload.data);
-    });
-    const offExit = window.anchor.terminal.onExit((payload) => {
-      if (payload.id !== id) return;
-      term.writeln(`\r\n[process exited: ${payload.exitCode}]`);
-      // Agent: user quit → remove session tag.
-      if (kind === "agent" || payload.kind === "agent") {
-        window.setTimeout(() => removeTabLocal(id), 80);
+  const copySelection = useCallback(async () => {
+    const term = getPooledXterm(id)?.term;
+    if (!term?.hasSelection()) return;
+    const text = term.getSelection();
+    if (!text) return;
+    try {
+      await window.anchor.clipboard.writeText(text);
+    } catch {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore
       }
-    });
-
-    term.onData((data) => write(id, data));
-
-    // Shell only: OSC window title → cwd basename.
-    if (kind !== "agent") {
-      term.onTitleChange((title) => {
-        if (title?.trim()) applyTitleFromTerm(id, title);
-      });
     }
+    term.clearSelection();
+    setCtxMenu(null);
+  }, [id]);
+
+  const pasteClipboard = useCallback(async () => {
+    const term = getPooledXterm(id)?.term;
+    if (!term) return;
+    let text = "";
+    try {
+      text = await window.anchor.clipboard.readText();
+    } catch {
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        text = "";
+      }
+    }
+    if (text) useTerminalStore.getState().write(id, text);
+    setCtxMenu(null);
+    term.focus();
+  }, [id]);
+
+  // Acquire/attach pooled session — detaching does NOT dispose (scrollback kept).
+  // With stable Shell panels, this effect should only run when the session is
+  // created/destroyed — not when folding left/agent/terminal rails.
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+
+    const session = acquireXtermSession(id, kind, theme);
+    attachXtermSession(id, slot);
+
+    const onContextMenu = (ev: MouseEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const term = session.term;
+      setCtxMenu({
+        x: ev.clientX,
+        y: ev.clientY,
+        canCopy: term.hasSelection() && Boolean(term.getSelection()),
+      });
+    };
+    session.hostEl.addEventListener("contextmenu", onContextMenu);
 
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        const d = fit.proposeDimensions();
-        if (d) resize(id, d.cols, d.rows);
-      } catch {
-        // ignore
-      }
+      if (!activeRef.current) return;
+      // Debounce: left-rail fold / top session-strip toggle fire many ROs.
+      // Skipping same cols×rows inside fit avoids canvas wipe flash.
+      scheduleFitXtermSession(id, 100);
     });
-    ro.observe(containerRef.current);
+    ro.observe(session.hostEl);
+    ro.observe(slot);
+
+    if (activeRef.current) {
+      requestAnimationFrame(() => fitXtermSession(id));
+    }
 
     return () => {
-      offData();
-      offExit();
+      session.hostEl.removeEventListener("contextmenu", onContextMenu);
       ro.disconnect();
-      term.dispose();
-      termRef.current = null;
+      detachXtermSession(id);
     };
-  }, [id, kind, write, resize, applyTitleFromTerm, removeTabLocal]);
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-    term.options.theme = xtermThemeFromCss(theme);
-  }, [theme]);
-
+    // theme applied separately; only identity remounts attach
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, kind]);
 
   useEffect(() => {
-    if (active) {
-      try {
-        fitRef.current?.fit();
-        termRef.current?.focus();
-      } catch {
-        // ignore
-      }
+    setXtermTheme(id, theme);
+  }, [id, theme]);
+
+  useEffect(() => {
+    if (!active) {
+      setCtxMenu(null);
+      return;
     }
-  }, [active]);
+    // Panel may expand from 0 after agentVisible flips — retry fit until sized.
+    let n = 0;
+    let raf = 0;
+    const tryFit = () => {
+      fitXtermSession(id);
+      const host = getPooledXterm(id)?.hostEl;
+      if (host && host.clientWidth >= 24 && host.clientHeight >= 24) {
+        getPooledXterm(id)?.term.focus();
+        return;
+      }
+      if (n++ < 40) raf = requestAnimationFrame(tryFit);
+    };
+    raf = requestAnimationFrame(tryFit);
+    return () => cancelAnimationFrame(raf);
+  }, [active, id]);
+
+  // Dismiss context menu on outside click / Escape.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest(".xterm-ctx-menu")) return;
+      setCtxMenu(null);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
 
   return (
     <div
-      className="xterm-host"
+      className="xterm-host-wrap"
       style={{ display: active ? "block" : "none" }}
-      ref={containerRef}
-    />
+      ref={slotRef}
+    >
+      {ctxMenu ? (
+        <div
+          className="xterm-ctx-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="xterm-ctx-menu__item"
+            role="menuitem"
+            disabled={!ctxMenu.canCopy}
+            onClick={() => void copySelection()}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            className="xterm-ctx-menu__item"
+            role="menuitem"
+            onClick={() => void pasteClipboard()}
+          >
+            Paste
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }

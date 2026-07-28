@@ -229,7 +229,13 @@ export class SshHostSession implements HostSession {
         };
         s.on("data", (chunk: Buffer) => {
           if (settled) return;
-          stdout += chunk.toString("utf8");
+          const text = chunk.toString("utf8");
+          stdout += text;
+          try {
+            opts?.onStdoutChunk?.(text, stdout);
+          } catch {
+            // ignore
+          }
           if (opts?.earlyExit?.(stdout, stderr)) {
             requestEarlyExit();
           }

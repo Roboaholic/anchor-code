@@ -113,7 +113,13 @@ export class LocalHostSession implements HostSession {
       }
       child.stdout?.on("data", (chunk: Buffer) => {
         if (settled) return;
-        stdout += chunk.toString("utf8");
+        const text = chunk.toString("utf8");
+        stdout += text;
+        try {
+          opts?.onStdoutChunk?.(text, stdout);
+        } catch {
+          // ignore listener errors
+        }
         if (opts?.earlyExit?.(stdout, stderr)) {
           requestEarlyExit();
         }

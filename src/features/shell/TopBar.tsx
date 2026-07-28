@@ -1,38 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/shared/Icon";
-import type { UiTheme } from "@/shared/anchor-api";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
-
-const THEME_OPTIONS: Array<{
-  id: UiTheme;
-  label: string;
-  description: string;
-}> = [
-  {
-    id: "light",
-    label: "Light",
-    description: "Warm paper panels for daytime reading.",
-  },
-  {
-    id: "light-modern",
-    label: "Light Modern",
-    description: "VS Code Light Modern workbench and blue accents.",
-  },
-  {
-    id: "dark",
-    label: "Dark",
-    description: "Neutral charcoal shell with warm sand accents.",
-  },
-  {
-    id: "dark-modern",
-    label: "Dark Modern",
-    description: "VS Code Dark Modern workbench and blue accents.",
-  },
-];
 
 export function TopBar() {
   const agentVisible = useShellStore((s) => s.agentVisible);
@@ -44,35 +16,9 @@ export function TopBar() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const settingsOpen = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
-  const theme = useThemeStore((s) => s.theme);
-  const setTheme = useThemeStore((s) => s.setTheme);
-  const menuRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
   const [rightRailTip, setRightRailTip] = useState(false);
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setSettingsOpen(false);
-      }
-    };
-    const onPointer = (e: MouseEvent) => {
-      const el = menuRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) {
-        setSettingsOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("mousedown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mousedown", onPointer);
-    };
-  }, [settingsOpen, setSettingsOpen]);
 
   useEffect(() => {
     return () => {
@@ -171,69 +117,16 @@ export function TopBar() {
 
           {/* Settings / Agent / Terminal — one rail, equal spacing, mode-btn highlight */}
           <div className="topbar__right-rail" ref={rightRailRef}>
-            <div className="topbar__menu" ref={menuRef}>
-              <button
-                type="button"
-                className={`topbar__rail-btn${settingsOpen ? " is-active" : ""}`}
-                onClick={() => setSettingsOpen(!settingsOpen)}
-                aria-expanded={settingsOpen}
-                aria-haspopup="dialog"
-                aria-controls="topbar-settings-panel"
-                aria-label="Settings"
-                title="Settings"
-              >
-                <Icon name="settings-gear" className="topbar__rail-btn-icon" />
-              </button>
-              {settingsOpen ? (
-                <div
-                  id="topbar-settings-panel"
-                  className="topbar-settings"
-                  role="dialog"
-                  aria-label="Settings"
-                >
-                  <div className="topbar-settings__head">
-                    <span className="topbar-settings__title">Appearance</span>
-                  </div>
-                  <div
-                    className="topbar-settings__themes"
-                    role="radiogroup"
-                    aria-label="Theme"
-                  >
-                    {THEME_OPTIONS.map((opt) => {
-                      const active = theme === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          className={`topbar-settings__card${active ? " is-active" : ""}`}
-                          onClick={() => void setTheme(opt.id)}
-                        >
-                          <span
-                            className={`topbar-settings__swatch topbar-settings__swatch--${opt.id}`}
-                            aria-hidden
-                          />
-                          <span className="topbar-settings__meta">
-                            <span className="topbar-settings__label">
-                              {opt.label}
-                            </span>
-                            <span className="topbar-settings__hint">
-                              {opt.description}
-                            </span>
-                          </span>
-                          {active ? (
-                            <span className="topbar-settings__check" aria-hidden>
-                              ✓
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              className={`topbar__rail-btn${settingsOpen ? " is-active" : ""}`}
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              aria-pressed={settingsOpen}
+              aria-label="Settings"
+              title="Settings"
+            >
+              <Icon name="settings-gear" className="topbar__rail-btn-icon" />
+            </button>
 
             <button
               type="button"

@@ -81,6 +81,12 @@ export interface AppSettings {
     rightWidth?: number;
     /** Workbench color theme. Default dark-modern. */
     theme?: "light" | "light-modern" | "dark" | "dark-modern";
+    /**
+     * Terminal / Agent session tab strip placement.
+     * - side: vertical rail (default)
+     * - top: horizontal tab bar above the terminal body
+     */
+    sessionTabLayout?: "side" | "top";
   };
 }
 
@@ -105,7 +111,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentLaunchCache: {},
   historyRecentCompares: {},
   workspaceFilters: {},
-  ui: { terminalVisible: true, theme: "dark-modern" },
+  ui: {
+    terminalVisible: true,
+    theme: "dark-modern",
+    sessionTabLayout: "side",
+  },
 };
 
 const MAX_RECENT = 12;
@@ -312,6 +322,27 @@ export async function setUiTheme(theme: UiTheme): Promise<UiTheme> {
   const settings = await loadSettings();
   const next = normalizeTheme(theme);
   settings.ui = { ...settings.ui, theme: next };
+  await saveSettings(settings);
+  return next;
+}
+
+export type SessionTabLayout = "side" | "top";
+
+export function normalizeSessionTabLayout(value: unknown): SessionTabLayout {
+  return value === "top" ? "top" : "side";
+}
+
+export async function getSessionTabLayout(): Promise<SessionTabLayout> {
+  const settings = await loadSettings();
+  return normalizeSessionTabLayout(settings.ui?.sessionTabLayout);
+}
+
+export async function setSessionTabLayout(
+  layout: SessionTabLayout,
+): Promise<SessionTabLayout> {
+  const settings = await loadSettings();
+  const next = normalizeSessionTabLayout(layout);
+  settings.ui = { ...settings.ui, sessionTabLayout: next };
   await saveSettings(settings);
   return next;
 }

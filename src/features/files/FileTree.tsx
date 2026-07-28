@@ -223,6 +223,54 @@ export function FileTree() {
       }
       setSearching(true);
       setSearchError(null);
+      // Clear previous results immediately so streaming replaces, not appends.
+      setHits([]);
+      setTruncated(false);
+      setSearchSource(null);
+      setCollapsedFiles(new Set());
+
+      const requestId = `ui-${gen}-${Date.now()}`;
+      const maxResults = 200;
+      // Batch streamed hits onto animation frames (feel like VS Code progressive UI).
+      let pending: SearchHit[] = [];
+      let raf = 0;
+      const flushPending = () => {
+        raf = 0;
+        if (gen !== searchGen.current || pending.length === 0) {
+          pending = [];
+          return;
+        }
+        const batch = pending;
+        pending = [];
+        setHits((prev) => {
+          if (prev.length >= maxResults) return prev;
+          const next = [...prev, ...batch];
+          return next.length > maxResults ? next.slice(0, maxResults) : next;
+        });
+      };
+
+      const offHits = window.anchor.workspace.onSearchHits?.((payload) => {
+        if (payload.requestId !== requestId) return;
+        if (gen !== searchGen.current) return;
+        for (const h of payload.hits) {
+          if (
+            opts.workspaceExcludes.length > 0 &&
+            pathMatchesExclude(h.path, opts.workspaceExcludes)
+          ) {
+            continue;
+          }
+          pending.push(h);
+        }
+        if (pending.length > 0 && !raf) {
+          raf = window.requestAnimationFrame(flushPending);
+        }
+      });
+      const offMeta = window.anchor.workspace.onSearchMeta?.((payload) => {
+        if (payload.requestId !== requestId) return;
+        if (gen !== searchGen.current) return;
+        setSearchSource(payload.source);
+      });
+
       try {
         // Pass workspace excludes as discrete list entries (not comma-joined)
         // so multi-segment paths like packages/legacy are not mangled.
@@ -233,26 +281,28 @@ export function FileTree() {
         const result = await window.anchor.workspace.searchContent({
           root: workspaceRoot,
           query: q,
-          maxResults: 200,
+          maxResults,
           include: opts.include,
           exclude: excludeList.length > 0 ? excludeList : undefined,
           useRegex: opts.useRegex,
           caseSensitive: opts.caseSensitive,
+          requestId,
         });
         if (gen !== searchGen.current) return;
-        // Belt-and-suspenders: drop hits under workspace excludes even if a
-        // search engine / old main process missed a pattern.
-        const hits =
+        if (raf) {
+          window.cancelAnimationFrame(raf);
+          raf = 0;
+        }
+        // Final authoritative set (covers any miss/race in streaming).
+        const finalHits =
           opts.workspaceExcludes.length === 0
             ? result.hits
             : result.hits.filter(
                 (h) => !pathMatchesExclude(h.path, opts.workspaceExcludes),
               );
-        setHits(hits);
+        setHits(finalHits);
         setTruncated(result.truncated);
         setSearchSource(result.source);
-        // New result set: expand all file groups by default
-        setCollapsedFiles(new Set());
       } catch (err) {
         if (gen !== searchGen.current) return;
         setHits([]);
@@ -260,6 +310,9 @@ export function FileTree() {
         setSearchSource(null);
         setSearchError(err instanceof Error ? err.message : String(err));
       } finally {
+        offHits?.();
+        offMeta?.();
+        if (raf) window.cancelAnimationFrame(raf);
         if (gen === searchGen.current) setSearching(false);
       }
     },

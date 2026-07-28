@@ -6,6 +6,7 @@ import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 import { getUiTheme, type UiTheme } from "./settings.js";
+import { initAppUpdater } from "./services/appUpdate.js";
 import {
   shellBackground,
   titleBarOverlayFor,
@@ -222,6 +223,7 @@ app.whenReady().then(async () => {
     appVersion: app.getVersion(),
     terminal,
   });
+  initAppUpdater({ getMainWindow: () => mainWindow });
   buildMenu();
   const theme = await getUiTheme().catch(() => "dark-modern" as UiTheme);
   createWindow(theme);

@@ -191,7 +191,14 @@ export class WslHostSession implements HostSession {
       "-lc",
       cmdline,
     ];
-    return spawnCapture(wsl, wslArgs, opts?.timeoutMs ?? 45_000, opts?.stdin, opts?.earlyExit);
+    return spawnCapture(
+      wsl,
+      wslArgs,
+      opts?.timeoutMs ?? 45_000,
+      opts?.stdin,
+      opts?.earlyExit,
+      opts?.onStdoutChunk,
+    );
   }
 
   async readFile(filePath: string): Promise<string> {
@@ -460,6 +467,7 @@ function spawnCapture(
   timeoutMs = 0,
   stdin?: string,
   earlyExit?: (stdout: string, stderr: string) => boolean,
+  onStdoutChunk?: (chunk: string, stdout: string) => void,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -523,7 +531,13 @@ function spawnCapture(
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (settled) return;
-      stdout += chunk.toString("utf8");
+      const text = chunk.toString("utf8");
+      stdout += text;
+      try {
+        onStdoutChunk?.(text, stdout);
+      } catch {
+        // ignore
+      }
       if (earlyExit?.(stdout, stderr)) {
         requestEarlyExit();
       }

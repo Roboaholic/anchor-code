@@ -11,6 +11,27 @@ export interface AppVersionInfo {
   hostKind: HostKind;
 }
 
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export interface AppUpdateState {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  canInstall: boolean;
+  packaged: boolean;
+  progress: number | null;
+  message: string | null;
+  error: string | null;
+}
+
 export interface HostInfo {
   id: string;
   kind: HostKind;
@@ -154,6 +175,8 @@ const anchor = {
   clipboard: {
     writeText: (text: string): Promise<boolean> =>
       ipcRenderer.invoke("clipboard:writeText", text),
+    readText: (): Promise<string> =>
+      ipcRenderer.invoke("clipboard:readText"),
   },
   workspace: {
     pickFolder: (): Promise<string | null> =>
@@ -193,13 +216,50 @@ const anchor = {
       useRegex?: boolean;
       include?: string | string[];
       exclude?: string | string[];
+      requestId?: string;
     }): Promise<{
       root: string;
       query: string;
       hits: { path: string; line: number; text: string }[];
       truncated: boolean;
       source: "git-grep" | "rg" | "scan";
+      requestId: string;
     }> => ipcRenderer.invoke("workspace:searchContent", args),
+    /** Progressive search hits (same requestId as searchContent). */
+    onSearchHits: (
+      cb: (payload: {
+        requestId: string;
+        hits: { path: string; line: number; text: string }[];
+      }) => void,
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: {
+          requestId: string;
+          hits: { path: string; line: number; text: string }[];
+        },
+      ) => cb(payload);
+      ipcRenderer.on("workspace:searchContent:hits", listener);
+      return () =>
+        ipcRenderer.removeListener("workspace:searchContent:hits", listener);
+    },
+    onSearchMeta: (
+      cb: (payload: {
+        requestId: string;
+        source: "git-grep" | "rg" | "scan";
+      }) => void,
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: {
+          requestId: string;
+          source: "git-grep" | "rg" | "scan";
+        },
+      ) => cb(payload);
+      ipcRenderer.on("workspace:searchContent:meta", listener);
+      return () =>
+        ipcRenderer.removeListener("workspace:searchContent:meta", listener);
+    },
   },
   history: {
     discover: (workspaceRoot: string): Promise<RepoInfo[]> =>
@@ -391,6 +451,12 @@ const anchor = {
       theme: "light" | "light-modern" | "dark" | "dark-modern",
     ): Promise<"light" | "light-modern" | "dark" | "dark-modern"> =>
       ipcRenderer.invoke("settings:setTheme", theme),
+    getSessionTabLayout: (): Promise<"side" | "top"> =>
+      ipcRenderer.invoke("settings:getSessionTabLayout"),
+    setSessionTabLayout: (
+      layout: "side" | "top",
+    ): Promise<"side" | "top"> =>
+      ipcRenderer.invoke("settings:setSessionTabLayout", layout),
     getWorkspaceFilter: (args: {
       workspaceRoot: string;
       hostProfileId?: string | null;
@@ -402,6 +468,24 @@ const anchor = {
       excludes: string[];
     }): Promise<{ excludes: string[] }> =>
       ipcRenderer.invoke("settings:setWorkspaceFilter", args),
+  },
+  updates: {
+    getState: (): Promise<AppUpdateState> =>
+      ipcRenderer.invoke("app:getUpdateState"),
+    check: (): Promise<AppUpdateState> =>
+      ipcRenderer.invoke("app:checkForUpdates"),
+    download: (): Promise<AppUpdateState> =>
+      ipcRenderer.invoke("app:downloadUpdate"),
+    install: (): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke("app:installUpdate"),
+    openReleasePage: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("app:openReleasePage"),
+    onState: (cb: (state: AppUpdateState) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, state: AppUpdateState) =>
+        cb(state);
+      ipcRenderer.on("app:updateState", listener);
+      return () => ipcRenderer.removeListener("app:updateState", listener);
+    },
   },
   agent: {
     listProfiles: (): Promise<AgentCliProfile[]> =>

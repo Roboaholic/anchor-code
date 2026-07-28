@@ -51,6 +51,11 @@ export interface RunOptions {
    * (used to stop content search once enough hits are collected).
    */
   earlyExit?: (stdout: string, stderr: string) => boolean;
+  /**
+   * Called for each stdout chunk as it arrives (before earlyExit).
+   * Used to stream search hits to the UI without waiting for process exit.
+   */
+  onStdoutChunk?: (chunk: string, stdout: string) => void;
 }
 
 export interface DirEntry {

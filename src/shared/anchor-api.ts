@@ -4,6 +4,30 @@ export type HostKind = "local" | "wsl" | "ssh";
 
 export type UiTheme = "light" | "light-modern" | "dark" | "dark-modern";
 
+/** Terminal / Agent session tab strip placement. */
+export type SessionTabLayout = "side" | "top";
+
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export interface AppUpdateState {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  canInstall: boolean;
+  packaged: boolean;
+  progress: number | null;
+  message: string | null;
+  error: string | null;
+}
+
 export interface AppVersionInfo {
   app: string;
   electron: string;
@@ -301,6 +325,7 @@ export interface AnchorApi {
   };
   clipboard: {
     writeText: (text: string) => Promise<boolean>;
+    readText: () => Promise<string>;
   };
   workspace: {
     pickFolder: () => Promise<string | null>;
@@ -334,13 +359,28 @@ export interface AnchorApi {
       useRegex?: boolean;
       include?: string | string[];
       exclude?: string | string[];
+      requestId?: string;
     }) => Promise<{
       root: string;
       query: string;
       hits: { path: string; line: number; text: string }[];
       truncated: boolean;
       source: "git-grep" | "rg" | "scan";
+      requestId: string;
     }>;
+    /** Streamed hits while searchContent is still running. */
+    onSearchHits: (
+      cb: (payload: {
+        requestId: string;
+        hits: { path: string; line: number; text: string }[];
+      }) => void,
+    ) => () => void;
+    onSearchMeta: (
+      cb: (payload: {
+        requestId: string;
+        source: "git-grep" | "rg" | "scan";
+      }) => void,
+    ) => () => void;
   };
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
@@ -463,6 +503,10 @@ export interface AnchorApi {
   settings: {
     getTheme: () => Promise<UiTheme>;
     setTheme: (theme: UiTheme) => Promise<UiTheme>;
+    getSessionTabLayout: () => Promise<SessionTabLayout>;
+    setSessionTabLayout: (
+      layout: SessionTabLayout,
+    ) => Promise<SessionTabLayout>;
     getWorkspaceFilter: (args: {
       workspaceRoot: string;
       hostProfileId?: string | null;
@@ -472,6 +516,14 @@ export interface AnchorApi {
       hostProfileId?: string | null;
       excludes: string[];
     }) => Promise<{ excludes: string[] }>;
+  };
+  updates: {
+    getState: () => Promise<AppUpdateState>;
+    check: () => Promise<AppUpdateState>;
+    download: () => Promise<AppUpdateState>;
+    install: () => Promise<{ ok: boolean; error?: string }>;
+    openReleasePage: () => Promise<{ ok: boolean }>;
+    onState: (cb: (state: AppUpdateState) => void) => () => void;
   };
   agent: {
     listProfiles: () => Promise<AgentCliProfile[]>;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createGrepHitStreamer,
   globToRegExp,
   hasEnoughGrepHits,
   parseGrepLine,
@@ -112,6 +113,30 @@ describe("hasEnoughGrepHits", () => {
     const stdout = ["a.ts:1:x", "b.js:2:y", "c.ts:3:z"].join("\n");
     expect(hasEnoughGrepHits(stdout, 2, ["*.ts"], [])).toBe(true);
     expect(hasEnoughGrepHits(stdout, 3, ["*.ts"], [])).toBe(false);
+  });
+});
+
+describe("createGrepHitStreamer", () => {
+  it("emits new hits incrementally across chunks", () => {
+    const batches: string[][] = [];
+    const s = createGrepHitStreamer(10, [], [], (hits) => {
+      batches.push(hits.map((h) => h.path));
+    });
+    // Incomplete first line
+    expect(s.feed("src/a.ts:1:hel")).toBe(false);
+    expect(batches).toEqual([]);
+    // Complete first + start of second
+    expect(s.feed("src/a.ts:1:hello\nsrc/b.ts:2:wo")).toBe(false);
+    expect(batches).toEqual([["src/a.ts"]]);
+    expect(s.feed("src/a.ts:1:hello\nsrc/b.ts:2:world\n")).toBe(false);
+    expect(batches).toEqual([["src/a.ts"], ["src/b.ts"]]);
+    expect(s.hits().map((h) => h.text)).toEqual(["hello", "world"]);
+  });
+
+  it("stops at maxResults", () => {
+    const s = createGrepHitStreamer(1, [], []);
+    expect(s.feed("a.ts:1:one\nb.ts:2:two\n")).toBe(true);
+    expect(s.hits()).toHaveLength(1);
   });
 });
 

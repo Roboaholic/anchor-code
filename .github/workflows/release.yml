@@ -1,45 +1,78 @@
 name: Release
 
-# Create a GitHub Release with Windows / macOS / Linux installers on version tags.
+# Create / update a GitHub Release with Windows / macOS / Linux installers.
 #
+# Tag push (normal):
 #   # bump package.json version first (must match tag without leading v)
 #   npm version patch
 #   git push origin main --follow-tags
+#   Tag format: v0.1.11
 #
-# Tag format: v0.1.6
+# Manual re-run (no new tag) — e.g. rebuild only mac for an existing release:
+#   Actions → Release → Run workflow
+#   version: 0.1.11
+#   platforms: mac  (or win / linux / all)
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without leading v (must match package.json on main, e.g. 0.1.11)"
+        required: true
+        type: string
+      platforms:
+        description: "Which platforms to build"
+        required: true
+        type: choice
+        default: mac
+        options:
+          - mac
+          - win
+          - linux
+          - all
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.event.inputs.version) || github.ref }}
   cancel-in-progress: false
 
 jobs:
   verify:
-    name: Verify version tag
+    name: Verify version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Tag must match package.json version
+      - name: Resolve version / tag
+        id: meta
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
           PKG="$(node -p "require('./package.json').version")"
-          echo "tag=$TAG package.json=$PKG"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::Tag v$TAG must match package.json version $PKG. Bump package.json before tagging."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+            VER="${VER#v}"
+          else
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          echo "package.json=$PKG requested=$VER"
+          if [ "$VER" != "$PKG" ]; then
+            echo "::error::Requested version $VER must match package.json version $PKG on this checkout."
             exit 1
           fi
           node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.os }})
@@ -60,29 +93,52 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
+      - name: Decide whether to build this platform
+        id: want
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PLATFORMS="${{ github.event.inputs.platforms }}"
+          if [ "$PLATFORMS" = "all" ] || [ "$PLATFORMS" = "${{ matrix.platform }}" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${{ matrix.platform }} (platforms=$PLATFORMS)"
+          fi
+
       - name: Checkout
+        if: steps.want.outputs.build == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.want.outputs.build == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
 
       - name: Install dependencies
+        if: steps.want.outputs.build == 'true'
         run: npm ci
 
       # package.json has npmRebuild:false; rebuild node-pty for this Electron ABI.
       - name: Rebuild native modules
+        if: steps.want.outputs.build == 'true'
         run: npm run rebuild:native
 
       - name: Typecheck & unit tests
+        if: steps.want.outputs.build == 'true'
         shell: bash
         run: |
           npm run typecheck
           npm run test:unit
 
       - name: Package ${{ matrix.platform }}
+        if: steps.want.outputs.build == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -92,7 +148,6 @@ jobs:
             # with exit 134 on macos-latest when no Apple cert is present.
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             export CSC_IDENTITY=""
-            # Prefer zip-first packaging; dmg still configured in package.json.
             npm run pack:mac || {
               echo "::warning::mac package failed once; retrying once"
               npm run pack:mac
@@ -106,6 +161,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: List release output
+        if: steps.want.outputs.build == 'true'
         shell: bash
         run: |
           ls -la release || true
@@ -114,6 +170,7 @@ jobs:
       # Only ship installers — not ConPTY helpers like OpenConsole.exe that break gh-release uploads.
       # Use find (not brittle name globs) so "Anchor Code-…", "Anchor.Code-…", "Anchor-Code-…" all stage.
       - name: Stage installers for upload
+        if: steps.want.outputs.build == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -156,6 +213,7 @@ jobs:
           fi
 
       - name: Upload artifacts to job
+        if: steps.want.outputs.build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.platform }}
@@ -176,17 +234,27 @@ jobs:
           path: dist-packages
           pattern: packages-*
           merge-multiple: true
+          # Manual mac-only rebuild: still OK if only one platform uploaded.
+          # softprops will attach whatever is present to the existing tag.
 
       - name: List downloaded files
         run: |
-          find dist-packages -type f | sort
-          test "$(find dist-packages -type f | wc -l)" -gt 0
+          find dist-packages -type f | sort || true
+          count="$(find dist-packages -type f 2>/dev/null | wc -l | tr -d ' ')"
+          echo "downloaded count=$count"
+          if [ "${count:-0}" -eq 0 ]; then
+            echo "::error::No package artifacts downloaded — nothing to publish"
+            exit 1
+          fi
 
-      - name: Create GitHub Release
+      - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.verify.outputs.tag }}
+          name: ${{ needs.verify.outputs.tag }}
           generate_release_notes: true
           fail_on_unmatched_files: false
+          # Append/replace assets on the existing release when re-run manually.
           files: |
             dist-packages/**
         env:

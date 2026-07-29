@@ -3112,7 +3112,7 @@ body.files-split-resizing .monaco-editor {
 .xterm-host {
   height: 100%;
   width: 100%;
-  padding: 6px 8px 6px 10px;
+  padding: 0;
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -3121,6 +3121,8 @@ body.files-split-resizing .monaco-editor {
   height: 100%;
   width: 100%;
   overflow: hidden;
+  padding: 6px 8px 8px 10px;
+  box-sizing: border-box;
 }
 
 /* xterm viewport blends into light panel; this is the only terminal scrollbar */
@@ -6306,4 +6308,12 @@ select.field__input {
 
 .settings-skill-target__status.is-stale {
   color: var(--warn);
+}
+
+.monaco-editor .git-blame-inline {
+  color: var(--text-muted);
+  font-style: normal;
+  opacity: 0.72;
+  padding-left: 16px;
+  white-space: pre;
 }

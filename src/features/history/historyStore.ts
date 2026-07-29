@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   WORKTREE_SELECTION,
   compareLabel,
+  orderSelectionByHistory,
   resolveCompareRange,
   toggleCommitSelection,
 } from "@/core/history/selection";
@@ -683,7 +684,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       return null;
     }
 
-    const range = resolveCompareRange(card.selectedHashes);
+    const orderedSelection = orderSelectionByHistory(
+      card.selectedHashes,
+      card.commits.map((commit) => commit.hash),
+    );
+    const range = resolveCompareRange(orderedSelection);
     if (!range) {
       set({
         toast: "Select uncommitted changes and/or one or two commits",
@@ -709,7 +714,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           card.commits.find((c) => c.hash === h)?.shortHash ?? h.slice(0, 7)
         );
       };
-      const label = compareLabel(card.selectedHashes, shortOf);
+      const label = compareLabel(orderedSelection, shortOf);
       payload.title = `${card.name} · ${label ?? payload.title}`;
 
       await persistRecent(workspaceRoot, card, base, head, payload.title);
@@ -817,7 +822,11 @@ async function persistRecent(
 export function selectionLabelForCard(card: RepoCardState): string | null {
   const shortOf = (h: string) =>
     card.commits.find((c) => c.hash === h)?.shortHash ?? h.slice(0, 7);
-  return compareLabel(card.selectedHashes, shortOf);
+  const orderedSelection = orderSelectionByHistory(
+    card.selectedHashes,
+    card.commits.map((commit) => commit.hash),
+  );
+  return compareLabel(orderedSelection, shortOf);
 }
 
 export function recentForRepo(

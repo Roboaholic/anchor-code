@@ -11,6 +11,7 @@ import {
   compareToWorktree,
   discoverRepos,
   getFileDiff,
+  loadFileBlame,
   listBranches,
   loadLog,
   loadRepoStatus,
@@ -81,6 +82,18 @@ describe("historyService (integration, temp git repo)", () => {
     expect(commits.length).toBeGreaterThanOrEqual(2);
     expect(commits.some((c) => c.subject === "second")).toBe(true);
     expect(commits.some((c) => c.hash === hashB)).toBe(true);
+  });
+
+  it("loads line attribution for a tracked file", async () => {
+    const blame = await loadFileBlame(host, root, path.join(root, "new.ts"));
+    expect(blame).toHaveLength(1);
+    expect(blame[0]).toMatchObject({
+      line: 1,
+      author: "Test",
+      subject: "second",
+    });
+    expect(blame[0]!.hash).toBe(hashB);
+    expect(blame[0]!.shortHash).toBe(hashB.slice(0, 8));
   });
 
   it("compares two commits and returns file list", async () => {

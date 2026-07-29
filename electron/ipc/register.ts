@@ -32,6 +32,7 @@ import {
   compareToWorktree,
   discoverRepos,
   getFileDiff,
+  loadFileBlame,
   listBranches,
   loadLog,
   loadRepoStatus,
@@ -738,6 +739,16 @@ export function registerIpc(opts: {
       rethrowIpc(err);
     }
   });
+  ipcMain.handle(
+    "history:fileBlame",
+    async (_evt, args: { repoRoot: string; filePath: string }) => {
+      try {
+        return await loadFileBlame(host(), args.repoRoot, args.filePath);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
   ipcMain.handle(
     "history:compare",
     async (

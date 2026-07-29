@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   WORKTREE_SELECTION,
   compareLabel,
+  orderSelectionByHistory,
   resolveCompareRange,
   swapSelection,
   toggleCommitSelection,
@@ -66,6 +67,27 @@ describe("compareLabel", () => {
 
   it("returns null when empty", () => {
     expect(compareLabel([], shortOf)).toBeNull();
+  });
+});
+
+describe("orderSelectionByHistory", () => {
+  const newestFirst = ["new", "middle", "old"];
+
+  it("places the older selected commit first regardless of click order", () => {
+    expect(orderSelectionByHistory(["new", "old"], newestFirst)).toEqual([
+      "old",
+      "new",
+    ]);
+    expect(orderSelectionByHistory(["old", "new"], newestFirst)).toEqual([
+      "old",
+      "new",
+    ]);
+  });
+
+  it("always places worktree on the newer side", () => {
+    expect(
+      orderSelectionByHistory([WORKTREE_SELECTION, "middle"], newestFirst),
+    ).toEqual(["middle", WORKTREE_SELECTION]);
   });
 });
 

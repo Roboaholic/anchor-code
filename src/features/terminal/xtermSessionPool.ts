@@ -31,6 +31,9 @@ function fitAndResize(session: PooledXterm, force = false) {
   if (el.clientWidth < 24 || el.clientHeight < 24) return;
   try {
     const d = session.fit.proposeDimensions();
+    // Reserve one row on Windows: fractional DPI/taskbar viewport changes can
+    // otherwise leave xterm's final row half-clipped until the next input.
+    if (d && navigator.platform.startsWith("Win") && d.rows > 1) d.rows -= 1;
     if (!d || d.cols < 2 || d.rows < 1) return;
     if (
       !force &&
@@ -98,6 +101,13 @@ export function acquireXtermSession(
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
+    if (e.key === "Enter" && (e.ctrlKey || e.shiftKey || e.metaKey)) {
+      e.preventDefault();
+      // ESC + CR is the conventional terminal sequence used by multiline
+      // prompts for Shift/Ctrl+Enter; plain Enter remains a bare CR submit.
+      useTerminalStore.getState().write(id, "\x1b\r");
+      return false;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return true;
     const key = e.key.toLowerCase();
@@ -174,6 +184,7 @@ export function attachXtermSession(id: string, parent: HTMLElement): void {
     parent.appendChild(session.hostEl);
   }
   requestAnimationFrame(() => fitAndResize(session));
+  window.setTimeout(() => fitAndResize(session, true), 180);
 }
 
 /** Detach from React DOM without disposing (keeps scrollback). */

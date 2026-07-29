@@ -290,17 +290,17 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         });
     }
 
-    // Warm the next/prev files so sequential clicks feel instant.
+    // Native Windows process startup is relatively expensive. Warm only the
+    // next file so speculative git reads cannot delay the active request.
     const idx = item.files.findIndex((f) => f.path === activePath);
-    for (const offset of [1, -1, 2]) {
-      const f = item.files[idx + offset];
-      if (!f) continue;
+    const next = item.files[idx + 1];
+    if (next) {
       prefetchFileDiff({
         repoRoot: item.repoRoot,
         base: item.base,
         head: item.head,
-        path: f.path,
-        status: f.status,
+        path: next.path,
+        status: next.status,
       });
     }
 

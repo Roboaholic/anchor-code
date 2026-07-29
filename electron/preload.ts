@@ -93,6 +93,15 @@ export interface CommitRow {
   dateIso: string;
 }
 
+export interface BlameLine {
+  line: number;
+  hash: string;
+  shortHash: string;
+  author: string;
+  dateIso: string;
+  subject: string;
+}
+
 export interface DiffFile {
   path: string;
   status: string;
@@ -266,6 +275,10 @@ const anchor = {
       ipcRenderer.invoke("history:discover", workspaceRoot),
     loadLog: (repoRoot: string): Promise<CommitRow[]> =>
       ipcRenderer.invoke("history:loadLog", repoRoot),
+    fileBlame: (args: {
+      repoRoot: string;
+      filePath: string;
+    }): Promise<BlameLine[]> => ipcRenderer.invoke("history:fileBlame", args),
     status: (
       repoRoot: string,
       opts?: { badgeOnly?: boolean },

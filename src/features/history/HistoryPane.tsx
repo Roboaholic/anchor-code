@@ -456,7 +456,7 @@ function RepoCard({
                     className="btn btn--accent btn--small"
                     disabled={!canCompare}
                     onClick={() => void openHistoryCompare(card.root)}
-                    title="Compare selection (first = base, second = head)"
+                    title="Compare selection (older on left, newer on right)"
                   >
                     {card.comparing ? "…" : "Compare"}
                   </button>
@@ -522,10 +522,7 @@ function RepoCard({
                         wt
                         {card.selectedHashes.includes(WORKTREE_SELECTION) ? (
                           <span className="commit-row__badge">
-                            {card.selectedHashes.indexOf(WORKTREE_SELECTION) ===
-                            0
-                              ? "base"
-                              : "head"}
+                            head
                           </span>
                         ) : null}
                       </span>
@@ -539,7 +536,13 @@ function RepoCard({
 
                   {card.commits.map((c) => {
                     const checked = card.selectedHashes.includes(c.hash);
-                    const order = card.selectedHashes.indexOf(c.hash);
+                    const selectedCommitOrder = card.commits
+                      .filter((commit) =>
+                        card.selectedHashes.includes(commit.hash),
+                      )
+                      .reverse()
+                      .map((commit) => commit.hash);
+                    const order = selectedCommitOrder.indexOf(c.hash);
                     const lockedOut = selectionFull && !checked;
                     return (
                       <li key={c.hash}>

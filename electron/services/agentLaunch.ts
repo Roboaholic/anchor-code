@@ -2,7 +2,7 @@ import type { HostSession } from "../host/types.js";
 import { loadSettings, saveSettings } from "../settings.js";
 
 /** Bump to invalidate settings.json agentLaunchCache after discovery semantics change. */
-export const AGENT_LAUNCH_DISCOVERY_VERSION = 4;
+export const AGENT_LAUNCH_DISCOVERY_VERSION = 5;
 
 export interface AgentModelOption {
   id: string;
@@ -921,6 +921,8 @@ async function discoverOmp(host: HostSession): Promise<AgentLaunchDiscovery> {
     }
   }
 
+  models = dedupeOmpModelsByLabel(models, cfg.defaultModel);
+
   const def = cfg.defaultModel;
   if (def) {
     models.sort((a, b) => {
@@ -972,6 +974,31 @@ async function discoverOmp(host: HostSession): Promise<AgentLaunchDiscovery> {
   };
 }
 
+export function dedupeOmpModelsByLabel(
+  models: AgentModelOption[],
+  defaultModel?: string,
+): AgentModelOption[] {
+  const byLabel = new Map<string, AgentModelOption>();
+  for (const model of models) {
+    const key = model.label.trim().toLocaleLowerCase();
+    const existing = byLabel.get(key);
+    if (!existing) {
+      byLabel.set(key, { ...model, efforts: [...model.efforts] });
+      continue;
+    }
+    const preferCurrent =
+      model.id === defaultModel ||
+      (!existing.id.includes("/") && model.id.includes("/"));
+    const target = preferCurrent ? model : existing;
+    byLabel.set(key, {
+      ...target,
+      efforts: uniqueEfforts([...existing.efforts, ...model.efforts]),
+      defaultEffort: target.defaultEffort ?? existing.defaultEffort ?? model.defaultEffort,
+    });
+  }
+  return [...byLabel.values()];
+}
+
 export function parseOmpConfigYaml(text: string): {
   defaultModel?: string;
   thinking?: string;
@@ -1010,7 +1037,6 @@ export function parseOmpModelsYml(text: string): AgentModelOption[] {
     if (!currentId || !provider) return;
     const selector = `${provider}/${currentId}`;
     pushModel(out, selector, currentName || selector, []);
-    pushModel(out, currentId, currentName || currentId, []);
     currentId = "";
     currentName = "";
   };
@@ -1080,8 +1106,6 @@ export function parseOmpModelsJson(text: string): AgentModelOption[] {
         }
       }
       pushModel(out, id, label, efforts);
-      const bare = str(m.id);
-      if (bare && bare !== id) pushModel(out, bare, label, efforts);
     }
     return out;
   } catch {
@@ -1116,7 +1140,6 @@ export function parseOmpModelsTable(text: string): AgentModelOption[] {
         : [];
     const id = provider ? `${provider}/${model}` : model;
     pushModel(out, id, id, efforts);
-    pushModel(out, model, model, efforts);
   }
   return out;
 }

@@ -49,6 +49,15 @@ export interface CommitRow {
   dateIso: string;
 }
 
+export interface BlameLine {
+  line: number;
+  hash: string;
+  shortHash: string;
+  author: string;
+  dateIso: string;
+  subject: string;
+}
+
 export type { DiffFile, StatusEntry };
 
 export interface DiffOpenPayload {
@@ -288,6 +297,68 @@ export async function loadLog(
       dateIso: dateIso ?? "",
     };
   });
+}
+
+/** Load commit attribution for every line in a tracked working-tree file. */
+export async function loadFileBlame(
+  host: HostSession,
+  repoRoot: string,
+  filePath: string,
+): Promise<BlameLine[]> {
+  const root = hostNormalize(host.kind, repoRoot);
+  const normalizedFile = hostNormalize(host.kind, filePath);
+  const rootPrefix = root.endsWith("/") || root.endsWith("\\") ? root : `${root}/`;
+  const normalizedPrefix = rootPrefix.replace(/\\/g, "/");
+  const normalizedForCompare = normalizedFile.replace(/\\/g, "/");
+  if (!normalizedForCompare.startsWith(normalizedPrefix)) return [];
+  const relativePath = normalizedForCompare.slice(normalizedPrefix.length);
+  if (!relativePath) return [];
+
+  const result = await host.run(root, "git", [
+    "blame",
+    "--line-porcelain",
+    "--",
+    relativePath,
+  ]);
+  if (result.code !== 0) return [];
+  return parseBlamePorcelain(result.stdout);
+}
+
+export function parseBlamePorcelain(output: string): BlameLine[] {
+  const entries: BlameLine[] = [];
+  const lines = output.split(/\r?\n/);
+  let current: Partial<BlameLine> | null = null;
+
+  for (const line of lines) {
+    const header = /^([0-9a-f^]{40}) \d+ (\d+)(?: \d+)?$/.exec(line);
+    if (header) {
+      const hash = header[1]!.replace(/^\^/, "");
+      current = {
+        line: Number(header[2]),
+        hash,
+        shortHash: /^0+$/.test(hash) ? "working" : hash.slice(0, 8),
+      };
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith("author ")) current.author = line.slice(7);
+    else if (line.startsWith("author-time ")) {
+      const seconds = Number(line.slice(12));
+      if (Number.isFinite(seconds)) current.dateIso = new Date(seconds * 1000).toISOString();
+    } else if (line.startsWith("summary ")) current.subject = line.slice(8);
+    else if (line.startsWith("\t")) {
+      entries.push({
+        line: current.line ?? entries.length + 1,
+        hash: current.hash ?? "",
+        shortHash: current.shortHash ?? "",
+        author: current.author ?? "Unknown",
+        dateIso: current.dateIso ?? "",
+        subject: current.subject ?? "",
+      });
+      current = null;
+    }
+  }
+  return entries;
 }
 
 export async function loadRepoStatus(
@@ -821,6 +892,9 @@ async function loadBothSidesOnce(
   needOld: boolean,
   needNew: boolean,
 ): Promise<{ oldText: string; newText: string } | null> {
+  // Native Windows may have a Git Bash on PATH, but starting bash.exe for
+  // every file is much slower than direct git/readFile calls.
+  if (host.kind === "local" && process.platform === "win32") return null;
   const oldCmd = needOld
     ? `git show ${shQuote(`${base}:${filePath}`)} 2>/dev/null || true`
     : "true";

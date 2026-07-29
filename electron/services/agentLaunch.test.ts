@@ -3,6 +3,7 @@ import {
   bareModelId,
   buildAgentLaunchArgs,
   enrichModelsWithOmpThinking,
+  dedupeOmpModelsByLabel,
   parseCodexConfigToml,
   parseCodexModelsCache,
   parseGrokConfigModels,
@@ -299,6 +300,23 @@ describe("parseOmpModelsJson", () => {
   });
 });
 
+describe("dedupeOmpModelsByLabel", () => {
+  it("keeps one selector when providers expose the same display name", () => {
+    expect(
+      dedupeOmpModelsByLabel([
+        { id: "google/gemini-flash", label: "Gemini Flash", efforts: ["low"] },
+        { id: "gemini-flash", label: "Gemini Flash", efforts: ["high"] },
+      ]),
+    ).toEqual([
+      {
+        id: "google/gemini-flash",
+        label: "Gemini Flash",
+        efforts: ["low", "high"],
+      },
+    ]);
+  });
+});
+
 describe("parseOmpModelsYml", () => {
   it("lists model ids without inventing effort ladders", () => {
     const yml = `
@@ -315,6 +333,5 @@ providers:
     expect(models.find((m) => m.id === "sudocode/gpt-5.5")!.efforts).toEqual(
       [],
     );
-    expect(models.find((m) => m.id === "gpt-5.5")!.efforts).toEqual([]);
   });
 });

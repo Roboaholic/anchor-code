@@ -58,6 +58,22 @@ export function compareLabel(
   return `${labelOf(a)} → ${labelOf(b)}`;
 }
 
+/** Worktree is newest; commits are ordered oldest (base) to newest (head). */
+export function orderSelectionByHistory(
+  selectedHashes: string[],
+  commitsNewestFirst: string[],
+): string[] {
+  if (selectedHashes.length < 2) return selectedHashes;
+  return [...selectedHashes].sort((a, b) => {
+    if (a === WORKTREE_SELECTION) return 1;
+    if (b === WORKTREE_SELECTION) return -1;
+    const aIndex = commitsNewestFirst.indexOf(a);
+    const bIndex = commitsNewestFirst.indexOf(b);
+    if (aIndex < 0 || bIndex < 0) return 0;
+    return bIndex - aIndex;
+  });
+}
+
 /** Resolve selection into base/head for compare IPC. */
 export function resolveCompareRange(selectedHashes: string[]): {
   base: string;

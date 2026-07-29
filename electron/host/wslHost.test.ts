@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { listWslDistros, WslHostSession } from "./wslHost.js";
+import {
+  buildWslAgentShellArgs,
+  listWslDistros,
+  WslHostSession,
+} from "./wslHost.js";
 import { HostError } from "./types.js";
 
 const isWin = process.platform === "win32";
@@ -24,6 +28,21 @@ describe("listWslDistros", () => {
     },
     20_000,
   );
+});
+
+describe("buildWslAgentShellArgs", () => {
+  it("loads interactive login setup before launching agent CLIs", () => {
+    expect(
+      buildWslAgentShellArgs("claude", ["--model", "sonnet"], {
+        ANTHROPIC_API_KEY: "secret value",
+      }),
+    ).toEqual([
+      "--",
+      "bash",
+      "-lic",
+      "export ANTHROPIC_API_KEY='secret value'; exec claude --model sonnet",
+    ]);
+  });
 });
 
 describe("WslHostSession", () => {

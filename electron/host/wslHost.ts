@@ -31,6 +31,17 @@ export interface WslHostOptions {
  * Absolute symlinks and other UNC gaps fall back to `wsl.exe` (Linux fs).
  * `run` / PTY always go through wsl.exe.
  */
+export function buildWslAgentShellArgs(
+  command: string,
+  args: string[],
+  env?: Record<string, string>,
+): string[] {
+  const cmdline = posixShellCommand(command, args);
+  const exports = posixExportEnv(env);
+  const body = exports ? `${exports}; exec ${cmdline}` : `exec ${cmdline}`;
+  return ["--", "bash", "-lic", body];
+}
+
 export class WslHostSession implements HostSession {
   readonly id: string;
   readonly kind = "wsl" as const;
@@ -393,14 +404,9 @@ export class WslHostSession implements HostSession {
       safeCwd,
     ];
     if (opts?.command) {
-      // Login shell so PATH (~/.local/bin) and profile env are available.
-      // Bare `wsl -- cmd` skips that → command not found / missing keys.
-      const cmdline = posixShellCommand(opts.command, opts.args ?? []);
-      const exports = posixExportEnv(opts.env);
-      const body = exports
-        ? `${exports}; exec ${cmdline}`
-        : `exec ${cmdline}`;
-      args.push("--", "bash", "-lc", body);
+      // Agent CLIs installed through nvm/npm are commonly added by ~/.bashrc.
+      // Interactive login mode loads both login and interactive PATH setup.
+      args.push(...buildWslAgentShellArgs(opts.command, opts.args ?? [], opts.env));
     } else if (opts?.env && Object.keys(opts.env).length) {
       // Rare: default shell with env exports.
       args.push(

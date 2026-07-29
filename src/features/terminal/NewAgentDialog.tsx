@@ -99,9 +99,9 @@ export function NewAgentDialog({
   };
 
   const loadDiscovery = async (p: AgentCliProfile, force = false) => {
-    // Disk/memory cache is the normal path — don't flash "Loading…" every open.
-    // Only Refresh (force) shows the loading state.
-    if (force) setLoading(true);
+    // Uncached selection performs one live probe; later opens use settings.json.
+    // Manual Refresh bypasses both memory and disk caches.
+    setLoading(true);
     try {
       const d = await window.anchor.agent.discoverLaunch({
         profileId: p.id,

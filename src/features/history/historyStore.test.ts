@@ -171,6 +171,48 @@ describe("historyStore multi-repo", () => {
     ).toBe(1);
   });
 
+  it("orders two commits by history before compare", async () => {
+    const compare = {
+      repoRoot: "/ws/repo-a",
+      base: "aaa111",
+      head: "bbb222" as const,
+      title: "aaa111 → bbb222",
+      files: [{ path: "x.ts", status: "M" }],
+      branch: "main",
+    };
+    mockAnchor({
+      compare,
+      log: [
+        {
+          hash: "bbb222",
+          shortHash: "bbb222",
+          subject: "newer",
+          author: "t",
+          dateIso: "2026-01-02T00:00:00Z",
+        },
+        {
+          hash: "aaa111",
+          shortHash: "aaa111",
+          subject: "older",
+          author: "t",
+          dateIso: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    await useHistoryStore.getState().discover("/ws");
+    await useHistoryStore.getState().toggleHistory("/ws/repo-a");
+    const store = useHistoryStore.getState();
+    store.toggleCommit("/ws/repo-a", "bbb222");
+    store.toggleCommit("/ws/repo-a", "aaa111");
+
+    await useHistoryStore.getState().runCompare("/ws/repo-a");
+    expect(window.anchor.history.compare).toHaveBeenCalledWith({
+      repoRoot: "/ws/repo-a",
+      base: "aaa111",
+      head: "bbb222",
+    });
+  });
+
   it("toggleCommit caps at two selections", async () => {
     await useHistoryStore.getState().discover("/ws");
     await useHistoryStore.getState().toggleHistory("/ws/repo-a");

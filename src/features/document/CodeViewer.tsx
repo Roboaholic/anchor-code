@@ -15,7 +15,7 @@ import {
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
-import type { CommentRecord } from "@/shared/anchor-api";
+import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import type { SearchHighlight } from "./documentStore";
 import "./monacoSetup";
@@ -35,6 +35,20 @@ type SelectionToolbarState = {
 
 const HOVER_OPEN_MS = 420;
 const HOVER_CLOSE_MS = 220;
+
+export function formatBlameTime(dateIso: string, nowMs = Date.now()): string {
+  const timestamp = Date.parse(dateIso);
+  if (!Number.isFinite(timestamp)) return "unknown time";
+  const elapsed = Math.max(0, nowMs - timestamp);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const year = 365 * day;
+  if (elapsed < hour) return `${Math.max(1, Math.floor(elapsed / minute))}m ago`;
+  if (elapsed < day) return `${Math.floor(elapsed / hour)}h ago`;
+  if (elapsed < year) return `${Math.floor(elapsed / day)}d ago`;
+  return `${Math.floor(elapsed / year)}y ago`;
+}
 
 /** Resolve the column range of a search hit on a single line (1-based columns). */
 export function matchRangeOnLine(
@@ -187,6 +201,8 @@ export function CodeViewer({
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
   const searchHighlightRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
+  const blameDecorationsRef =
+    useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
   const bubbleRef = useRef<BubbleState | null>(null);
@@ -220,6 +236,8 @@ export function CodeViewer({
   const [selToolbar, setSelToolbar] = useState<SelectionToolbarState | null>(
     null,
   );
+  const [blameLines, setBlameLines] = useState<BlameLine[]>([]);
+  const [activeBlameLine, setActiveBlameLine] = useState<number | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
 
@@ -337,6 +355,66 @@ export function CodeViewer({
     if (!ed) return;
     ed.updateOptions({ fontSize, lineHeight });
   }, [fontSize, lineHeight]);
+
+  const paintBlame = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (!blameDecorationsRef.current) {
+      blameDecorationsRef.current = ed.createDecorationsCollection();
+    }
+    const model = ed.getModel();
+    if (!model || kind !== "source") {
+      blameDecorationsRef.current.clear();
+      return;
+    }
+    blameDecorationsRef.current.set(
+      blameLines
+        .filter(
+          (entry) =>
+            entry.line === activeBlameLine &&
+            entry.line >= 1 &&
+            entry.line <= model.getLineCount(),
+        )
+        .map((entry) => ({
+          range: {
+            startLineNumber: entry.line,
+            startColumn: Math.max(1, model.getLineMaxColumn(entry.line) - 1),
+            endLineNumber: entry.line,
+            endColumn: model.getLineMaxColumn(entry.line),
+          },
+          options: {
+            after: {
+              content: `  ${entry.author} · ${formatBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
+              inlineClassName: "git-blame-inline",
+            },
+          },
+        })),
+    );
+  }, [activeBlameLine, blameLines, kind]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBlameLines([]);
+    setActiveBlameLine(null);
+    if (kind !== "source" || truncated) return;
+    void (async () => {
+      try {
+        const repoRoot = await window.anchor.annotations.locateGitRoot(path);
+        if (!repoRoot || cancelled) return;
+        const lines = await window.anchor.history.fileBlame({ repoRoot, filePath: path });
+        if (!cancelled) setBlameLines(lines);
+      } catch {
+        if (!cancelled) setBlameLines([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, path, content, truncated]);
+
+  useEffect(() => {
+    paintBlame();
+  }, [paintBlame]);
 
   /**
    * First open often has clientHeight 0 until flex layout settles — revealLineInCenter
@@ -610,6 +688,8 @@ export function CodeViewer({
     decorationsRef.current = ed.createDecorationsCollection();
     searchHighlightRef.current?.clear();
     searchHighlightRef.current = ed.createDecorationsCollection();
+    blameDecorationsRef.current?.clear();
+    blameDecorationsRef.current = ed.createDecorationsCollection();
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
 
@@ -617,6 +697,7 @@ export function CodeViewer({
     requestAnimationFrame(() => {
       applyDecorations(focusCommentId ?? null);
       paintSearchHighlight();
+      paintBlame();
     });
 
     ed.addAction({
@@ -638,6 +719,7 @@ export function CodeViewer({
     // Hover dwell on annotation highlight → open bubble (not click).
     disposablesRef.current.push(
       ed.onMouseDown((e) => {
+        setActiveBlameLine(e.target.position?.lineNumber ?? null);
         const be = e.event.browserEvent as MouseEvent | undefined;
         // Primary button only (0). Treat as potential drag-select.
         if (be && be.button === 0) {

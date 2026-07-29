@@ -97,6 +97,15 @@ export interface CommitRow {
   dateIso: string;
 }
 
+export interface BlameLine {
+  line: number;
+  hash: string;
+  shortHash: string;
+  author: string;
+  dateIso: string;
+  subject: string;
+}
+
 export interface DiffFile {
   path: string;
   status: string;
@@ -410,6 +419,10 @@ export interface AnchorApi {
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
     loadLog: (repoRoot: string) => Promise<CommitRow[]>;
+    fileBlame: (args: {
+      repoRoot: string;
+      filePath: string;
+    }) => Promise<BlameLine[]>;
     status: (
       repoRoot: string,
       opts?: { badgeOnly?: boolean },

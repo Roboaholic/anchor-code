@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  focusedSessionForDecorations,
   overlapRegionsForModel,
   type DecorationSpec,
 } from "./annotationsStore";
@@ -55,5 +56,23 @@ describe("overlapRegionsForModel", () => {
       { startColumn: 25, endColumn: 30, depth: 3 },
       { startColumn: 30, endColumn: 35, depth: 2 },
     ]);
+  });
+});
+
+describe("focusedSessionForDecorations", () => {
+  const first = { id: "first", comments: [] } as never;
+  const active = { id: "active", comments: [] } as never;
+
+  it("uses the explicitly selected sidebar session", () => {
+    expect(focusedSessionForDecorations([active, first], "first", active)).toBe(
+      first,
+    );
+  });
+
+  it("falls back to active then first session", () => {
+    expect(focusedSessionForDecorations([active, first], null, active)).toBe(
+      active,
+    );
+    expect(focusedSessionForDecorations([first], null, null)).toBe(first);
   });
 });

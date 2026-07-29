@@ -175,6 +175,16 @@ function pickExpandedId(
   return sessions[0]?.id ?? null;
 }
 
+export function focusedSessionForDecorations(
+  sessions: SessionRecord[],
+  expandedSessionId: string | null,
+  activeSession: SessionRecord | null,
+): SessionRecord | null {
+  const focusId =
+    expandedSessionId ?? activeSession?.id ?? sessions[0]?.id ?? null;
+  return sessions.find((session) => session.id === focusId) ?? null;
+}
+
 async function reloadSessions(repoRoot: string): Promise<SessionRecord[]> {
   const { sessions, error } = await window.anchor.annotations.load(repoRoot);
   if (error) throw new Error(error);
@@ -472,49 +482,44 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
     }
   },
 
+
   decorationsFor: (absolutePath, content) => {
     const { sessions, expandedSessionId, activeSession, repoRoot } = get();
     if (!repoRoot || sessions.length === 0) return [];
 
-    // Prefer painting the focused session first so overlapping ranges keep a
-    // stable "primary" hit, then include every other session for the same file.
-    const focusId =
-      expandedSessionId ??
-      activeSession?.id ??
-      sessions[0]?.id ??
-      null;
-    const ordered = [...sessions].sort((a, b) => {
-      if (a.id === focusId) return -1;
-      if (b.id === focusId) return 1;
-      return 0;
-    });
+    // The selected sidebar session is the sole decoration source. Falling back
+    // keeps a deterministic view before the sidebar has an explicit selection.
+    const focusedSession = focusedSessionForDecorations(
+      sessions,
+      expandedSessionId,
+      activeSession,
+    );
+    if (!focusedSession) return [];
 
     const specs: DecorationSpec[] = [];
     const seen = new Set<string>();
-    for (const session of ordered) {
-      for (const c of session.comments) {
-        if (seen.has(c.id)) continue;
-        if (!relativeMatch(repoRoot, absolutePath, c.target.file_path)) continue;
-        const resolved = resolveAnchor(content, c.target);
-        const badge =
-          resolved.status === "relocated"
-            ? "relocated"
-            : resolved.status === "unresolved"
-              ? "unresolved"
-              : c.status;
-        seen.add(c.id);
-        specs.push({
-          commentId: c.id,
-          startLine: resolved.startLine,
-          endLine: resolved.endLine,
-          startColumn: resolved.startColumn,
-          endColumn: resolved.endColumn,
-          hover: `${session.title}: ${badge}: ${lastMessagePreview(c)}`,
-          status: c.status,
-          anchorStatus: resolved.status,
-          overlapCount: 1,
-        });
-      }
+    for (const c of focusedSession.comments) {
+      if (seen.has(c.id)) continue;
+      if (!relativeMatch(repoRoot, absolutePath, c.target.file_path)) continue;
+      const resolved = resolveAnchor(content, c.target);
+      const badge =
+        resolved.status === "relocated"
+          ? "relocated"
+          : resolved.status === "unresolved"
+            ? "unresolved"
+            : c.status;
+      seen.add(c.id);
+      specs.push({
+        commentId: c.id,
+        startLine: resolved.startLine,
+        endLine: resolved.endLine,
+        startColumn: resolved.startColumn,
+        endColumn: resolved.endColumn,
+        hover: `${focusedSession.title}: ${badge}: ${lastMessagePreview(c)}`,
+        status: c.status,
+        anchorStatus: resolved.status,
+        overlapCount: 1,
+      });
     }
     return specs.map((spec) => ({
       ...spec,

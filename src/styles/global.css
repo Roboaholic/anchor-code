@@ -4090,14 +4090,6 @@ body.files-split-resizing .monaco-editor {
   flex-shrink: 0;
 }
 
-.comments-pane__repo {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
 
 .session-list {
   list-style: none;

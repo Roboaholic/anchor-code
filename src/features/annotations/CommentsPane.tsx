@@ -146,14 +146,11 @@ export function CommentsPane() {
   };
 
   const toggleSession = (id: string) => {
+    setExpandedSession(id);
     setExpandedSessionIds((current) => {
       const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        setExpandedSession(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -163,11 +160,6 @@ export function CommentsPane() {
       <div className="comments-pane__toolbar">
         <div className="comments-pane__toolbar-left">
           <span className="files-pane__title">Sessions</span>
-          {repoRoot ? (
-            <span className="comments-pane__repo" title={repoRoot}>
-              {repoRoot.split(/[/\\]/).pop()}
-            </span>
-          ) : null}
         </div>
         <button
           type="button"
@@ -368,9 +360,10 @@ export function CommentsPane() {
                                 type="button"
                                 className="comment-card__jump"
                                 title={`${c.target.file_path}:${c.target.start_line}`}
-                                onClick={() =>
-                                  void jumpToComment(c, session.id)
-                                }
+                                onClick={() => {
+                                  setExpandedSession(session.id);
+                                  void jumpToComment(c, session.id);
+                                }}
                               >
                                 <span className="comment-card__head">
                                   <span className="comment-card__loc">

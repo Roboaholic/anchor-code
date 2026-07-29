@@ -379,11 +379,12 @@ export function CodeViewer({
         .map((entry) => ({
           range: {
             startLineNumber: entry.line,
-            startColumn: Math.max(1, model.getLineMaxColumn(entry.line) - 1),
+            startColumn: model.getLineMaxColumn(entry.line),
             endLineNumber: entry.line,
             endColumn: model.getLineMaxColumn(entry.line),
           },
           options: {
+            showIfCollapsed: true,
             after: {
               content: fitBlameText(
                 ed,

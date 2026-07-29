@@ -45,7 +45,7 @@ type SelToolbar = { left: number; top: number; text: string };
 /** Content-width fractions. Each step is relative to the current viewer width. */
 const MD_WIDTH_STEPS = [0.5, 0.625, 0.75, 0.875, "full"] as const;
 type MdWidthStep = (typeof MD_WIDTH_STEPS)[number];
-const MD_WIDTH_STORAGE_KEY = "anchor.mdRenderedWidthStep";
+const MD_WIDTH_STORAGE_KEY = "anchor.mdRenderedWidthStep.v2";
 
 function loadMdWidthStep(): MdWidthStep {
   try {
@@ -56,7 +56,7 @@ function loadMdWidthStep(): MdWidthStep {
   } catch {
     // ignore
   }
-  return 0.5;
+  return 0.75;
 }
 
 function persistMdWidthStep(step: MdWidthStep) {

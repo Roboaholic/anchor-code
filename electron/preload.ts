@@ -278,6 +278,7 @@ const anchor = {
     fileBlame: (args: {
       repoRoot: string;
       filePath: string;
+      revision?: string;
     }): Promise<BlameLine[]> => ipcRenderer.invoke("history:fileBlame", args),
     status: (
       repoRoot: string,

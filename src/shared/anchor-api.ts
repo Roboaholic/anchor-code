@@ -422,6 +422,7 @@ export interface AnchorApi {
     fileBlame: (args: {
       repoRoot: string;
       filePath: string;
+      revision?: string;
     }) => Promise<BlameLine[]>;
     status: (
       repoRoot: string,

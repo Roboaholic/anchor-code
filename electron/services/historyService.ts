@@ -299,11 +299,12 @@ export async function loadLog(
   });
 }
 
-/** Load commit attribution for every line in a tracked working-tree file. */
+/** Load commit attribution for a tracked file at worktree or a revision. */
 export async function loadFileBlame(
   host: HostSession,
   repoRoot: string,
   filePath: string,
+  revision?: string,
 ): Promise<BlameLine[]> {
   const root = hostNormalize(host.kind, repoRoot);
   const normalizedFile = hostNormalize(host.kind, filePath);
@@ -314,12 +315,10 @@ export async function loadFileBlame(
   const relativePath = normalizedForCompare.slice(normalizedPrefix.length);
   if (!relativePath) return [];
 
-  const result = await host.run(root, "git", [
-    "blame",
-    "--line-porcelain",
-    "--",
-    relativePath,
-  ]);
+  const args = ["blame", "--line-porcelain"];
+  if (revision?.trim() && revision !== "worktree") args.push(revision.trim());
+  args.push("--", relativePath);
+  const result = await host.run(root, "git", args);
   if (result.code !== 0) return [];
   return parseBlamePorcelain(result.stdout);
 }

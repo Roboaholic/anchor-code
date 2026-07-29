@@ -522,7 +522,7 @@ function RenderedMarkdownPane({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openComposer]);
 
-  const submit = async () => {
+  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
     if (!composer || !body.trim()) return;
     setSaving(true);
     try {
@@ -538,7 +538,7 @@ function RenderedMarkdownPane({
         afterContext: composer.afterContext,
         lineText: composer.lineText,
         body: body.trim(),
-        forceNewSession: composer.forceNewSession,
+        forceNewSession,
       });
       setComposer(null);
       setBody("");
@@ -686,26 +686,20 @@ function RenderedMarkdownPane({
             </button>
             <button
               type="button"
-              className="btn btn--small"
-              onClick={() => {
-                if (!composer) return;
-                setComposer({ ...composer, forceNewSession: true });
-              }}
-              title="End active session and save under a new one"
+              className="btn btn--ghost btn--small"
+              disabled={!body.trim() || saving}
+              onClick={() => void submit(true)}
+              title="End the active session and save this comment in a new session"
             >
-              New session
+              Save comment (new session)
             </button>
             <button
               type="button"
               className="btn btn--accent btn--small"
               disabled={!body.trim() || saving}
-              onClick={() => void submit()}
+              onClick={() => void submit(false)}
             >
-              {saving
-                ? "Saving…"
-                : composer.forceNewSession
-                  ? "Save in new session"
-                  : "Save comment"}
+              {saving ? "Saving…" : "Save comment"}
             </button>
           </div>
         </div>

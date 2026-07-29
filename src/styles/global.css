@@ -550,8 +550,8 @@ button:disabled {
 
 .topbar__center {
   flex: 1;
-  justify-content: center;
-  min-width: 0;
+  min-width: 24px;
+  -webkit-app-region: drag;
 }
 
 .topbar__right {
@@ -594,7 +594,29 @@ button:disabled {
   animation: topbar-update-badge-in 0.18s ease-out;
 }
 
-.topbar__update-badge:hover {
+.topbar__update-badge.is-available {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: #3794ff;
+  color: #fff;
+  box-shadow: none;
+}
+
+.topbar__update-badge.is-available:hover {
+  background: #1684e8;
+  color: #fff;
+}
+
+.topbar__update-badge.is-available .topbar__update-badge-icon {
+  font-size: 12px !important;
+}
+
+.topbar__update-badge:not(.is-available):hover {
   background: color-mix(in srgb, var(--accent) 24%, var(--bg-panel));
 }
 
@@ -697,11 +719,11 @@ button:disabled {
 button.search-field {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: min(420px, 100%);
-  height: 30px; /* match .btn height */
-  padding: 0 10px;
-  border-radius: var(--radius);
+  gap: 6px;
+  width: 230px;
+  height: 27px;
+  padding: 0 8px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg-muted);
   color: var(--text-muted);
@@ -723,12 +745,12 @@ button.search-field:hover {
 .search-field__icon {
   display: inline-flex;
   align-items: center;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
 }
 
 .search-field__icon.codicon {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .search-field__placeholder {
@@ -737,16 +759,16 @@ button.search-field:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .search-field__kbd {
   font-family: var(--font);
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-panel);
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
 }
 

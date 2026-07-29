@@ -96,6 +96,21 @@ describe("historyService (integration, temp git repo)", () => {
     expect(blame[0]!.shortHash).toBe(hashB.slice(0, 8));
   });
 
+  it("loads line attribution from a selected revision", async () => {
+    const blame = await loadFileBlame(
+      host,
+      root,
+      path.join(root, "app.ts"),
+      hashA,
+    );
+    expect(blame).toHaveLength(1);
+    expect(blame[0]).toMatchObject({
+      line: 1,
+      hash: hashA,
+      subject: "first",
+    });
+  });
+
   it("compares two commits and returns file list", async () => {
     const payload = await compareCommits(host, root, hashA, hashB);
     expect(payload.base).toBe(hashA);

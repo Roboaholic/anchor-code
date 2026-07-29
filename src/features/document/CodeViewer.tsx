@@ -18,6 +18,7 @@ import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import type { SearchHighlight } from "./documentStore";
+import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
 
 type BubbleState = {
@@ -384,13 +385,18 @@ export function CodeViewer({
           },
           options: {
             after: {
-              content: `  ${entry.author} · ${formatBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
+              content: fitBlameText(
+                ed,
+                entry.line,
+                `${entry.author} · ${formatBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
+                fontSize,
+              ),
               inlineClassName: "git-blame-inline",
             },
           },
         })),
     );
-  }, [activeBlameLine, blameLines, kind]);
+  }, [activeBlameLine, blameLines, fontSize, kind]);
 
   useEffect(() => {
     let cancelled = false;
@@ -682,7 +688,7 @@ export function CodeViewer({
     setBody("");
   };
 
-  const onMount: OnMount = (ed, monaco) => {
+  const onMount: OnMount = (ed) => {
     editorRef.current = ed;
     decorationsRef.current?.clear();
     decorationsRef.current = ed.createDecorationsCollection();
@@ -700,21 +706,6 @@ export function CodeViewer({
       paintBlame();
     });
 
-    ed.addAction({
-      id: "anchor.addComment",
-      label: "Add comment",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyM],
-      contextMenuGroupId: "navigation",
-      contextMenuOrder: 1.5,
-      run: () => openComposer(ed, false),
-    });
-    ed.addAction({
-      id: "anchor.addCommentNewSession",
-      label: "Add comment (new session)",
-      contextMenuGroupId: "navigation",
-      contextMenuOrder: 1.6,
-      run: () => openComposer(ed, true),
-    });
 
     // Hover dwell on annotation highlight → open bubble (not click).
     disposablesRef.current.push(
@@ -831,7 +822,7 @@ export function CodeViewer({
     applyDecorations();
   };
 
-  const submit = async () => {
+  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
     if (!composer || !body.trim()) return;
     setSaving(true);
     try {
@@ -847,7 +838,7 @@ export function CodeViewer({
         afterContext: composer.afterContext,
         lineText: composer.lineText,
         body: body.trim(),
-        forceNewSession: composer.forceNewSession,
+        forceNewSession,
       });
       setComposer(null);
       setBody("");
@@ -995,15 +986,20 @@ export function CodeViewer({
             </button>
             <button
               type="button"
+              className="btn btn--ghost btn--small"
+              disabled={!body.trim() || saving}
+              onClick={() => void submit(true)}
+              title="End the active session and save this comment in a new session"
+            >
+              Save comment (new session)
+            </button>
+            <button
+              type="button"
               className="btn btn--accent btn--small"
               disabled={!body.trim() || saving}
-              onClick={() => void submit()}
+              onClick={() => void submit(false)}
             >
-              {saving
-                ? "Saving…"
-                : composer.forceNewSession
-                  ? "Save in new session"
-                  : "Save comment"}
+              {saving ? "Saving…" : "Save comment"}
             </button>
           </div>
         </div>

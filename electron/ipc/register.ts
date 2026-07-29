@@ -741,9 +741,17 @@ export function registerIpc(opts: {
   });
   ipcMain.handle(
     "history:fileBlame",
-    async (_evt, args: { repoRoot: string; filePath: string }) => {
+    async (
+      _evt,
+      args: { repoRoot: string; filePath: string; revision?: string },
+    ) => {
       try {
-        return await loadFileBlame(host(), args.repoRoot, args.filePath);
+        return await loadFileBlame(
+          host(),
+          args.repoRoot,
+          args.filePath,
+          args.revision,
+        );
       } catch (err) {
         rethrowIpc(err);
       }

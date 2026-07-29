@@ -11,8 +11,9 @@ function updateBadgeMeta(state: AppUpdateState | null): {
   show: boolean;
   title: string;
   label: string;
+  icon: string;
 } {
-  if (!state) return { show: false, title: "", label: "" };
+  if (!state) return { show: false, title: "", label: "", icon: "cloud-download" };
   if (state.status === "available") {
     return {
       show: true,
@@ -20,6 +21,7 @@ function updateBadgeMeta(state: AppUpdateState | null): {
         ? `Update available: v${state.latestVersion}`
         : "Update available",
       label: state.latestVersion ? `v${state.latestVersion}` : "Update",
+      icon: "cloud-download",
     };
   }
   if (state.status === "downloaded") {
@@ -29,6 +31,7 @@ function updateBadgeMeta(state: AppUpdateState | null): {
         ? `Update ready: v${state.latestVersion} — restart to install`
         : "Update ready — restart to install",
       label: "Restart",
+      icon: "debug-restart",
     };
   }
   if (state.status === "downloading") {
@@ -39,9 +42,10 @@ function updateBadgeMeta(state: AppUpdateState | null): {
           ? `Downloading update… ${state.progress}%`
           : "Downloading update…",
       label: state.progress != null ? `${state.progress}%` : "…",
+      icon: "loading",
     };
   }
-  return { show: false, title: "", label: "" };
+  return { show: false, title: "", label: "", icon: "cloud-download" };
 }
 
 export function TopBar() {
@@ -147,7 +151,8 @@ export function TopBar() {
           </span>
         </div>
 
-        <div className="topbar__center">
+
+        <div className="topbar__right">
           <button
             type="button"
             className="search-field"
@@ -155,14 +160,9 @@ export function TopBar() {
             onClick={() => openPalette("quickOpen")}
           >
             <Icon name="search" className="search-field__icon" />
-            <span className="search-field__placeholder">
-              Search files in workspace…
-            </span>
+            <span className="search-field__placeholder">Search files…</span>
             <kbd className="search-field__kbd">Ctrl+P</kbd>
           </button>
-        </div>
-
-        <div className="topbar__right">
           {versionLabel ? (
             <div className="topbar__version-wrap">
               <span className="topbar__version" title="shell.getVersion">
@@ -175,23 +175,23 @@ export function TopBar() {
                   <button
                     type="button"
                     className={`topbar__update-badge${
-                      updateState?.status === "downloaded"
-                        ? " is-ready"
-                        : updateState?.status === "downloading"
-                          ? " is-busy"
-                          : ""
+                      updateState?.status === "available" ? " is-available" : ""
+                    }${updateState?.status === "downloaded" ? " is-ready" : ""}${
+                      updateState?.status === "downloading" ? " is-busy" : ""
                     }`}
                     title={badge.title}
                     aria-label={badge.title}
                     onClick={() => openSettings("updates")}
                   >
                     <Icon
-                      name="refresh"
+                      name={badge.icon}
                       className="topbar__update-badge-icon"
                     />
-                    <span className="topbar__update-badge-label">
-                      {badge.label}
-                    </span>
+                    {updateState?.status !== "available" ? (
+                      <span className="topbar__update-badge-label">
+                        {badge.label}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })()}

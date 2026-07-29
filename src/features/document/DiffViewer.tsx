@@ -30,8 +30,9 @@ import {
   editorLineHeight,
   monacoThemeId,
 } from "@/core/theme/theme";
-import type { CommentRecord } from "@/shared/anchor-api";
+import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
+import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
@@ -52,6 +53,20 @@ const DIFF_FILES_WIDTH_STORAGE_KEY = "anchor.diffFilesWidth";
 const DIFF_FILES_MIN_WIDTH = 160;
 const DIFF_FILES_MAX_WIDTH = 480;
 const DIFF_FILES_DEFAULT_WIDTH = 220;
+
+export function formatDiffBlameTime(dateIso: string, nowMs = Date.now()): string {
+  const timestamp = Date.parse(dateIso);
+  if (!Number.isFinite(timestamp)) return "unknown time";
+  const elapsed = Math.max(0, nowMs - timestamp);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const year = 365 * day;
+  if (elapsed < hour) return `${Math.max(1, Math.floor(elapsed / minute))}m ago`;
+  if (elapsed < day) return `${Math.floor(elapsed / hour)}h ago`;
+  if (elapsed < year) return `${Math.floor(elapsed / day)}d ago`;
+  return `${Math.floor(elapsed / year)}y ago`;
+}
 
 function loadDiffFilesWidth(): number {
   try {
@@ -224,9 +239,21 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [selToolbar, setSelToolbar] = useState<SelectionToolbarState | null>(
     null,
   );
+  const [oldBlameLines, setOldBlameLines] = useState<BlameLine[]>([]);
+  const [newBlameLines, setNewBlameLines] = useState<BlameLine[]>([]);
+  const [activeBlame, setActiveBlame] = useState<{
+    side: "old" | "new";
+    line: number;
+  } | null>(null);
+  const originalEditorRef =
+    useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const modifiedEditorRef =
     useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
+    useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
+  const oldBlameDecorationsRef =
+    useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
+  const newBlameDecorationsRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
   /** Editor instance that owns decorationsRef (must recreate after remount). */
   const decorationsEditorRef =
@@ -365,14 +392,100 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     diff.getOriginalEditor().updateOptions(opts);
     diff.getModifiedEditor().updateOptions(opts);
   }, [fontSize, lineHeight]);
-
   const rangeLabel = useMemo(() => {
     const base = shortRev(item.base);
-    const head =
-      item.head === "worktree" ? "worktree" : shortRev(item.head);
-    const br = item.branch ? `${item.branch} · ` : "";
-    return `${br}${base} → ${head}`;
-  }, [item.base, item.head, item.branch]);
+    const head = item.head === "worktree" ? "worktree" : shortRev(item.head);
+    const branch = item.branch ? `${item.branch} · ` : "";
+    return `${branch}${base} → ${head}`;
+  }, [item.base, item.branch, item.head]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOldBlameLines([]);
+    setNewBlameLines([]);
+    setActiveBlame(null);
+    if (!activePath) return;
+    const filePath = joinPath(item.repoRoot, activePath);
+    const requests: Promise<void>[] = [];
+    if (activeMeta?.status !== "?" && !activeMeta?.status.startsWith("A")) {
+      requests.push(
+        window.anchor.history
+          .fileBlame({ repoRoot: item.repoRoot, filePath, revision: item.base })
+          .then((lines) => {
+            if (!cancelled) setOldBlameLines(lines);
+          }),
+      );
+    }
+    if (!activeMeta?.status.startsWith("D")) {
+      requests.push(
+        window.anchor.history
+          .fileBlame({ repoRoot: item.repoRoot, filePath, revision: item.head })
+          .then((lines) => {
+            if (!cancelled) setNewBlameLines(lines);
+          }),
+      );
+    }
+    void Promise.all(requests).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMeta?.status, activePath, item.base, item.head, item.repoRoot]);
+
+  const paintBlame = useCallback(() => {
+    const oldEditor = originalEditorRef.current;
+    const newEditor = modifiedEditorRef.current;
+    const oldModel = oldEditor?.getModel();
+    const newModel = newEditor?.getModel();
+    if (!oldEditor || !newEditor || !oldModel || !newModel) return;
+    if (!oldBlameDecorationsRef.current) {
+      oldBlameDecorationsRef.current = oldEditor.createDecorationsCollection();
+    }
+    if (!newBlameDecorationsRef.current) {
+      newBlameDecorationsRef.current = newEditor.createDecorationsCollection();
+    }
+    oldBlameDecorationsRef.current.clear();
+    newBlameDecorationsRef.current.clear();
+    if (!activeBlame) return;
+
+    const editor = activeBlame.side === "old" ? oldEditor : newEditor;
+    const model = activeBlame.side === "old" ? oldModel : newModel;
+    const collection =
+      activeBlame.side === "old"
+        ? oldBlameDecorationsRef.current
+        : newBlameDecorationsRef.current;
+    const lines = activeBlame.side === "old" ? oldBlameLines : newBlameLines;
+    const entry = lines.find((line) => line.line === activeBlame.line);
+    if (!entry || entry.line > model.getLineCount()) return;
+    const content = fitBlameText(
+      editor,
+      entry.line,
+      `${entry.author} · ${formatDiffBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
+      fontSize,
+    );
+    if (!content) return;
+    collection.set([
+      {
+        range: {
+          startLineNumber: entry.line,
+          startColumn: Math.max(1, model.getLineMaxColumn(entry.line) - 1),
+          endLineNumber: entry.line,
+          endColumn: model.getLineMaxColumn(entry.line),
+        },
+        options: {
+          after: {
+            content,
+            inlineClassName: "git-blame-inline",
+          },
+        },
+      },
+    ]);
+    editor.revealLine(entry.line);
+  }, [activeBlame, fontSize, newBlameLines, oldBlameLines]);
+
+  useEffect(() => {
+    paintBlame();
+  }, [paintBlame]);
+
 
   const clearHoverOpenTimer = () => {
     if (hoverOpenTimerRef.current != null) {
@@ -638,7 +751,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const openComposerRef = useRef(openComposer);
   openComposerRef.current = openComposer;
 
-  const onDiffMount: DiffOnMount = (editor, monaco) => {
+  const onDiffMount: DiffOnMount = (editor) => {
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
     clearHoverOpenTimer();
@@ -647,21 +760,32 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     diffEditorRef.current = editor;
     editor.updateOptions({ renderSideBySide: sideBySide });
 
+    const original = editor.getOriginalEditor();
     const modified = editor.getModifiedEditor();
+    originalEditorRef.current = original;
     modifiedEditorRef.current = modified;
     decorationsRef.current?.clear();
     decorationsRef.current = modified.createDecorationsCollection();
     decorationsEditorRef.current = modified;
+    oldBlameDecorationsRef.current?.clear();
+    oldBlameDecorationsRef.current = original.createDecorationsCollection();
+    newBlameDecorationsRef.current?.clear();
+    newBlameDecorationsRef.current = modified.createDecorationsCollection();
 
     const repaint = () => {
       applyDecorationsRef.current(bubbleRef.current?.commentId ?? null);
+      paintBlame();
     };
 
-    // DiffEditor rebuilds models after mount / layout — repaint then.
-    disposablesRef.current.push(editor.onDidUpdateDiff(() => repaint()));
-    disposablesRef.current.push(modified.onDidChangeModel(() => repaint()));
+    disposablesRef.current.push(editor.onDidUpdateDiff(repaint));
+    disposablesRef.current.push(original.onDidChangeModel(repaint));
+    disposablesRef.current.push(modified.onDidChangeModel(repaint));
+    disposablesRef.current.push(modified.onDidChangeModelContent(repaint));
     disposablesRef.current.push(
-      modified.onDidChangeModelContent(() => repaint()),
+      original.onMouseDown((e) => {
+        const line = e.target.position?.lineNumber;
+        setActiveBlame(line ? { side: "old", line } : null);
+      }),
     );
 
     // Only register comment actions in side-by-side mode (newer column).
@@ -672,37 +796,12 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       return;
     }
 
-    disposablesRef.current.push(
-      modified.addAction({
-        id: "anchor.addComment",
-        label: "Add comment",
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyM],
-        contextMenuGroupId: "navigation",
-        contextMenuOrder: 1.5,
-        run: (ed) =>
-          openComposerRef.current(
-            ed as MonacoEditor.IStandaloneCodeEditor,
-            false,
-          ),
-      }),
-    );
-    disposablesRef.current.push(
-      modified.addAction({
-        id: "anchor.addCommentNewSession",
-        label: "Add comment (new session)",
-        contextMenuGroupId: "navigation",
-        contextMenuOrder: 1.6,
-        run: (ed) =>
-          openComposerRef.current(
-            ed as MonacoEditor.IStandaloneCodeEditor,
-            true,
-          ),
-      }),
-    );
 
     // Hover dwell on annotation → open bubble (not click).
     disposablesRef.current.push(
       modified.onMouseDown((e) => {
+        const line = e.target.position?.lineNumber;
+        setActiveBlame(line ? { side: "new", line } : null);
         if (e.event.leftButton === true) {
           mouseDownRef.current = true;
           clearHoverOpenTimer();
@@ -833,13 +932,18 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       disposablesRef.current = [];
       decorationsRef.current?.clear();
       decorationsRef.current = null;
+      oldBlameDecorationsRef.current?.clear();
+      oldBlameDecorationsRef.current = null;
+      newBlameDecorationsRef.current?.clear();
+      newBlameDecorationsRef.current = null;
       decorationsEditorRef.current = null;
       diffEditorRef.current = null;
+      originalEditorRef.current = null;
       modifiedEditorRef.current = null;
     };
   }, []);
 
-  const submit = async () => {
+  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
     if (!composer || !body.trim() || !activePath || !sideBySide) return;
     setSaving(true);
     try {
@@ -865,7 +969,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         lineText: composer.lineText,
         body: `${prefix}${body.trim()}`,
         repoRoot: item.repoRoot,
-        forceNewSession: composer.forceNewSession,
+        forceNewSession,
       });
       setComposer(null);
       setBody("");
@@ -1188,15 +1292,20 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               </button>
               <button
                 type="button"
+                className="btn btn--ghost btn--small"
+                disabled={!body.trim() || saving}
+                onClick={() => void submit(true)}
+                title="End the active session and save this comment in a new session"
+              >
+                Save comment (new session)
+              </button>
+              <button
+                type="button"
                 className="btn btn--accent btn--small"
                 disabled={!body.trim() || saving}
-                onClick={() => void submit()}
+                onClick={() => void submit(false)}
               >
-                {saving
-                  ? "Saving…"
-                  : composer.forceNewSession
-                    ? "Save in new session"
-                    : "Save comment"}
+                {saving ? "Saving…" : "Save comment"}
               </button>
             </div>
           </div>

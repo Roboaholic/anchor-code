@@ -93,11 +93,21 @@ Recommended human workflow (for context):
 2. Update that comment in the **session YAML**:
    - set `status: closed`
    - bump `updated_at` to now (ISO-8601)
-   - optionally append a short `messages[]` entry describing what you did (author can be your agent name)
+   - optionally append a short `messages[]` entry describing what you did
+   - set `messages[].author` to the **Author identity** string from the handoff
+     prompt when provided; otherwise use your real agent/CLI display name
+     (never invent a different product name)
 3. Do **not** leave a completed fix in `need_modify`.
 4. Prefer a short summary in the terminal for the human: which comment ids you closed, which files you changed.
 
 If the YAML path is read-only or the user only gave export JSON, still implement the fixes, list remaining open items, and tell the human to mark them `closed` in Anchor Code Comments.
+
+## Reply language
+
+- Match the language of each human comment thread when replying in chat or
+  appending `messages[]` in the session YAML (Chinese comments → Chinese replies).
+- If a thread mixes languages, follow the latest human message.
+- Keep code identifiers, paths, and CLI/tool output as-is.
 
 ## Operating procedure
 

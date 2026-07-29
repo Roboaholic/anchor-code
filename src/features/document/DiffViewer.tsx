@@ -271,9 +271,19 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const pointerOverAnnoRef = useRef(false);
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const filesResizeStartRef = useRef<{ x: number; width: number } | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
+
+  useEffect(() => {
+    if (!composer) return;
+    const id = window.requestAnimationFrame(() => {
+      composerInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [composer]);
+
 
   useEffect(() => {
     if (!activePath || !activeMeta) {
@@ -1276,6 +1286,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               ) : null}
             </p>
             <textarea
+              ref={composerInputRef}
               className="composer__input"
               rows={3}
               placeholder="Write feedback for the AI CLI…"

@@ -45,6 +45,28 @@ function writeSessionListOpenByMode(state: Record<RightTermMode, boolean>) {
   }
 }
 
+/** Why the New Agent dialog is open — plain create vs Comments Feedback. */
+export type AgentMenuIntent =
+  | { kind: "new" }
+  | {
+      kind: "feedback";
+      sessionId: string;
+      sessionTitle: string;
+      yamlPath: string;
+      exportPath?: string | null;
+      openCount: number;
+      needModifyCount: number;
+    };
+
+export type AgentLaunchOptions = {
+  model?: string;
+  effort?: string;
+  /** Tab title (and default prompt when `prompt` omitted). */
+  title?: string;
+  /** Hidden CLI first-message; preferred over title for agent launch args. */
+  prompt?: string;
+};
+
 export interface TerminalState {
   tabs: TerminalTabInfo[];
   /** Active tab per mode so switching modes keeps both sides alive. */
@@ -57,6 +79,7 @@ export interface TerminalState {
   agentProfiles: AgentCliProfile[];
   defaultAgentId: string | null;
   agentMenuOpen: boolean;
+  agentMenuIntent: AgentMenuIntent;
 
   resetForWorkspace: (cwd: string) => Promise<void>;
   setMode: (mode: RightTermMode) => void;
@@ -65,7 +88,7 @@ export interface TerminalState {
   createShellTab: () => Promise<void>;
   createAgentTab: (
     profile: AgentCliProfile,
-    launch?: { model?: string; effort?: string; title?: string },
+    launch?: AgentLaunchOptions,
   ) => Promise<void>;
   createAgentDefault: () => Promise<void>;
   closeTab: (id: string) => Promise<void>;
@@ -80,6 +103,8 @@ export interface TerminalState {
   loadAgentProfiles: () => Promise<void>;
   detectAgents: () => Promise<void>;
   setAgentMenuOpen: (open: boolean) => void;
+  /** Open New Agent dialog, optionally as Comments → Feedback. */
+  openAgentMenu: (intent?: AgentMenuIntent) => void;
   /** Dismiss New Agent dialog; return to Terminal when no agent sessions. */
   closeAgentMenu: () => void;
   addCustomAgent: (input: {
@@ -113,6 +138,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   agentProfiles: [],
   defaultAgentId: null,
   agentMenuOpen: false,
+  agentMenuIntent: { kind: "new" },
 
   resetForWorkspace: async (cwd) => {
     try {
@@ -132,6 +158,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         mode: "terminal",
         error: null,
         agentMenuOpen: false,
+        agentMenuIntent: { kind: "new" },
       });
       void get().loadAgentProfiles();
       void get().detectAgents();
@@ -144,6 +171,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         mode: "terminal",
         error: err instanceof Error ? err.message : String(err),
         agentMenuOpen: false,
+        agentMenuIntent: { kind: "new" },
       });
     }
   },
@@ -155,6 +183,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (mode === "agent" && agentSessions.length === 0) {
         return {
           agentMenuOpen: true,
+          agentMenuIntent: { kind: "new" },
           // Keep Terminal mode until an agent session is actually created.
           mode: "terminal",
         };
@@ -233,8 +262,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const hh = String(now.getHours()).padStart(2, "0");
       const mm = String(now.getMinutes()).padStart(2, "0");
       const taskTitle = launch?.title?.trim();
+      const launchPrompt = launch?.prompt?.trim() || taskTitle;
       const baseName = profile.name.trim() || profile.id;
-      const fallbackTitle = [baseName, launch?.model, launch?.effort, `${hh}:${mm}`]
+      const fallbackTitle = [
+        baseName,
+        launch?.model,
+        launch?.effort,
+        `${hh}:${mm}`,
+      ]
         .filter(Boolean)
         .join(" · ");
       const title = taskTitle || fallbackTitle;
@@ -244,7 +279,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           profileId: profile.id,
           model: launch?.model,
           effort: launch?.effort,
-          prompt: taskTitle,
+          prompt: launchPrompt,
         })) ?? [];
 
       let tab = await window.anchor.terminal.create({
@@ -271,6 +306,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeByMode: { ...s.activeByMode, agent: tab.id },
         error: null,
         agentMenuOpen: false,
+        agentMenuIntent: { kind: "new" },
         defaultAgentId: profile.id,
       }));
       void window.anchor.agent.setDefaultId(profile.id);
@@ -290,6 +326,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       set({
         error: err instanceof Error ? err.message : String(err),
         agentMenuOpen: false,
+        agentMenuIntent: { kind: "new" },
       });
     }
   },
@@ -301,9 +338,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const agentSessions = get().tabs.filter((t) => modeOf(t) === "agent");
     if (agentSessions.length === 0) {
-      set({ agentMenuOpen: true, mode: "terminal" });
+      set({
+        agentMenuOpen: true,
+        agentMenuIntent: { kind: "new" },
+        mode: "terminal",
+      });
     } else {
-      set({ agentMenuOpen: true, mode: "agent" });
+      set({
+        agentMenuOpen: true,
+        agentMenuIntent: { kind: "new" },
+        mode: "agent",
+      });
     }
   },
 
@@ -418,13 +463,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  setAgentMenuOpen: (open) => set({ agentMenuOpen: open }),
+  setAgentMenuOpen: (open) =>
+    set(
+      open
+        ? { agentMenuOpen: true, agentMenuIntent: { kind: "new" } }
+        : { agentMenuOpen: false, agentMenuIntent: { kind: "new" } },
+    ),
+
+  openAgentMenu: (intent) =>
+    set({
+      agentMenuOpen: true,
+      agentMenuIntent: intent ?? { kind: "new" },
+    }),
 
   closeAgentMenu: () =>
     set((s) => {
       const hasAgent = s.tabs.some((t) => modeOf(t) === "agent");
       return {
         agentMenuOpen: false,
+        agentMenuIntent: { kind: "new" },
         mode: hasAgent ? s.mode : "terminal",
       };
     }),

@@ -2,7 +2,10 @@ import { useCallback, useEffect } from "react";
 import { useShellStore } from "@/features/shell/shellStore";
 import type { AgentCliProfile } from "@/shared/anchor-api";
 import { NewAgentDialog } from "./NewAgentDialog";
-import { useTerminalStore } from "./terminalStore";
+import {
+  type AgentLaunchOptions,
+  useTerminalStore,
+} from "./terminalStore";
 
 function hasAgentSessions() {
   return useTerminalStore
@@ -17,6 +20,7 @@ function hasAgentSessions() {
  */
 export function NewAgentDialogHost() {
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
+  const agentMenuIntent = useTerminalStore((s) => s.agentMenuIntent);
   const agentProfiles = useTerminalStore((s) => s.agentProfiles);
   const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
@@ -30,10 +34,7 @@ export function NewAgentDialogHost() {
   }, [agentMenuOpen, loadAgentProfiles]);
 
   const onOpen = useCallback(
-    async (
-      p: AgentCliProfile,
-      launch: { model?: string; effort?: string; title?: string },
-    ) => {
+    async (p: AgentCliProfile, launch: AgentLaunchOptions) => {
       await createAgentTab(p, launch);
       // Open the agent side rail only after a session actually exists.
       if (hasAgentSessions()) {
@@ -57,6 +58,7 @@ export function NewAgentDialogHost() {
     <NewAgentDialog
       profiles={agentProfiles}
       defaultAgentId={defaultAgentId}
+      intent={agentMenuIntent}
       onOpen={(p, launch) => {
         void onOpen(p, launch);
       }}

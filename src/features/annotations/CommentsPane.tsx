@@ -7,7 +7,11 @@ import { jumpToComment } from "@/features/shell/orchestrate";
 import { useAnnotationsStore } from "./annotationsStore";
 import { useDocumentStore } from "@/features/document/documentStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useEffect, useState } from "react";
+import { useTerminalStore } from "@/features/terminal/terminalStore";
+import {
+  countOpenFeedbackComments,
+} from "./feedbackPrompt";
+import { useCallback, useEffect, useState } from "react";
 import type {
   CommentMessage,
   CommentRecord,
@@ -29,13 +33,13 @@ export function CommentsPane() {
   const loadForRepo = useAnnotationsStore((s) => s.loadForRepo);
   const setExpandedSession = useAnnotationsStore((s) => s.setExpandedSession);
   const startFreshSession = useAnnotationsStore((s) => s.startFreshSession);
-  const exportSession = useAnnotationsStore((s) => s.exportSession);
   const copyYamlPath = useAnnotationsStore((s) => s.copyYamlPath);
   const setStatus = useAnnotationsStore((s) => s.setStatus);
   const reply = useAnnotationsStore((s) => s.reply);
   const editComment = useAnnotationsStore((s) => s.editComment);
   const deleteComment = useAnnotationsStore((s) => s.deleteComment);
   const clearToast = useAnnotationsStore((s) => s.clearToast);
+  const openAgentMenu = useTerminalStore((s) => s.openAgentMenu);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
@@ -84,6 +88,7 @@ export function CommentsPane() {
       cancelled = true;
     };
   }, [workspaceRoot, active, loadForRepo]);
+
 
   if (!workspaceRoot) {
     return (
@@ -155,6 +160,32 @@ export function CommentsPane() {
     });
   };
 
+  const openFeedbackForSession = useCallback(
+    (session: SessionRecord) => {
+      if (!repoRoot) {
+        useAnnotationsStore.setState({
+          toast: "Open a workspace first",
+        });
+        return;
+      }
+      const yamlPath =
+        session.filePath?.trim() || joinSessionYamlPath(repoRoot, session.id);
+      const counts = countOpenFeedbackComments(session.comments);
+      // Open immediately — skill gate runs on Start in the agent dialog.
+      openAgentMenu({
+        kind: "feedback",
+        sessionId: session.id,
+        sessionTitle: session.title,
+        yamlPath,
+        exportPath: null,
+        openCount: counts.open,
+        needModifyCount: counts.needModify,
+      });
+    },
+    [repoRoot, openAgentMenu],
+  );
+
+
   return (
     <div className="comments-pane">
       <div className="comments-pane__toolbar">
@@ -221,12 +252,12 @@ export function CommentsPane() {
                       {session.title}
                     </span>
                     <span
-                      className={`session-row__badge${
-                        writable ? " is-live" : ""
+                      className={`session-row__dot${
+                        writable ? " is-live" : " is-closed"
                       }`}
-                    >
-                      {writable ? "active" : "closed"}
-                    </span>
+                      title={writable ? "Active" : "Closed"}
+                      aria-label={writable ? "Active session" : "Closed session"}
+                    />
                     <span className="session-row__count">
                       {session.comments.length}
                     </span>
@@ -234,15 +265,17 @@ export function CommentsPane() {
                   <div className="session-row__actions">
                     <button
                       type="button"
-                      className="icon-btn"
-                      title="Export anch-review JSON and copy path"
-                      aria-label="Export session"
+                      className="icon-btn session-row__feedback"
+                      title="Feedback to agent"
+                      aria-label="Feedback to agent"
+                      disabled={!repoRoot || session.comments.length === 0}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void exportSession(session.id);
+                        openFeedbackForSession(session);
                       }}
                     >
-                      <Icon name="export" />
+                      <Icon name="robot" />
+                      <span>Feedback</span>
                     </button>
                     <button
                       type="button"
@@ -496,6 +529,13 @@ export function CommentsPane() {
       )}
     </div>
   );
+}
+
+/** Best-effort absolute YAML path without an IPC round-trip. */
+function joinSessionYamlPath(repoRoot: string, sessionId: string): string {
+  const root = repoRoot.replace(/[\\/]+$/, "");
+  const sep = root.includes("\\") && !root.startsWith("/") ? "\\" : "/";
+  return `${root}${sep}.anchor-code${sep}${sessionId}.yaml`;
 }
 
 function fileBasename(filePath: string): string {

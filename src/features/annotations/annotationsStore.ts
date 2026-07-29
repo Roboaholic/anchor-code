@@ -93,6 +93,11 @@ export interface AnnotationsState {
   loading: boolean;
 
   loadForRepo: (repoRoot: string) => Promise<void>;
+  /**
+   * Soft reload from disk without loading spinner.
+   * Used when agents rewrite session YAML outside the app UI.
+   */
+  refreshFromDisk: (repoRoot?: string | null) => Promise<boolean>;
   ensureActive: (repoRoot: string, title?: string) => Promise<void>;
   setExpandedSession: (sessionId: string | null) => void;
   addComment: (input: {
@@ -191,6 +196,55 @@ async function reloadSessions(repoRoot: string): Promise<SessionRecord[]> {
   return sortSessionsNewestFirst(sessions);
 }
 
+/** Cheap fingerprint so we can skip no-op store updates. */
+function sessionsFingerprint(sessions: SessionRecord[]): string {
+  return sessions
+    .map((s) => {
+      const comments = s.comments
+        .map((c) => {
+          const last = c.messages[c.messages.length - 1];
+          return [
+            c.id,
+            c.status,
+            c.updated_at,
+            c.messages.length,
+            last?.id ?? "",
+            last?.author ?? "",
+            last?.created_at ?? "",
+            (last?.body ?? "").length,
+          ].join(":");
+        })
+        .join(",");
+      return [s.id, s.status, s.comments.length, comments].join("|");
+    })
+    .join(";");
+}
+
+let diskWatchTimer: number | null = null;
+let diskWatchRoot: string | null = null;
+
+function stopDiskWatch() {
+  if (diskWatchTimer != null) {
+    window.clearInterval(diskWatchTimer);
+    diskWatchTimer = null;
+  }
+  diskWatchRoot = null;
+}
+
+function startDiskWatch(repoRoot: string) {
+  if (typeof window === "undefined") return;
+  if (diskWatchRoot === repoRoot && diskWatchTimer != null) return;
+  stopDiskWatch();
+  diskWatchRoot = repoRoot;
+  // Poll .anchor-code YAML for agent/external writes (WSL/SSH safe, no native watch).
+  diskWatchTimer = window.setInterval(() => {
+    const root = useAnnotationsStore.getState().repoRoot;
+    if (!root || root !== diskWatchRoot) return;
+    void useAnnotationsStore.getState().refreshFromDisk(root);
+  }, 2000);
+}
+
+
 function applySessions(
   sessions: SessionRecord[],
   expandedSessionId?: string | null,
@@ -215,7 +269,8 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   toast: null,
   loading: false,
 
-  reset: () =>
+  reset: () => {
+    stopDiskWatch();
     set({
       repoRoot: null,
       activeSession: null,
@@ -224,7 +279,8 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       error: null,
       toast: null,
       loading: false,
-    }),
+    });
+  },
 
   clearToast: () => set({ toast: null }),
 
@@ -244,7 +300,9 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
         error: null,
         repoRoot,
       });
+      startDiskWatch(repoRoot);
     } catch (err) {
+      stopDiskWatch();
       set({
         loading: false,
         error: err instanceof Error ? err.message : String(err),
@@ -254,6 +312,28 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       });
     }
   },
+
+  refreshFromDisk: async (repoRootArg) => {
+    const repoRoot = repoRootArg ?? get().repoRoot;
+    if (!repoRoot || !window.anchor?.annotations?.load) return false;
+    try {
+      const sessions = await reloadSessions(repoRoot);
+      const prev = get().sessions;
+      if (sessionsFingerprint(prev) === sessionsFingerprint(sessions)) {
+        return false;
+      }
+      set({
+        ...applySessions(sessions, get().expandedSessionId),
+        repoRoot,
+        error: null,
+      });
+      return true;
+    } catch {
+      // Soft refresh must not surface transient disk/IPC blips as fatal errors.
+      return false;
+    }
+  },
+
 
   ensureActive: async (repoRoot, title) => {
     set({ loading: true, error: null, repoRoot });

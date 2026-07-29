@@ -1629,19 +1629,85 @@ body.files-split-resizing .monaco-editor {
 /*
  * Tab strip: tabs sit on the bottom border so active tab merges into the
  * editor surface with no hairline gap (classic editor chrome).
+ * Outer .tabs-bar owns the seam/background and optional left/right overflow edges.
  */
-.tabs {
+/* Tabs strip with optional left/right overflow edges ("…") when clipped. */
+.tabs-bar {
   display: flex;
-  align-items: flex-end;
-  gap: 1px;
+  align-items: stretch;
   height: 36px;
-  padding: 3px 8px 0;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
   /* Seam as background line (last 1px). Tabs stay top-aligned. */
   border-bottom: none;
   background:
     linear-gradient(var(--border), var(--border)) left bottom / 100% 1px no-repeat,
     var(--bg-muted);
-  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Absolute edges so overflow measurement stays stable (no width thrash). */
+.tabs-bar__edge {
+  position: absolute;
+  top: 0;
+  bottom: 1px; /* leave the seam visible */
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-muted) 92%, transparent);
+  z-index: 4;
+  -webkit-app-region: no-drag;
+}
+
+.tabs-bar__edge:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-hover) 88%, var(--bg-muted));
+}
+
+.tabs-bar__edge--left {
+  left: 0;
+  box-shadow: 8px 0 10px -6px color-mix(in srgb, #000 35%, transparent);
+}
+
+.tabs-bar__edge--right {
+  right: 0;
+  box-shadow: -8px 0 10px -6px color-mix(in srgb, #000 35%, transparent);
+}
+
+.tabs-bar__dots {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.tabs-bar__dots > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.9;
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 3px 8px 0;
+  border-bottom: none;
+  background: transparent;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -1802,8 +1868,11 @@ body.files-split-resizing .monaco-editor {
 .document-area__pane > .welcome {
   padding: 0;
   overflow: auto;
-  flex: 1;
-  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
   background: var(--bg-panel);
 }
 
@@ -1811,14 +1880,21 @@ body.files-split-resizing .monaco-editor {
   width: 100%;
   max-width: none;
   margin: 0;
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
+/*
+ * Shrink-wrap to the actual text ink width, then center in the editor.
+ * Children must not force width:100% or the block expands and looks left-heavy.
+ */
 .welcome__inner {
-  width: min(640px, calc(100% - 96px));
-  max-width: 640px;
-  margin: 0;
-  padding: min(10vh, 72px) 0 56px 48px;
+  width: max-content;
+  max-width: min(36rem, calc(100% - 96px));
+  margin: 0 auto;
+  padding: 72px 0 56px;
   text-align: left;
   box-sizing: border-box;
 }
@@ -1827,7 +1903,8 @@ body.files-split-resizing .monaco-editor {
 .welcome__lead,
 .welcome__slogan,
 .welcome__steps {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   margin-left: 0;
   margin-right: 0;
   box-sizing: border-box;
@@ -1847,6 +1924,7 @@ body.files-split-resizing .monaco-editor {
   font-synthesis: none;
   border-bottom: none !important;
   padding-bottom: 0 !important;
+  white-space: nowrap;
 }
 
 .welcome__slogan,
@@ -1874,7 +1952,8 @@ body.files-split-resizing .monaco-editor {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
@@ -2082,12 +2161,13 @@ body.files-split-resizing .monaco-editor {
   flex: 1;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .code-viewer__editor {
-  flex: 1;
-  min-height: 200px;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Do NOT use height:100% — it fills the parent and paints over the composer. */
   position: relative;
   overflow: hidden;
 }
@@ -4107,16 +4187,17 @@ body.files-split-resizing .monaco-editor {
 .session-row__head {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-height: 28px;
-  padding: 0 6px 0 4px;
+  padding: 0 4px 0 2px;
+  min-width: 0;
 }
 
 .session-row__toggle {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   height: 28px;
   border: none;
@@ -4133,7 +4214,7 @@ body.files-split-resizing .monaco-editor {
 }
 
 .session-row__title {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4146,38 +4227,67 @@ body.files-split-resizing .monaco-editor {
   color: var(--accent);
 }
 
-.session-row__badge {
-  flex-shrink: 0;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 6px;
+.session-row__dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.55;
 }
 
-.session-row__badge.is-live {
-  color: var(--ok);
-  border-color: var(--ok-border);
-  background: var(--ok-bg);
+.session-row__dot.is-live {
+  background: var(--ok);
+  opacity: 1;
+}
+
+.session-row__dot.is-closed {
+  background: var(--text-muted);
+  opacity: 0.45;
 }
 
 .session-row__count {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
-  min-width: 1.2em;
+  min-width: 1em;
   text-align: right;
 }
 
 .session-row__actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
+  gap: 1px;
+  flex: 0 0 auto;
 }
+
+/* Compact icon+label; stays one control system with icon-btn. */
+.session-row__feedback {
+  width: auto !important;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px !important;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.session-row__feedback .codicon {
+  font-size: 13px;
+}
+
+.session-row__feedback:not(:disabled) {
+  color: var(--accent);
+}
+
+.session-row__feedback:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-hover));
+}
+
 
 .session-row__body {
   padding: 0 8px 8px 22px;
@@ -4209,9 +4319,9 @@ body.files-split-resizing .monaco-editor {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 2px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 5px 8px;
   text-align: left;
   background: transparent;
   border: none;
@@ -4226,7 +4336,7 @@ body.files-split-resizing .monaco-editor {
 .comment-card__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -4235,15 +4345,15 @@ body.files-split-resizing .monaco-editor {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
 }
 
 /* Filename first — always readable in a narrow sidebar */
 .comment-card__file {
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4252,14 +4362,16 @@ body.files-split-resizing .monaco-editor {
 
 .comment-card__line {
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  opacity: 0.85;
 }
 
 /* Parent dirs (muted); filename is already on the line above */
 .comment-card__dir {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 9.5px;
   color: var(--text-muted);
+  opacity: 0.8;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4268,6 +4380,16 @@ body.files-split-resizing .monaco-editor {
 
 .comment-card__head .chip {
   flex-shrink: 0;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0 4px;
+  line-height: 14px;
+  height: 14px;
+  border-radius: 999px;
+  max-width: 7.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .comment-card__thread {
@@ -4582,7 +4704,7 @@ body.files-split-resizing .monaco-editor {
 }
 
 .diff-viewer__editor {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   position: relative;
@@ -4594,6 +4716,7 @@ body.files-split-resizing .monaco-editor {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .diff-viewer__toolbar {
@@ -4962,10 +5085,12 @@ body.files-split-resizing .monaco-editor {
 
 
 .composer {
+  position: relative;
+  z-index: 5;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 10px 12px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .composer__meta {
@@ -5006,6 +5131,7 @@ body.files-split-resizing .monaco-editor {
   font-size: 13px;
   color: var(--text);
   background: var(--bg);
+  pointer-events: auto;
 }
 
 .composer__input:focus {
@@ -5476,6 +5602,46 @@ select.field__input {
 .agent-new__footer-spacer {
   flex: 1;
 }
+
+.agent-new__feedback-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.agent-new__feedback-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-new__feedback-value {
+  min-width: 0;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-new__skill-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.agent-new__skill-error .modal__error {
+  margin: 0;
+}
+
 
 /* ── Quick Open / Open Path palette ───────────────── */
 

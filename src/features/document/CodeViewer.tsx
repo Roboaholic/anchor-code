@@ -239,8 +239,19 @@ export function CodeViewer({
   );
   const [blameLines, setBlameLines] = useState<BlameLine[]>([]);
   const [activeBlameLine, setActiveBlameLine] = useState<number | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
+
+  useEffect(() => {
+    if (!composer) return;
+    // Monaco steals focus after selection; re-focus the bar on the next frame.
+    const id = window.requestAnimationFrame(() => {
+      composerInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [composer]);
+
 
   const liveComment = (id: string): CommentRecord | null => {
     const state = useAnnotationsStore.getState();
@@ -970,6 +981,7 @@ export function CodeViewer({
             </p>
           ) : null}
           <textarea
+            ref={composerInputRef}
             className="composer__input"
             rows={3}
             placeholder="Write feedback for the AI CLI…"

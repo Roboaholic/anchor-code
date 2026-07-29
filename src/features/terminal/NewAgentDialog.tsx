@@ -4,6 +4,13 @@ import type {
   AgentLaunchDiscovery,
 } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
+import {
+  agentAuthorFromProfile,
+  buildFeedbackPrompt,
+  feedbackTabTitle,
+  isAnchorReviewInstalled,
+} from "@/features/annotations/feedbackPrompt";
+import type { AgentLaunchOptions, AgentMenuIntent } from "./terminalStore";
 
 const LAST_PROFILE_KEY = "anchor.agent.lastProfileId";
 
@@ -16,10 +23,9 @@ function readLastLaunch(profileId: string): {
   effort?: string | null;
 } {
   try {
-    return JSON.parse(localStorage.getItem(launchKey(profileId)) || "{}") as {
-      model?: string | null;
-      effort?: string | null;
-    };
+    const raw = localStorage.getItem(launchKey(profileId));
+    if (!raw) return {};
+    return JSON.parse(raw) as { model?: string | null; effort?: string | null };
   } catch {
     return {};
   }
@@ -28,19 +34,19 @@ function readLastLaunch(profileId: string): {
 export function NewAgentDialog({
   profiles,
   defaultAgentId,
+  intent = { kind: "new" },
   onOpen,
   onDetect,
   onClose,
 }: {
   profiles: AgentCliProfile[];
   defaultAgentId: string | null;
-  onOpen: (
-    profile: AgentCliProfile,
-    launch: { model?: string; effort?: string; title?: string },
-  ) => void;
+  intent?: AgentMenuIntent;
+  onOpen: (profile: AgentCliProfile, launch: AgentLaunchOptions) => void;
   onDetect: () => void;
   onClose: () => void;
 }) {
+  const isFeedback = intent.kind === "feedback";
   const enabled = useMemo(
     () => profiles.filter((p) => p.enabled !== false),
     [profiles],
@@ -56,51 +62,50 @@ export function NewAgentDialog({
     if (defaultAgentId && enabled.some((p) => p.id === defaultAgentId)) {
       return defaultAgentId;
     }
-    return enabled.find((p) => p.detected)?.id ?? enabled[0]?.id ?? "";
+    return enabled[0]?.id ?? "";
   }, [enabled, defaultAgentId]);
 
   const [task, setTask] = useState("");
+  const [notes, setNotes] = useState("");
   const [profileId, setProfileId] = useState(initialProfileId);
   const [discovery, setDiscovery] = useState<AgentLaunchDiscovery | null>(null);
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [opening, setOpening] = useState(false);
+  const [skillError, setSkillError] = useState<string | null>(null);
+  const [skillInstalling, setSkillInstalling] = useState(false);
   const taskRef = useRef<HTMLTextAreaElement>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
 
   const profile = enabled.find((p) => p.id === profileId) ?? null;
 
   const applyDiscovery = (p: AgentCliProfile, d: AgentLaunchDiscovery) => {
     setDiscovery(d);
     const last = readLastLaunch(p.id);
-    const modelIds = d.models.map((m) => m.id);
-    const pickModel =
-      (last.model && modelIds.includes(last.model) && last.model) ||
-      (d.defaultModel && modelIds.includes(d.defaultModel)
-        ? d.defaultModel
-        : undefined) ||
+    const models = d.models ?? [];
+    const preferredModel =
+      (last.model && models.some((m) => m.id === last.model) && last.model) ||
       d.defaultModel ||
-      d.models[0]?.id ||
+      models[0]?.id ||
       "";
-    setModel(pickModel);
-    const mod = d.models.find((m) => m.id === pickModel);
+    setModel(preferredModel);
+    const mod = models.find((m) => m.id === preferredModel);
     const efforts = mod?.efforts ?? [];
-    const pickEffort =
+    const preferredEffort =
       (last.effort && efforts.includes(last.effort) && last.effort) ||
-      (mod?.defaultEffort &&
-        efforts.includes(mod.defaultEffort) &&
-        mod.defaultEffort) ||
-      (d.defaultEffort &&
-        efforts.includes(d.defaultEffort) &&
-        d.defaultEffort) ||
+      mod?.defaultEffort ||
+      d.defaultEffort ||
       efforts[0] ||
       "";
-    setEffort(pickEffort);
+    setEffort(preferredEffort);
   };
 
   const loadDiscovery = async (p: AgentCliProfile, force = false) => {
-    // Uncached selection performs one live probe; later opens use settings.json.
-    // Manual Refresh bypasses both memory and disk caches.
+    if (!window.anchor?.agent?.discoverLaunch) {
+      setDiscovery(null);
+      return;
+    }
     setLoading(true);
     try {
       const d = await window.anchor.agent.discoverLaunch({
@@ -108,49 +113,116 @@ export function NewAgentDialog({
         force,
       });
       applyDiscovery(p, d);
-    } catch (err) {
-      setDiscovery({
-        profileId: p.id,
-        supportsModel: false,
-        supportsEffort: false,
-        models: [],
-        error: err instanceof Error ? err.message : String(err),
-        source: "error",
-      });
-      setModel("");
-      setEffort("");
+    } catch {
+      setDiscovery(null);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    taskRef.current?.focus();
-  }, []);
+    if (isFeedback) notesRef.current?.focus();
+    else taskRef.current?.focus();
+  }, [isFeedback]);
 
   useEffect(() => {
     if (!profile) return;
-    void loadDiscovery(profile, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when profile changes
+    void loadDiscovery(profile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when profile id changes
   }, [profile?.id]);
 
   const effortOptions = useMemo(() => {
-    if (!discovery) return [] as string[];
+    if (!discovery) return [];
     const mod = discovery.models.find((m) => m.id === model);
     return mod?.efforts ?? [];
   }, [discovery, model]);
 
-  const canOpen = !!profile && !opening;
+  const canOpen = !!profile && !opening && !skillInstalling;
 
-  const submit = () => {
-    if (!profile || opening) return;
+  const submit = async () => {
+    if (!profile || opening || skillInstalling) return;
     setOpening(true);
+    setSkillError(null);
+
+    if (intent.kind === "feedback") {
+      try {
+        if (window.anchor?.skill?.isWorkspaceInstalled) {
+          const root =
+            (await window.anchor.host.getInfo()).workspaceRoot ?? null;
+          const installed = root
+            ? await window.anchor.skill.isWorkspaceInstalled(root)
+            : false;
+          // Fall back to any installed target if workspace skill is missing.
+          if (!installed && window.anchor.skill.status) {
+            const status = await window.anchor.skill.status({
+              workspaceRoot: root,
+            });
+            if (!isAnchorReviewInstalled(status)) {
+              setOpening(false);
+              setSkillError(
+                "Install the Anchor Review skill first, then start feedback.",
+              );
+              return;
+            }
+          } else if (!installed) {
+            setOpening(false);
+            setSkillError(
+              "Install the Anchor Review skill first, then start feedback.",
+            );
+            return;
+          }
+        }
+        const prompt = buildFeedbackPrompt({
+          yamlPath: intent.yamlPath,
+          exportPath: intent.exportPath,
+          additionalNotes: notes,
+          agentAuthor: agentAuthorFromProfile(profile),
+        });
+        onOpen(profile, {
+          model: model || undefined,
+          effort: effort || undefined,
+          title: feedbackTabTitle(intent.sessionTitle),
+          prompt,
+        });
+      } catch (err) {
+        setOpening(false);
+        setSkillError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+
     onOpen(profile, {
       model: model || undefined,
       effort: effort || undefined,
       title: task.trim() || undefined,
     });
   };
+
+  const installSkillFromDialog = async () => {
+    if (!window.anchor?.skill?.installWorkspace || skillInstalling) return;
+    setSkillInstalling(true);
+    setSkillError(null);
+    try {
+      const root =
+        (await window.anchor.host.getInfo()).workspaceRoot ?? undefined;
+      if (!root) {
+        setSkillError("Open a workspace first");
+        return;
+      }
+      const result = await window.anchor.skill.installWorkspace(root);
+      if (!result.ok) {
+        setSkillError(result.error ?? "Install failed");
+        return;
+      }
+      setSkillError(null);
+      await submit();
+    } catch (err) {
+      setSkillError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSkillInstalling(false);
+    }
+  };
+
 
   return (
     <div
@@ -168,7 +240,7 @@ export function NewAgentDialog({
       >
         <div className="modal__header">
           <h2 id="new-agent-title" className="modal__title">
-            New agent session
+            {isFeedback ? "Feedback to agent" : "New agent session"}
           </h2>
           <button
             type="button"
@@ -180,23 +252,63 @@ export function NewAgentDialog({
           </button>
         </div>
 
-        <label className="agent-new__field agent-new__task">
-          <span className="agent-new__label">Task</span>
-          <textarea
-            ref={taskRef}
-            className="agent-new__textarea"
-            rows={3}
-            placeholder="What should this session work on? (used as the session title)"
-            value={task}
-            onChange={(e) => setTask(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-          />
-        </label>
+        {isFeedback && intent.kind === "feedback" ? (
+          <div className="agent-new__feedback-summary" aria-live="polite">
+            <div className="agent-new__feedback-row">
+              <span className="agent-new__label">Session</span>
+              <span className="agent-new__feedback-value" title={intent.sessionTitle}>
+                {intent.sessionTitle}
+              </span>
+            </div>
+            <div className="agent-new__feedback-row">
+              <span className="agent-new__label">Open comments</span>
+              <span className="agent-new__feedback-value">
+                {intent.openCount}
+                {intent.needModifyCount > 0
+                  ? ` · ${intent.needModifyCount} need modify`
+                  : ""}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <label className="agent-new__field agent-new__task">
+            <span className="agent-new__label">Task</span>
+            <textarea
+              ref={taskRef}
+              className="agent-new__textarea"
+              rows={3}
+              placeholder="What should this session work on? (used as the session title)"
+              value={task}
+              onChange={(e) => setTask(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </label>
+        )}
+
+        {isFeedback ? (
+          <label className="agent-new__field agent-new__task">
+            <span className="agent-new__label">Additional notes (optional)</span>
+            <textarea
+              ref={notesRef}
+              className="agent-new__textarea"
+              rows={2}
+              placeholder="Optional focus for the agent (shown only as an extra note)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </label>
+        ) : null}
 
         <div className="agent-new__grid">
           <label className="agent-new__field">
@@ -289,6 +401,22 @@ export function NewAgentDialog({
           {discovery?.error ? ` · ${discovery.error}` : ""}
         </div>
 
+        {skillError ? (
+          <div className="agent-new__skill-error" role="alert">
+            <p className="modal__error">{skillError}</p>
+            {isFeedback ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--small"
+                disabled={skillInstalling}
+                onClick={() => void installSkillFromDialog()}
+              >
+                {skillInstalling ? "Installing…" : "Install skill & start"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="modal__footer">
           <button
             type="button"
@@ -309,9 +437,15 @@ export function NewAgentDialog({
             type="button"
             className="btn btn--primary"
             disabled={!canOpen}
-            onClick={submit}
+            onClick={() => void submit()}
           >
-            Open
+            {isFeedback
+              ? opening
+                ? "Starting…"
+                : "Start feedback"
+              : opening
+                ? "Opening…"
+                : "Open"}
           </button>
         </div>
       </div>

@@ -35,7 +35,9 @@ export function DocumentArea() {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null);
+  const [tabOverflow, setTabOverflow] = useState({ left: false, right: false });
   const tabMenuRef = useRef<HTMLDivElement | null>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
 
   const active = openItems.find((i) => i.id === activeId) ?? openItems[0] ?? null;
 
@@ -126,6 +128,84 @@ export function DocumentArea() {
     setDragOver(null);
   }, []);
 
+  const updateTabOverflow = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const eps = 1;
+    const left = scrollLeft > eps;
+    const right = scrollLeft + clientWidth < scrollWidth - eps;
+    setTabOverflow((prev) =>
+      prev.left === left && prev.right === right ? prev : { left, right },
+    );
+  }, []);
+
+  const scrollTabsBy = useCallback((dir: -1 | 1) => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const delta = Math.max(140, Math.floor(el.clientWidth * 0.65));
+    el.scrollBy({ left: dir * delta, behavior: "smooth" });
+  }, []);
+
+  const scrollActiveTabIntoView = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el || !activeId) return;
+    const tab = el.querySelector(
+      `[data-tab-id="${CSS.escape(activeId)}"]`,
+    ) as HTMLElement | null;
+    if (!tab) return;
+
+    // Keep active tab clear of the absolute "…" edge controls (18px).
+    const pad = 22;
+    const elRect = el.getBoundingClientRect();
+    const tabRect = tab.getBoundingClientRect();
+    const tabLeft = el.scrollLeft + (tabRect.left - elRect.left);
+    const tabRight = tabLeft + tabRect.width;
+    const viewLeft = el.scrollLeft;
+    const viewRight = viewLeft + el.clientWidth;
+
+    if (tabLeft < viewLeft + pad) {
+      el.scrollTo({ left: Math.max(0, tabLeft - pad), behavior: "smooth" });
+      return;
+    }
+    if (tabRight > viewRight - pad) {
+      el.scrollTo({
+        left: Math.max(0, tabRight - el.clientWidth + pad),
+        behavior: "smooth",
+      });
+    }
+  }, [activeId]);
+
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+
+    updateTabOverflow();
+    const onScroll = () => updateTabOverflow();
+    el.addEventListener("scroll", onScroll, { passive: true });
+
+    const ro = new ResizeObserver(() => {
+      updateTabOverflow();
+      scrollActiveTabIntoView();
+    });
+    ro.observe(el);
+
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, [updateTabOverflow, scrollActiveTabIntoView, openItems.length]);
+
+  useEffect(() => {
+    // Wait a frame so newly mounted / reordered tabs have layout.
+    const id = window.requestAnimationFrame(() => {
+      scrollActiveTabIntoView();
+      updateTabOverflow();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [activeId, openItems, scrollActiveTabIntoView, updateTabOverflow]);
+
+
   const canCloseOthers = openItems.length > 1;
   const canCloseToRight =
     tabMenu !== null && tabMenu.index < openItems.length - 1;
@@ -136,54 +216,97 @@ export function DocumentArea() {
 
   return (
     <section className="document-area">
-      <div className="tabs" role="tablist" aria-label="Open items">
-        {openItems.map((item, index) => {
-          const isDragging = dragFrom === index;
-          const isOver = dragOver === index && dragFrom !== null && dragFrom !== index;
-          return (
-            <div
-              key={item.id}
-              className={`tab${item.id === active?.id ? " is-active" : ""}${
-                isDragging ? " is-dragging" : ""
-              }${isOver ? " is-drag-over" : ""}`}
-              role="tab"
-              aria-selected={item.id === active?.id}
-              draggable
-              onDragStart={(e) => onDragStart(index, e)}
-              onDragOver={(e) => onDragOver(index, e)}
-              onDrop={(e) => onDrop(index, e)}
-              onDragEnd={onDragEnd}
-              onClick={() => setActive(item.id)}
-              onContextMenu={(e) => openTabMenu(e, item.id, index)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setActive(item.id);
-                }
-              }}
-              tabIndex={0}
-              title={itemTitle(item)}
-            >
-              <Icon name={tabIcon(item)} className="tab__icon" />
-              <span className="tab__label" title={itemTitle(item)}>
-                {item.title}
-              </span>
-              <button
-                type="button"
-                className="tab__close"
-                aria-label={`Close ${item.title}`}
-                draggable={false}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeItem(item.id);
+      <div
+        className={`tabs-bar${tabOverflow.left ? " has-overflow-left" : ""}${
+          tabOverflow.right ? " has-overflow-right" : ""
+        }`}
+      >
+        {tabOverflow.left ? (
+          <button
+            type="button"
+            className="tabs-bar__edge tabs-bar__edge--left"
+            aria-label="Scroll tabs left"
+            title="Scroll left"
+            onClick={() => scrollTabsBy(-1)}
+          >
+            <span className="tabs-bar__dots" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
+          </button>
+        ) : null}
+        <div
+          ref={tabsRef}
+          className="tabs"
+          role="tablist"
+          aria-label="Open items"
+        >
+          {openItems.map((item, index) => {
+            const isDragging = dragFrom === index;
+            const isOver =
+              dragOver === index && dragFrom !== null && dragFrom !== index;
+            return (
+              <div
+                key={item.id}
+                data-tab-id={item.id}
+                className={`tab${item.id === active?.id ? " is-active" : ""}${
+                  isDragging ? " is-dragging" : ""
+                }${isOver ? " is-drag-over" : ""}`}
+                role="tab"
+                aria-selected={item.id === active?.id}
+                draggable
+                onDragStart={(e) => onDragStart(index, e)}
+                onDragOver={(e) => onDragOver(index, e)}
+                onDrop={(e) => onDrop(index, e)}
+                onDragEnd={onDragEnd}
+                onClick={() => setActive(item.id)}
+                onContextMenu={(e) => openTabMenu(e, item.id, index)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActive(item.id);
+                  }
                 }}
+                tabIndex={0}
+                title={itemTitle(item)}
               >
-                <Icon name="close" />
-              </button>
-            </div>
-          );
-        })}
+                <Icon name={tabIcon(item)} className="tab__icon" />
+                <span className="tab__label" title={itemTitle(item)}>
+                  {item.title}
+                </span>
+                <button
+                  type="button"
+                  className="tab__close"
+                  aria-label={`Close ${item.title}`}
+                  draggable={false}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeItem(item.id);
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {tabOverflow.right ? (
+          <button
+            type="button"
+            className="tabs-bar__edge tabs-bar__edge--right"
+            aria-label="Scroll tabs right"
+            title="Scroll right"
+            onClick={() => scrollTabsBy(1)}
+          >
+            <span className="tabs-bar__dots" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
+          </button>
+        ) : null}
       </div>
 
       {tabMenu ? (

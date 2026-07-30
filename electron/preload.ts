@@ -382,6 +382,7 @@ const anchor = {
     commit: (args: {
       repoRoot: string;
       message: string;
+      paths?: string[];
     }): Promise<{ hash: string; shortHash: string; subject: string }> =>
       ipcRenderer.invoke("history:commit", args),
     compare: (args: {
@@ -554,17 +555,6 @@ const anchor = {
       ipcRenderer.invoke("settings:getFontSize"),
     setFontSize: (fontSize: number): Promise<number> =>
       ipcRenderer.invoke("settings:setFontSize", fontSize),
-    getWorkspaceFilter: (args: {
-      workspaceRoot: string;
-      hostProfileId?: string | null;
-    }): Promise<{ excludes: string[] }> =>
-      ipcRenderer.invoke("settings:getWorkspaceFilter", args),
-    setWorkspaceFilter: (args: {
-      workspaceRoot: string;
-      hostProfileId?: string | null;
-      excludes: string[];
-    }): Promise<{ excludes: string[] }> =>
-      ipcRenderer.invoke("settings:setWorkspaceFilter", args),
   },
   updates: {
     getState: (): Promise<AppUpdateState> =>

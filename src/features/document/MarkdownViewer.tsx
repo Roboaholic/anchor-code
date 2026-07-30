@@ -25,6 +25,8 @@ import type { CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import { markdownFontSize } from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { relativeToRoot } from "@/core/workspace/paths";
 import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
@@ -290,6 +292,8 @@ function RenderedMarkdownPane({
   const pendingSelectionTextRef = useRef<string | null>(null);
   const fontSize = useThemeStore((s) => s.fontSize);
   const mdFontSize = markdownFontSize(fontSize);
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const decorationsFor = useAnnotationsStore((s) => s.decorationsFor);
   const sessions = useAnnotationsStore((s) => s.sessions);
@@ -568,7 +572,13 @@ function RenderedMarkdownPane({
         </div>
       ) : null}
 
-      <div className="md-viewer__rendered-surface">
+      <div
+        className="md-viewer__rendered-surface"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setCtxMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
         <article
           className={`md-body${widthStep === "full" ? " md-body--full" : ""}`}
           ref={bodyRef}
@@ -703,6 +713,39 @@ function RenderedMarkdownPane({
             </button>
           </div>
         </div>
+      ) : null}
+
+      {ctxMenu ? (
+        <>
+          <div
+            className="md-ctx-menu__backdrop"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu(null);
+            }}
+          />
+          <div
+            className="file-tree-menu md-ctx-menu"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            role="menu"
+          >
+            <button
+              type="button"
+              className="file-tree-menu__item"
+              role="menuitem"
+              onClick={() => {
+                const rel = workspaceRoot
+                  ? relativeToRoot(workspaceRoot, path)
+                  : path;
+                void navigator.clipboard?.writeText?.(rel);
+                setCtxMenu(null);
+              }}
+            >
+              Copy Relative Path
+            </button>
+          </div>
+        </>
       ) : null}
     </div>
   );

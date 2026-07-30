@@ -60,7 +60,6 @@
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
   --menubar-h: 32px;
   --topbar-h: 40px;
-  --left-footer-h: 36px;
 }
 
 
@@ -880,32 +879,6 @@ button.search-field:hover {
   min-height: 0;
 }
 
-.left-nav__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--left-footer-h);
-  padding: 0 12px;
-  border-top: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.branch-pill,
-.git-counts {
-  font-variant-numeric: tabular-nums;
-}
-
-.branch-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.branch-pill .codicon {
-  font-size: 12px;
-}
-
 /* Match history/comments: fill left-nav__body and scroll when tree overflows. */
 .files-pane {
   display: flex;
@@ -1157,105 +1130,6 @@ body.files-split-resizing .monaco-editor {
   min-width: 0;
 }
 
-.files-exclude-badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  min-width: 12px;
-  height: 12px;
-  padding: 0 3px;
-  border-radius: 6px;
-  background: var(--accent, #3b82f6);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 12px;
-  text-align: center;
-  pointer-events: none;
-}
-
-.files-exclude-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0 8px 6px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg-muted) 12%);
-  flex-shrink: 0;
-}
-
-.files-exclude-panel__hint {
-  margin: 0;
-  font-size: 10.5px;
-  color: var(--text-muted);
-  line-height: 1.35;
-}
-
-.files-exclude-panel__hint code {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.files-exclude-panel__add {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.files-exclude-panel__input {
-  flex: 1;
-  min-width: 0;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-input, var(--bg-panel));
-  color: var(--text);
-  font: inherit;
-  font-size: 11.5px;
-  font-family: var(--font-mono);
-}
-
-.files-exclude-panel__input:focus {
-  outline: none;
-  border-color: var(--accent, var(--border-strong));
-}
-
-.files-exclude-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 140px;
-  overflow: auto;
-}
-
-.files-exclude-list__row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 22px;
-  padding: 1px 2px 1px 6px;
-  border-radius: 3px;
-}
-
-.files-exclude-list__row:hover {
-  background: var(--bg-hover);
-}
-
-.files-exclude-list__path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
 /* File tree context menu (fixed to viewport) */
 .file-tree-menu {
   position: fixed;
@@ -1342,12 +1216,6 @@ body.files-split-resizing .monaco-editor {
   padding-right: 6px;
   flex-shrink: 0;
   position: relative;
-}
-
-.files-section__bulk {
-  width: 22px;
-  height: 22px;
-  font-size: 13px;
 }
 
 .files-search-results {
@@ -2462,6 +2330,17 @@ body.files-split-resizing .monaco-editor {
 .md-mermaid__svg svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Click-outside catcher for the markdown context menu */
+.md-ctx-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+}
+
+.md-ctx-menu {
+  z-index: 200;
 }
 
 .md-mermaid-lightbox {
@@ -3896,6 +3775,35 @@ body.files-split-resizing .monaco-editor {
   overflow: auto;
 }
 
+/* Each entry: checkbox + diff button side by side. */
+.wt-row__li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.wt-row__check {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wt-row__check input[type="checkbox"] {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* The diff button now fills the remaining space (status + path). */
+.wt-row__li .wt-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .wt-row {
   display: grid;
   grid-template-columns: 14px 1fr;
@@ -4341,11 +4249,18 @@ body.files-split-resizing .monaco-editor {
 }
 
 .comment-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   margin-bottom: 8px;
   background: var(--bg-panel);
   overflow: hidden;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.comment-card:hover {
+  background: color-mix(in srgb, var(--bg-hover) 45%, var(--bg-panel));
+  border-color: var(--accent-border);
 }
 
 .comment-card__top {
@@ -4353,7 +4268,9 @@ body.files-split-resizing .monaco-editor {
   align-items: center;
   gap: 2px;
   min-width: 0;
-  padding: 2px 4px 0 0;
+  padding: 3px 4px 3px 0;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border);
 }
 
 .comment-card__top .comment-card__jump {
@@ -4656,9 +4573,128 @@ body.files-split-resizing .monaco-editor {
 .comment-card__msg-body {
   font-size: 12px;
   color: var(--text);
-  white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.4;
+  cursor: default;
+}
+
+/* Compact markdown rendered inside comment cards. */
+.comment-md {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.comment-md > :first-child {
+  margin-top: 0;
+}
+
+.comment-md > :last-child {
+  margin-bottom: 0;
+}
+
+.comment-md p {
+  margin: 0.4em 0;
+}
+
+.comment-md h1,
+.comment-md h2,
+.comment-md h3,
+.comment-md h4 {
+  margin: 0.6em 0 0.3em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.comment-md h1 {
+  font-size: 1.25em;
+}
+
+.comment-md h2 {
+  font-size: 1.12em;
+}
+
+.comment-md h3,
+.comment-md h4 {
+  font-size: 1em;
+}
+
+.comment-md ul,
+.comment-md ol {
+  margin: 0.4em 0;
+  padding-left: 1.3em;
+}
+
+.comment-md li {
+  margin: 0.15em 0;
+}
+
+.comment-md code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-muted);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+.comment-md pre {
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  overflow: auto;
+  margin: 0.5em 0;
+}
+
+.comment-md pre code {
+  background: none;
+  padding: 0;
+  font-size: 11px;
+}
+
+.comment-md blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0 0.1em 0.8em;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.comment-md a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.comment-md a:hover {
+  text-decoration: underline;
+}
+
+.comment-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+  font-size: 11px;
+}
+
+.comment-md th,
+.comment-md td {
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  text-align: left;
+}
+
+.comment-md th {
+  background: var(--bg-muted);
+  font-weight: 600;
+}
+
+.comment-md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.6em 0;
+}
+
+.comment-md__mermaid {
+  margin: 0.5em 0;
 }
 
 .comment-card__editor {
@@ -4667,6 +4703,7 @@ body.files-split-resizing .monaco-editor {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  cursor: default;
 }
 
 .comment-card__textarea {

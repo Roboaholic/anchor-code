@@ -454,6 +454,7 @@ export interface AnchorApi {
     commit: (args: {
       repoRoot: string;
       message: string;
+      paths?: string[];
     }) => Promise<CommitResult>;
     compare: (args: {
       repoRoot: string;
@@ -569,15 +570,6 @@ export interface AnchorApi {
     ) => Promise<SessionTabLayout>;
     getFontSize: () => Promise<number>;
     setFontSize: (fontSize: number) => Promise<number>;
-    getWorkspaceFilter: (args: {
-      workspaceRoot: string;
-      hostProfileId?: string | null;
-    }) => Promise<{ excludes: string[] }>;
-    setWorkspaceFilter: (args: {
-      workspaceRoot: string;
-      hostProfileId?: string | null;
-      excludes: string[];
-    }) => Promise<{ excludes: string[] }>;
   };
   updates: {
     getState: () => Promise<AppUpdateState>;

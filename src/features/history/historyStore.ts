@@ -80,7 +80,11 @@ export interface HistoryState {
   toggleCommit: (repoRoot: string, hash: string) => void;
   loadBranches: (repoRoot: string) => Promise<void>;
   checkoutBranch: (repoRoot: string, branch: string) => Promise<boolean>;
-  commitChanges: (repoRoot: string, message: string) => Promise<boolean>;
+  commitChanges: (
+    repoRoot: string,
+    message: string,
+    paths?: string[],
+  ) => Promise<boolean>;
   clearToast: () => void;
   /** Explicit Start Compare for a repo selection (may include worktree). */
   runCompare: (repoRoot: string) => Promise<DiffOpenPayload | null>;
@@ -615,7 +619,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
   },
 
-  commitChanges: async (repoRoot, message) => {
+  commitChanges: async (repoRoot, message, paths) => {
     const card = findCard(get().repos, repoRoot);
     if (!card || card.committing) return false;
     const msg = message.trim();
@@ -631,6 +635,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       const result = await window.anchor.history.commit({
         repoRoot,
         message: msg,
+        paths,
       });
       const short =
         result.shortHash ||

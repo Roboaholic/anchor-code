@@ -20,8 +20,7 @@ import {
   useWorkspaceStore,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
-import { pathMatchesExclude } from "@/core/workspace/pathFilter";
-import { joinPath } from "@/core/workspace/paths";
+import { joinPath, relativeToRoot } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 
@@ -101,10 +100,6 @@ export function FileTree() {
   const copyNode = useWorkspaceStore((s) => s.copyNode);
   const createEntry = useWorkspaceStore((s) => s.createEntry);
   const hostKind = useWorkspaceStore((s) => s.hostKind);
-  const workspaceExcludes = useWorkspaceStore((s) => s.excludes);
-  const addExclude = useWorkspaceStore((s) => s.addExclude);
-  const removeExclude = useWorkspaceStore((s) => s.removeExclude);
-  const addExcludePattern = useWorkspaceStore((s) => s.addExcludePattern);
 
   const [query, setQuery] = useState("");
   const [include, setInclude] = useState("");
@@ -112,8 +107,6 @@ export function FileTree() {
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [workspaceFilterOpen, setWorkspaceFilterOpen] = useState(false);
-  const [excludeDraft, setExcludeDraft] = useState("");
   /** Inline-rename target path; the matching TreeRow swaps to an <input>. */
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -323,6 +316,18 @@ export function FileTree() {
     }
   }, []);
 
+  const handleCopyRelative = useCallback(
+    (path: string) => {
+      const rel = workspaceRoot ? relativeToRoot(workspaceRoot, path) : path;
+      try {
+        void navigator.clipboard?.writeText?.(rel);
+      } catch {
+        // ignore
+      }
+    },
+    [workspaceRoot],
+  );
+
   const handlePaste = useCallback(
     (targetDir: string) => {
       if (!clipboardPath) return;
@@ -371,7 +376,6 @@ export function FileTree() {
         exclude: string;
         useRegex: boolean;
         caseSensitive: boolean;
-        workspaceExcludes: string[];
       },
     ) => {
       const q = raw.trim();
@@ -427,12 +431,6 @@ export function FileTree() {
         if (payload.requestId !== requestId) return;
         if (gen !== searchGen.current) return;
         for (const h of payload.hits) {
-          if (
-            opts.workspaceExcludes.length > 0 &&
-            pathMatchesExclude(h.path, opts.workspaceExcludes)
-          ) {
-            continue;
-          }
           pending.push(h);
         }
         if (pending.length === 0) return;
@@ -456,18 +454,15 @@ export function FileTree() {
       });
 
       try {
-        // Pass workspace excludes as discrete list entries (not comma-joined)
-        // so multi-segment paths like packages/legacy are not mangled.
-        const excludeList = [
-          ...(opts.exclude.trim() ? [opts.exclude.trim()] : []),
-          ...opts.workspaceExcludes,
-        ];
+        const excludeList = opts.exclude.trim()
+          ? [opts.exclude.trim()]
+          : undefined;
         const result = await window.anchor.workspace.searchContent({
           root: workspaceRoot,
           query: q,
           maxResults,
           include: opts.include,
-          exclude: excludeList.length > 0 ? excludeList : undefined,
+          exclude: excludeList,
           useRegex: opts.useRegex,
           caseSensitive: opts.caseSensitive,
           requestId,
@@ -478,12 +473,7 @@ export function FileTree() {
           raf = 0;
         }
         // Final authoritative set (covers any miss/race in streaming).
-        const finalHits =
-          opts.workspaceExcludes.length === 0
-            ? result.hits
-            : result.hits.filter(
-                (h) => !pathMatchesExclude(h.path, opts.workspaceExcludes),
-              );
+        const finalHits = result.hits;
         setHits(finalHits);
         setTruncated(result.truncated);
         setSearchSource(result.source);
@@ -517,7 +507,6 @@ export function FileTree() {
         exclude,
         useRegex,
         caseSensitive,
-        workspaceExcludes,
       });
     }, 100);
     return () => window.clearTimeout(t);
@@ -527,7 +516,6 @@ export function FileTree() {
     exclude,
     useRegex,
     caseSensitive,
-    workspaceExcludes,
     workspaceRoot,
     runSearch,
   ]);
@@ -706,96 +694,13 @@ export function FileTree() {
             truncated ? "+" : ""
           }${searchSource ? ` · ${searchSource}` : ""}`;
 
-  const submitExcludeDraft = () => {
-    const p = excludeDraft.trim();
-    if (!p) return;
-    void addExcludePattern(p);
-    setExcludeDraft("");
-  };
-
   const explorer = (
     <section className="files-section files-section--tree">
       <div className="files-section__head-row files-section__head-row--static">
         <div className="files-section__head files-section__head--static">
           <span className="files-section__label">EXPLORER</span>
         </div>
-        <div className="files-section__head-actions">
-          <button
-            type="button"
-            className={`icon-btn files-section__bulk${
-              workspaceFilterOpen || workspaceExcludes.length > 0
-                ? " is-active"
-                : ""
-            }`}
-            title="Excluded paths for this workspace"
-            aria-label="Excluded paths"
-            aria-pressed={workspaceFilterOpen}
-            onClick={() => setWorkspaceFilterOpen((v) => !v)}
-          >
-            <Icon name="filter" />
-            {workspaceExcludes.length > 0 ? (
-              <span className="files-exclude-badge">
-                {workspaceExcludes.length}
-              </span>
-            ) : null}
-          </button>
-        </div>
       </div>
-      {workspaceFilterOpen ? (
-        <div className="files-exclude-panel">
-          <p className="files-exclude-panel__hint">
-            Hide folders/files from the tree and search. Right-click a row →
-            Exclude. Patterns are relative (e.g. <code>vendor</code>,{" "}
-            <code>**/*.log</code>).
-          </p>
-          <div className="files-exclude-panel__add">
-            <input
-              type="text"
-              className="files-exclude-panel__input"
-              value={excludeDraft}
-              onChange={(e) => setExcludeDraft(e.target.value)}
-              placeholder="path or glob…"
-              spellCheck={false}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  submitExcludeDraft();
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn--small"
-              disabled={!excludeDraft.trim()}
-              onClick={submitExcludeDraft}
-            >
-              Add
-            </button>
-          </div>
-          {workspaceExcludes.length === 0 ? (
-            <p className="pane-hint">Nothing excluded.</p>
-          ) : (
-            <ul className="files-exclude-list">
-              {workspaceExcludes.map((p) => (
-                <li key={p} className="files-exclude-list__row">
-                  <span className="files-exclude-list__path" title={p}>
-                    {p}
-                  </span>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    title="Show again"
-                    aria-label={`Remove exclude ${p}`}
-                    onClick={() => void removeExclude(p)}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
       <div className="files-tree-scroll">
         {rootEntries.length > 0 ? (
           <ul className="file-tree" role="tree">
@@ -907,7 +812,18 @@ export function FileTree() {
             Duplicate
           </button>
 
-          {/* Copy path / Cut for paste. */}
+          {/* Copy relative / absolute path. Relative also seeds paste. */}
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              handleCopyRelative(treeMenu.path);
+              setTreeMenu(null);
+            }}
+          >
+            Copy Relative Path
+          </button>
           <button
             type="button"
             className="file-tree-menu__item"
@@ -917,7 +833,7 @@ export function FileTree() {
               setTreeMenu(null);
             }}
           >
-            Copy Path
+            Copy Absolute Path
           </button>
 
           {/* Paste into directory. */}
@@ -949,20 +865,6 @@ export function FileTree() {
             }}
           >
             Delete…
-          </button>
-
-          <div className="tab-context-menu__sep" />
-
-          <button
-            type="button"
-            className="file-tree-menu__item"
-            role="menuitem"
-            onClick={() => {
-              void addExclude(treeMenu.path);
-              setTreeMenu(null);
-            }}
-          >
-            Exclude from workspace view
           </button>
         </div>
       ) : null}

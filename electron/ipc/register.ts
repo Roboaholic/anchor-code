@@ -74,7 +74,6 @@ import {
   getHostProfile,
   getSessionTabLayout,
   getUiTheme,
-  getWorkspaceFilter,
   loadSettings,
   normalizeFontSize,
   normalizeSessionTabLayout,
@@ -85,14 +84,12 @@ import {
   setFontSize,
   setSessionTabLayout,
   setUiTheme,
-  setWorkspaceFilter,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
   type SessionTabLayout,
   type UiTheme,
-  type WorkspaceFilter,
 } from "../settings.js";
 
 /** Max bytes for readText (1 MiB). */
@@ -403,45 +400,6 @@ export function registerIpc(opts: {
     async (_evt, fontSize: unknown): Promise<number> => {
       try {
         return await setFontSize(normalizeFontSize(fontSize));
-      } catch (err) {
-        rethrowIpc(err);
-      }
-    },
-  );
-
-  ipcMain.handle(
-    "settings:getWorkspaceFilter",
-    async (
-      _evt,
-      args: { workspaceRoot: string; hostProfileId?: string | null },
-    ): Promise<WorkspaceFilter> => {
-      try {
-        return await getWorkspaceFilter(
-          args.workspaceRoot,
-          args.hostProfileId,
-        );
-      } catch (err) {
-        rethrowIpc(err);
-      }
-    },
-  );
-
-  ipcMain.handle(
-    "settings:setWorkspaceFilter",
-    async (
-      _evt,
-      args: {
-        workspaceRoot: string;
-        hostProfileId?: string | null;
-        excludes: string[];
-      },
-    ): Promise<WorkspaceFilter> => {
-      try {
-        return await setWorkspaceFilter(
-          args.workspaceRoot,
-          args.hostProfileId,
-          { excludes: args.excludes ?? [] },
-        );
       } catch (err) {
         rethrowIpc(err);
       }
@@ -973,10 +931,15 @@ export function registerIpc(opts: {
     "history:commit",
     async (
       _evt,
-      args: { repoRoot: string; message: string },
+      args: { repoRoot: string; message: string; paths?: string[] },
     ) => {
       try {
-        return await commitChanges(host(), args.repoRoot, args.message);
+        return await commitChanges(
+          host(),
+          args.repoRoot,
+          args.message,
+          args.paths,
+        );
       } catch (err) {
         rethrowIpc(err);
       }

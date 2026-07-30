@@ -624,32 +624,63 @@ export async function checkoutBranch(
 }
 
 /**
- * Stage all changes (`git add -A`) and create a commit with the given message.
+ * Stage changes and create a commit with the given message.
+ * When `paths` is a non-empty array, only those paths are staged
+ * (`git add -- <paths>`); otherwise all changes are staged (`git add -A`).
  */
 export async function commitChanges(
   host: HostSession,
   repoRoot: string,
   message: string,
+  paths?: string[],
 ): Promise<CommitResult> {
   const msg = message.trim();
   if (!msg) {
     throw new HostError("failed", "Commit message is required");
   }
 
-  const status = await loadRepoStatus(host, repoRoot);
-  const dirty =
-    status.modified + status.added + status.deleted + status.untracked;
-  if (dirty === 0) {
-    throw new HostError("failed", "Nothing to commit — working tree is clean");
-  }
+  const selectFiles = Array.isArray(paths) && paths.length > 0;
+  if (selectFiles) {
+    // Verify the selection will actually produce staged changes.
+    const add = await host.run(repoRoot, "git", ["add", "--", ...paths]);
+    if (add.code !== 0) {
+      throw new HostError(
+        "failed",
+        "Failed to stage selected files",
+        add.stderr || add.stdout,
+      );
+    }
+    const cached = await host.run(repoRoot, "git", [
+      "diff",
+      "--cached",
+      "--quiet",
+    ]);
+    // diff --cached --quiet exits 1 when there are staged changes, 0 when clean.
+    if (cached.code === 0) {
+      throw new HostError(
+        "failed",
+        "Nothing to commit — no staged changes for the selected files",
+      );
+    }
+  } else {
+    const status = await loadRepoStatus(host, repoRoot);
+    const dirty =
+      status.modified + status.added + status.deleted + status.untracked;
+    if (dirty === 0) {
+      throw new HostError(
+        "failed",
+        "Nothing to commit — working tree is clean",
+      );
+    }
 
-  const add = await host.run(repoRoot, "git", ["add", "-A"]);
-  if (add.code !== 0) {
-    throw new HostError(
-      "failed",
-      "Failed to stage changes",
-      add.stderr || add.stdout,
-    );
+    const add = await host.run(repoRoot, "git", ["add", "-A"]);
+    if (add.code !== 0) {
+      throw new HostError(
+        "failed",
+        "Failed to stage changes",
+        add.stderr || add.stdout,
+      );
+    }
   }
 
   // -F - reads message from stdin so multi-line / special chars are safe.

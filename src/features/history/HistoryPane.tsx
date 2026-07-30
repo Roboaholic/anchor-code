@@ -209,6 +209,10 @@ function RepoCard({
   const branchLabel = card.status?.branch ?? null;
   const [commitOpen, setCommitOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
+  // Selected file paths for the next commit; defaults to all changed files.
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
+    () => new Set(entries.map((e) => e.path)),
+  );
 
   useEffect(() => {
     if (dirty === 0) {
@@ -217,9 +221,56 @@ function RepoCard({
     }
   }, [dirty]);
 
+  // Keep selection in sync with the set of changed files: newly-changed files
+  // default to selected; files no longer present are dropped. The fingerprint
+  // ensures this only runs when the actual path set changes, not every render.
+  const entriesKey = entries.map((e) => e.path).join("\n");
+  const seenPathsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = entriesKey ? entriesKey.split("\n") : [];
+    const seen = seenPathsRef.current;
+    setSelectedPaths((prev) => {
+      const next = new Set<string>();
+      for (const p of current) {
+        // Preserve the user's prior choice; a brand-new path defaults selected.
+        if (prev.has(p) || !seen.has(p)) next.add(p);
+      }
+      seenPathsRef.current = new Set(current);
+      return next;
+    });
+  }, [entriesKey]);
+
+  const togglePath = (path: string) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const allSelected = entries.length > 0 && selectedPaths.size === entries.length;
+  const noneSelected = selectedPaths.size === 0;
+  const toggleAll = () => {
+    setSelectedPaths(allSelected ? new Set() : new Set(entries.map((e) => e.path)));
+  };
+  // Tracked-only changes (modified/added/deleted), excluding untracked (?).
+  const trackedPaths = entries.filter((e) => e.status !== "?").map((e) => e.path);
+  // True when selection is exactly the tracked set (toggle back to all on re-click).
+  const trackedOnly =
+    trackedPaths.length > 0 &&
+    selectedPaths.size === trackedPaths.length &&
+    trackedPaths.every((p) => selectedPaths.has(p));
+  const selectTracked = () => {
+    setSelectedPaths(
+      trackedOnly ? new Set(entries.map((e) => e.path)) : new Set(trackedPaths),
+    );
+  };
+
   const onCommitSubmit = async (e?: FormEvent) => {
     e?.preventDefault();
-    const ok = await commitChanges(card.root, commitMessage);
+    const paths = [...selectedPaths];
+    const ok = await commitChanges(card.root, commitMessage, paths);
     if (ok) {
       setCommitOpen(false);
       setCommitMessage("");
@@ -335,13 +386,37 @@ function RepoCard({
               </button>
               {card.changesOpen ? (
                 <div className="repo-block__head-actions">
+                  {entries.length > 0 ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--small"
+                        onClick={toggleAll}
+                        title={
+                          allSelected
+                            ? "Deselect all files"
+                            : "Select all files"
+                        }
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--small"
+                        onClick={selectTracked}
+                        title="Select only tracked changes (exclude untracked)"
+                      >
+                        Tracked
+                      </button>
+                    </>
+                  ) : null}
                   {dirty > 0 ? (
                     <button
                       type="button"
                       className="btn btn--accent btn--small"
                       disabled={card.committing}
                       onClick={() => setCommitOpen((v) => !v)}
-                      title="Stage all changes and commit"
+                      title="Commit selected files"
                     >
                       {commitOpen ? "Cancel" : "Commit"}
                     </button>
@@ -392,13 +467,17 @@ function RepoCard({
                     />
                     <div className="repo-commit__actions">
                       <span className="repo-commit__hint">
-                        Stages all changes · Ctrl+Enter
+                        {noneSelected
+                          ? "No files selected"
+                          : `Stages ${selectedPaths.size} of ${entries.length} files · Ctrl+Enter`}
                       </span>
                       <button
                         type="submit"
                         className="btn btn--accent btn--small"
                         disabled={
-                          card.committing || !commitMessage.trim()
+                          card.committing ||
+                          !commitMessage.trim() ||
+                          noneSelected
                         }
                       >
                         {card.committing ? "Committing…" : "Commit"}
@@ -408,8 +487,21 @@ function RepoCard({
                 ) : null}
                 {entries.length > 0 ? (
                   <ul className="wt-list">
-                    {entries.map((e) => (
-                      <li key={`${e.code}:${e.path}`}>
+                    {entries.map((e) => {
+                      const checked = selectedPaths.has(e.path);
+                      return (
+                      <li key={`${e.code}:${e.path}`} className="wt-row__li">
+                        <label
+                          className="wt-row__check"
+                          title={checked ? "Exclude from commit" : "Include in commit"}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => togglePath(e.path)}
+                            onClick={(e2) => e2.stopPropagation()}
+                          />
+                        </label>
                         <button
                           type="button"
                           className="wt-row wt-row--btn"
@@ -426,7 +518,8 @@ function RepoCard({
                           <span className="wt-row__path">{e.path}</span>
                         </button>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 ) : card.status && dirty === 0 && card.statusState !== "loading" ? (
                   <p className="pane-hint">No local changes.</p>

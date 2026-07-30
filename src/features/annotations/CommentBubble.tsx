@@ -6,6 +6,7 @@ import {
 import { Icon } from "@/shared/Icon";
 import type { CommentMessage, CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
+import { CommentMarkdown } from "./CommentMarkdown";
 
 export type BubbleMode = "view" | "edit" | "reply";
 
@@ -354,8 +355,19 @@ function BubbleThread({
                 </div>
 
                 {editingHere ? null : (
-                  <div className="anno-bubble__msg-body">
-                    {commentBodyForDisplay(message.body) || "(empty)"}
+                  <div
+                    className="anno-bubble__msg-body"
+                    // Markdown elements (links, mermaid) must not bubble up to
+                    // the message-select button and trigger selection.
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {commentBodyForDisplay(message.body) ? (
+                      <CommentMarkdown
+                        content={commentBodyForDisplay(message.body)}
+                      />
+                    ) : (
+                      "(empty)"
+                    )}
                   </div>
                 )}
               </button>

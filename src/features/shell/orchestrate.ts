@@ -99,10 +99,9 @@ export async function openFileFromTree(
     revealLine: opts?.revealLine ?? opts?.searchHighlight?.line,
     searchHighlight: opts?.searchHighlight,
   });
-  // load annotations for file's repo
+  // Sessions are anchored to the workspace root (cross-repo comments).
   try {
-    const repo = await window.anchor.annotations.locateGitRoot(path);
-    if (repo) await useAnnotationsStore.getState().loadForRepo(repo);
+    if (root) await useAnnotationsStore.getState().loadForRepo(root);
   } catch {
     // non-fatal
   }
@@ -172,17 +171,15 @@ export async function addCommentFromSelection(input: {
   body: string;
   /** End current session (export) and open a fresh one before saving. */
   forceNewSession?: boolean;
-  /** When set (e.g. from Diff), skip locateGitRoot. */
-  repoRoot?: string;
 }): Promise<void> {
-  const repoRoot =
-    input.repoRoot ??
-    (await window.anchor.annotations.locateGitRoot(input.filePath));
+  // Sessions are anchored to the workspace root (cross-repo comments), not to
+  // any git repository root.
+  const repoRoot = useWorkspaceStore.getState().workspaceRoot;
   if (!repoRoot) {
     useAnnotationsStore.setState({
-      toast: "File is not inside a git repository",
+      toast: "No workspace open",
     });
-    throw new Error("No git root for file");
+    throw new Error("No workspace open");
   }
   const store = useAnnotationsStore.getState();
   if (store.repoRoot !== repoRoot) {

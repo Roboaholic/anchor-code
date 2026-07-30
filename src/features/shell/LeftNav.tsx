@@ -61,16 +61,6 @@ export function LeftNav() {
         {leftMode === "comments" && hasWorkspace ? <CommentsPane /> : null}
         {leftMode === "history" && hasWorkspace ? <HistoryPane /> : null}
       </div>
-
-      <footer className="left-nav__footer">
-        <span className="branch-pill" title="Placeholder">
-          <Icon name="git-branch" />
-          main
-        </span>
-        <span className="git-counts" title="Placeholder">
-          +0 ~0
-        </span>
-      </footer>
     </aside>
   );
 }

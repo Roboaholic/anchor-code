@@ -24,6 +24,7 @@ import {
   prefetchFileDiff,
 } from "./fileDiffCache";
 import { useThemeStore } from "@/features/shell/themeStore";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
   accentHex,
   EDITOR_FONT_FAMILY,
@@ -353,15 +354,17 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     item.files,
   ]);
 
-  // Diff comments live under item.repoRoot — always ensure sessions are loaded
-  // when opening a compare (reopen must repaint anchors from YAML/cache).
+  // Sessions are anchored to the workspace root (cross-repo comments), so ensure
+  // they are loaded when opening a compare (reopen must repaint anchors from
+  // YAML/cache). item.repoRoot is still used for the diff/blame git operations.
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   useEffect(() => {
-    if (!item.repoRoot) return;
+    if (!workspaceRoot) return;
     const current = useAnnotationsStore.getState().repoRoot;
-    if (current !== item.repoRoot || useAnnotationsStore.getState().sessions.length === 0) {
-      void loadForRepo(item.repoRoot);
+    if (current !== workspaceRoot || useAnnotationsStore.getState().sessions.length === 0) {
+      void loadForRepo(workspaceRoot);
     }
-  }, [item.repoRoot, loadForRepo]);
+  }, [workspaceRoot, loadForRepo]);
 
   // Monaco DiffEditor does not always re-apply layout options from React props.
   useEffect(() => {
@@ -979,7 +982,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         afterContext: composer.afterContext,
         lineText: composer.lineText,
         body: `${prefix}${body.trim()}`,
-        repoRoot: item.repoRoot,
         forceNewSession,
       });
       setComposer(null);

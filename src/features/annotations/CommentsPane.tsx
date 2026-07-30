@@ -5,7 +5,7 @@ import {
 import { Icon } from "@/shared/Icon";
 import { jumpToComment } from "@/features/shell/orchestrate";
 import { useAnnotationsStore } from "./annotationsStore";
-import { useDocumentStore } from "@/features/document/documentStore";
+import { CommentMarkdown } from "./CommentMarkdown";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import {
@@ -27,9 +27,6 @@ import type {
 
 export function CommentsPane() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
-  const activeId = useDocumentStore((s) => s.activeId);
-  const openItems = useDocumentStore((s) => s.openItems);
-  const active = openItems.find((i) => i.id === activeId);
 
   const repoRoot = useAnnotationsStore((s) => s.repoRoot);
   const sessions = useAnnotationsStore((s) => s.sessions);
@@ -110,17 +107,11 @@ export function CommentsPane() {
   useEffect(() => {
     let cancelled = false;
     async function syncRepo() {
-      if (!workspaceRoot) return;
-      let root: string | null = null;
-      if (active?.kind === "file") {
-        root = await window.anchor.annotations.locateGitRoot(active.path);
-      } else if (active?.kind === "diff") {
-        root = active.repoRoot;
-      } else {
-        root = await window.anchor.annotations.locateGitRoot(workspaceRoot);
-      }
+      // Sessions are anchored to the workspace root (not the git root) so that
+      // cross-repo comments stay under a single, stable directory.
+      const root = workspaceRoot;
       if (cancelled || !root) return;
-      // Same repo: do not reload — jump-to-comment must not flash the list.
+      // Same workspace: do not reload — jump-to-comment must not flash the list.
       if (useAnnotationsStore.getState().repoRoot === root) return;
       await loadForRepo(root);
     }
@@ -128,7 +119,7 @@ export function CommentsPane() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceRoot, active, loadForRepo]);
+  }, [workspaceRoot, loadForRepo]);
 
 
   if (!workspaceRoot) {
@@ -397,13 +388,19 @@ export function CommentsPane() {
                                         ? "Edit reply"
                                         : "Edit comment"
                                     }
-                                    onClick={() => startEdit(c, message)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      startEdit(c, message);
+                                    }}
                                   >
                                     <Icon name="edit" />
                                   </button>
                                 </div>
                                 {editingHere ? (
-                                  <div className="comment-card__editor">
+                                  <div
+                                    className="comment-card__editor"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
                                     <textarea
                                       className="comment-card__textarea"
                                       value={editBody}
@@ -437,9 +434,21 @@ export function CommentsPane() {
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="comment-card__msg-body">
-                                    {commentBodyForDisplay(message.body) ||
-                                      "(empty)"}
+                                  <div
+                                    className="comment-card__msg-body"
+                                    // Links and other markdown elements must not
+                                    // bubble up to the card's jump-to-file click.
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {commentBodyForDisplay(message.body) ? (
+                                      <CommentMarkdown
+                                        content={commentBodyForDisplay(
+                                          message.body,
+                                        )}
+                                      />
+                                    ) : (
+                                      "(empty)"
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -452,6 +461,10 @@ export function CommentsPane() {
                               className={`comment-card${
                                 threadCollapsed ? " is-collapsed" : ""
                               }`}
+                              onClick={() => {
+                                setExpandedSession(session.id);
+                                void jumpToComment(c, session.id);
+                              }}
                             >
                               <div className="comment-card__top">
                                 <button
@@ -493,11 +506,12 @@ export function CommentsPane() {
                                     aria-label="Change status"
                                     aria-haspopup="menu"
                                     aria-expanded={statusMenuId === c.id}
-                                    onClick={() =>
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setStatusMenuId(
                                         statusMenuId === c.id ? null : c.id,
-                                      )
-                                    }
+                                      );
+                                    }}
                                   >
                                     <span className="comment-card__status-label">
                                       {c.status}
@@ -525,7 +539,8 @@ export function CommentsPane() {
                                   className="icon-btn comment-card__reply-btn"
                                   title="Reply"
                                   aria-label="Reply"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setReplyingId(c.id);
                                     setReplyBody("");
                                     cancelEdit();
@@ -541,7 +556,8 @@ export function CommentsPane() {
                                   className="icon-btn comment-card__delete"
                                   title="Delete comment"
                                   aria-label="Delete comment"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     if (
                                       !window.confirm(
                                         "Delete this comment thread permanently?",
@@ -565,9 +581,10 @@ export function CommentsPane() {
                                   <button
                                     type="button"
                                     className="comment-card__replies-toggle"
-                                    onClick={() =>
-                                      toggleCommentCollapsed(c.id)
-                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleCommentCollapsed(c.id);
+                                    }}
                                     aria-expanded={!threadCollapsed}
                                   >
                                     <Icon
@@ -595,7 +612,10 @@ export function CommentsPane() {
                               </div>
 
                               {isReplying ? (
-                                <div className="comment-card__editor">
+                                <div
+                                  className="comment-card__editor"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <textarea
                                     className="comment-card__textarea"
                                     value={replyBody}

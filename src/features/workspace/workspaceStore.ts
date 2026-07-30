@@ -1,14 +1,7 @@
 import { create } from "zustand";
 import type { DirEntry, RecentWorkspace } from "@/shared/anchor-api";
 import {
-  filterDirEntries,
-  isValidExcludePattern,
-  normalizeExcludePattern,
-  pruneExcludedPaths,
-} from "@/core/workspace/pathFilter";
-import {
   joinPath,
-  relativeToRoot,
   shouldHideTreeEntry,
   shouldSkipExpand,
   workspaceDisplayName,
@@ -35,8 +28,6 @@ export interface WorkspaceState {
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
   selectedPath: string | null;
-  /** Relative paths/globs excluded from Files view for this workspace. */
-  excludes: string[];
 
   loadRecent: () => Promise<void>;
   openPath: (
@@ -57,25 +48,15 @@ export interface WorkspaceState {
     type: "file" | "dir",
   ) => Promise<string | null>;
   setSelectedPath: (path: string | null) => void;
-  addExclude: (relOrAbsPath: string) => Promise<void>;
-  removeExclude: (pattern: string) => Promise<void>;
-  addExcludePattern: (pattern: string) => Promise<void>;
   resetDocumentSideEffects?: () => void;
 }
 
 async function loadChildren(
   dirPath: string,
-  workspaceRoot: string,
-  excludes: string[],
 ): Promise<TreeNode[]> {
   const entries: DirEntry[] = await window.anchor.workspace.listDir(dirPath);
-  const parentRel = relativeToRoot(workspaceRoot, dirPath);
-  const filtered = filterDirEntries(
-    entries.filter((e) => !shouldHideTreeEntry(e.name, e.type)),
-    parentRel,
-    excludes,
-  );
-  return filtered.map((e) => ({
+  const visible = entries.filter((e) => !shouldHideTreeEntry(e.name, e.type));
+  return visible.map((e) => ({
     name: e.name,
     path: joinPath(dirPath, e.name),
     type: e.type,
@@ -117,23 +98,6 @@ export function uniqueCopyName(parent: string, name: string): string {
   return joinPath(parent, `${stem} copy${ext}`);
 }
 
-async function persistExcludes(
-  workspaceRoot: string,
-  hostProfileId: string | null,
-  excludes: string[],
-): Promise<string[]> {
-  try {
-    const next = await window.anchor.settings.setWorkspaceFilter({
-      workspaceRoot,
-      hostProfileId,
-      excludes,
-    });
-    return next.excludes ?? excludes;
-  } catch {
-    return excludes;
-  }
-}
-
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaceRoot: null,
   workspaceName: null,
@@ -144,7 +108,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   status: "idle",
   error: null,
   selectedPath: null,
-  excludes: [],
 
   loadRecent: async () => {
     try {
@@ -162,7 +125,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ status: "error", error: message });
       throw new Error(message);
     }
-    set({ status: "loading", error: null, excludes: [] });
+    set({ status: "loading", error: null });
     try {
       const opened = await window.anchor.workspace.open(
         opts?.hostProfileId
@@ -172,17 +135,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const { root, name, hostKind, hostProfileId } = opened;
       const profileId = hostProfileId ?? opts?.hostProfileId ?? null;
 
-      let excludes: string[] = [];
-      try {
-        const filter = await window.anchor.settings.getWorkspaceFilter({
-          workspaceRoot: root,
-          hostProfileId: profileId,
-        });
-        excludes = filter.excludes ?? [];
-      } catch {
-        excludes = [];
-      }
-
       // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
       set({
         workspaceRoot: root,
@@ -190,7 +142,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hostKind: hostKind ?? null,
         hostProfileId: profileId,
         selectedPath: null,
-        excludes,
         status: "loading",
         error: null,
       });
@@ -198,7 +149,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       let rootEntries: TreeNode[] = [];
       let treeError: string | null = null;
       try {
-        rootEntries = await loadChildren(root, root, excludes);
+        rootEntries = await loadChildren(root);
       } catch (err) {
         treeError = err instanceof Error ? err.message : String(err);
       }
@@ -217,7 +168,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hostProfileId: profileId ?? get().hostProfileId,
         rootEntries,
         recent,
-        excludes,
         status: treeError ? "error" : "ready",
         error: treeError,
         selectedPath: null,
@@ -245,7 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   toggleDir: async (dirPath: string) => {
-    const { rootEntries, workspaceRoot, excludes } = get();
+    const { rootEntries, workspaceRoot } = get();
     if (!workspaceRoot) return;
 
     const updateNode = async (nodes: TreeNode[]): Promise<TreeNode[]> => {
@@ -265,11 +215,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           const willExpand = !node.expanded;
           if (willExpand && !node.loaded) {
             try {
-              const children = await loadChildren(
-                node.path,
-                workspaceRoot,
-                excludes,
-              );
+              const children = await loadChildren(node.path);
               result.push({
                 ...node,
                 expanded: true,
@@ -306,17 +252,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   refreshDir: async (dirPath) => {
-    const { rootEntries, workspaceRoot, excludes } = get();
+    const { rootEntries, workspaceRoot } = get();
     if (!workspaceRoot) return;
 
     // Root changed → reload top-level entries directly.
     if (dirPath === workspaceRoot) {
       try {
-        const children = await loadChildren(
-          workspaceRoot,
-          workspaceRoot,
-          excludes,
-        );
+        const children = await loadChildren(workspaceRoot);
         set({ rootEntries: children });
       } catch {
         // non-fatal: leave existing tree
@@ -332,11 +274,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         if (node.path === dirPath && node.type === "dir") {
           if (node.expanded && node.loaded) {
             try {
-              const children = await loadChildren(
-                node.path,
-                workspaceRoot,
-                excludes,
-              );
+              const children = await loadChildren(node.path);
               result.push({ ...node, children, error: undefined });
             } catch {
               result.push(node);
@@ -399,74 +337,4 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setSelectedPath: (path) => set({ selectedPath: path }),
-
-  addExclude: async (relOrAbsPath) => {
-    const root = get().workspaceRoot;
-    if (!root) return;
-    const rootNorm = root.replace(/\\/g, "/");
-    const absNorm = relOrAbsPath.replace(/\\/g, "/");
-    const rel = normalizeExcludePattern(
-      absNorm === rootNorm || absNorm.startsWith(rootNorm + "/")
-        ? relativeToRoot(root, relOrAbsPath)
-        : relOrAbsPath,
-    );
-    await get().addExcludePattern(rel);
-  },
-
-  removeExclude: async (pattern) => {
-    const { workspaceRoot, hostProfileId, excludes } = get();
-    if (!workspaceRoot) return;
-    const target = normalizeExcludePattern(pattern);
-    const nextExcludes = excludes.filter(
-      (p) => normalizeExcludePattern(p) !== target,
-    );
-    if (nextExcludes.length === excludes.length) return;
-    const saved = await persistExcludes(
-      workspaceRoot,
-      hostProfileId,
-      nextExcludes,
-    );
-    // Reload root listing so previously hidden entries reappear.
-    try {
-      const rootEntries = await loadChildren(workspaceRoot, workspaceRoot, saved);
-      set({ excludes: saved, rootEntries });
-    } catch (err) {
-      set({
-        excludes: saved,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  },
-
-  addExcludePattern: async (pattern) => {
-    const { workspaceRoot, hostProfileId, excludes, rootEntries, selectedPath } =
-      get();
-    if (!workspaceRoot) return;
-    const rel = normalizeExcludePattern(pattern);
-    if (!isValidExcludePattern(rel)) return;
-    if (excludes.some((p) => normalizeExcludePattern(p) === rel)) return;
-    const nextExcludes = [...excludes, rel].sort((a, b) => a.localeCompare(b));
-    const saved = await persistExcludes(
-      workspaceRoot,
-      hostProfileId,
-      nextExcludes,
-    );
-    const pruned = pruneExcludedPaths(
-      rootEntries,
-      workspaceRoot,
-      saved,
-      relativeToRoot,
-    );
-    set({ excludes: saved, rootEntries: pruned });
-    if (selectedPath) {
-      const stillThere = (nodes: TreeNode[], path: string): boolean => {
-        for (const n of nodes) {
-          if (n.path === path) return true;
-          if (n.children && stillThere(n.children, path)) return true;
-        }
-        return false;
-      };
-      if (!stillThere(pruned, selectedPath)) set({ selectedPath: null });
-    }
-  },
 }));

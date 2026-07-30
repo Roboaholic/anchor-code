@@ -123,6 +123,11 @@ export function AppMenuBar() {
   const rootRef = useRef<HTMLDivElement>(null);
   const toggleLeft = useShellStore((s) => s.toggleLeft);
   const leftVisible = useShellStore((s) => s.leftVisible);
+  // macOS renders the native app menu bar at the top of the screen; showing the
+  // in-window File/View/Window menus here would duplicate it (and the duplicate
+  // has click/timing issues). Hide the menus on macOS but keep the rail toggle.
+  const isMac =
+    document.documentElement.dataset.platform === "darwin";
 
   useEffect(() => {
     if (!openId) return;
@@ -161,9 +166,11 @@ export function AppMenuBar() {
       >
         <Icon name="layout-sidebar-left" className="btn__icon" />
       </button>
-      {MENUS.map((menu) => {
-        const open = openId === menu.id;
-        return (
+      {isMac
+        ? null
+        : MENUS.map((menu) => {
+            const open = openId === menu.id;
+            return (
           <div key={menu.id} className="app-menubar__item">
             <button
               type="button"
@@ -216,7 +223,7 @@ export function AppMenuBar() {
             ) : null}
           </div>
         );
-      })}
+          })}
       <div className="app-menubar__drag" aria-hidden />
     </div>
   );

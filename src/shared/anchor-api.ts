@@ -415,6 +415,19 @@ export interface AnchorApi {
         source: "git-grep" | "rg" | "scan";
       }) => void,
     ) => () => void;
+    /** Start watching the workspace root for file changes (local hosts only). */
+    watchStart: (root?: string) => Promise<{ ok: boolean }>;
+    watchStop: () => Promise<{ ok: boolean }>;
+    /** A directory's contents changed (debounced by the main process). */
+    onFileChange: (cb: (payload: { dir: string }) => void) => () => void;
+    deletePath: (path: string) => Promise<{ ok: boolean }>;
+    renamePath: (oldPath: string, newPath: string) => Promise<{ ok: boolean }>;
+    copyPath: (src: string, dst: string) => Promise<{ ok: boolean }>;
+    createEntry: (
+      parentDir: string,
+      name: string,
+      type: "file" | "dir",
+    ) => Promise<{ ok: boolean; path?: string }>;
   };
   history: {
     discover: (workspaceRoot: string) => Promise<RepoInfo[]>;

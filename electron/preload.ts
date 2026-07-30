@@ -269,6 +269,35 @@ const anchor = {
       return () =>
         ipcRenderer.removeListener("workspace:searchContent:meta", listener);
     },
+    /** Start watching the workspace root for file changes (local hosts only). */
+    watchStart: (root?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("fileWatcher:start", root),
+    watchStop: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("fileWatcher:stop"),
+    /** A directory's contents changed (debounced by the main process). */
+    onFileChange: (
+      cb: (payload: { dir: string }) => void,
+    ): (() => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { dir: string }) =>
+        cb(payload);
+      ipcRenderer.on("fileWatcher:change", listener);
+      return () => ipcRenderer.removeListener("fileWatcher:change", listener);
+    },
+    deletePath: (path: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("workspace:delete", { path }),
+    renamePath: (
+      oldPath: string,
+      newPath: string,
+    ): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("workspace:rename", { oldPath, newPath }),
+    copyPath: (src: string, dst: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("workspace:copy", { src, dst }),
+    createEntry: (
+      parentDir: string,
+      name: string,
+      type: "file" | "dir",
+    ): Promise<{ ok: boolean; path?: string }> =>
+      ipcRenderer.invoke("workspace:newEntry", { parentDir, name, type }),
   },
   history: {
     discover: (workspaceRoot: string): Promise<RepoInfo[]> =>

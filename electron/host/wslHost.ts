@@ -384,6 +384,58 @@ export class WslHostSession implements HostSession {
     }
   }
 
+  async remove(targetPath: string): Promise<void> {
+    const p = hostNormalize("wsl", targetPath);
+    const script = `rm -rf ${this.escapeSingle(p)}\n`;
+    const r = await this.run(
+      p.includes("/") ? p.slice(0, p.lastIndexOf("/")) || "/" : "/",
+      "bash",
+      ["-s"],
+      { stdin: script },
+    );
+    if (r.code !== 0) {
+      throw new HostError("failed", `Cannot delete: ${p}`, r.stderr || r.stdout);
+    }
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    const src = hostNormalize("wsl", oldPath);
+    const dst = hostNormalize("wsl", newPath);
+    const script = `mv ${this.escapeSingle(src)} ${this.escapeSingle(dst)}\n`;
+    const r = await this.run(
+      src.includes("/") ? src.slice(0, src.lastIndexOf("/")) || "/" : "/",
+      "bash",
+      ["-s"],
+      { stdin: script },
+    );
+    if (r.code !== 0) {
+      throw new HostError(
+        "failed",
+        `Cannot rename: ${src} → ${dst}`,
+        r.stderr || r.stdout,
+      );
+    }
+  }
+
+  async copyPath(srcPath: string, dstPath: string): Promise<void> {
+    const src = hostNormalize("wsl", srcPath);
+    const dst = hostNormalize("wsl", dstPath);
+    const script = `cp -r ${this.escapeSingle(src)} ${this.escapeSingle(dst)}\n`;
+    const r = await this.run(
+      src.includes("/") ? src.slice(0, src.lastIndexOf("/")) || "/" : "/",
+      "bash",
+      ["-s"],
+      { stdin: script },
+    );
+    if (r.code !== 0) {
+      throw new HostError(
+        "failed",
+        `Cannot copy: ${src} → ${dst}`,
+        r.stderr || r.stdout,
+      );
+    }
+  }
+
   async openPty(
     cwd: string,
     cols: number,

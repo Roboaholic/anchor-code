@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
+import { FileWatcherService } from "./services/fileWatcherService.js";
 import { getUiTheme, type UiTheme } from "./settings.js";
 import { initAppUpdater } from "./services/appUpdate.js";
 import {
@@ -24,6 +25,10 @@ let mainWindow: BrowserWindow | null = null;
 
 const hosts = new HostManager();
 const terminal = new TerminalService(
+  () => mainWindow,
+  () => hosts.session,
+);
+const fileWatcher = new FileWatcherService(
   () => mainWindow,
   () => hosts.session,
 );
@@ -222,6 +227,7 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     appVersion: app.getVersion(),
     terminal,
+    fileWatcher,
   });
   initAppUpdater({ getMainWindow: () => mainWindow });
   buildMenu();
@@ -239,6 +245,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   terminal.disposeAll();
+  fileWatcher.disposeAll();
   void hosts.dispose();
   if (process.platform !== "darwin") {
     app.quit();

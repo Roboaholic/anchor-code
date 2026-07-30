@@ -11,7 +11,14 @@ import { useTerminalStore } from "@/features/terminal/terminalStore";
 import {
   countOpenFeedbackComments,
 } from "./feedbackPrompt";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import type {
   CommentMessage,
   CommentRecord,
@@ -45,6 +52,13 @@ export function CommentsPane() {
   const [editBody, setEditBody] = useState("");
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
+  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
+  // Per-comment refs for the status buttons, used to anchor the dropdown menu.
+  const statusBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  // Collapsed = show only the original comment (replies hidden). Default all collapsed.
+  const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -59,6 +73,33 @@ export function CommentsPane() {
       return next;
     });
   }, [expandedSessionId, sessions]);
+
+  // Track known comment ids so new multi-message threads start collapsed.
+  const knownCommentIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const allIds = sessions.flatMap((s) => s.comments.map((c) => c.id));
+    const valid = new Set(allIds);
+    const known = knownCommentIdsRef.current;
+    const firstPass = known.size === 0;
+
+    setCollapsedCommentIds((current) => {
+      const next = new Set<string>();
+      for (const id of current) {
+        if (valid.has(id)) next.add(id);
+      }
+      for (const s of sessions) {
+        for (const c of s.comments) {
+          if (c.messages.length <= 1) continue;
+          const isNew = firstPass || !known.has(c.id);
+          if (isNew) next.add(c.id);
+        }
+      }
+      return next;
+    });
+
+    knownCommentIdsRef.current = valid;
+  }, [sessions]);
+
 
   useEffect(() => {
     if (!toast) return;
@@ -159,6 +200,16 @@ export function CommentsPane() {
       return next;
     });
   };
+
+  const toggleCommentCollapsed = useCallback((commentId: string) => {
+    setCollapsedCommentIds((current) => {
+      const next = new Set(current);
+      if (next.has(commentId)) next.delete(commentId);
+      else next.add(commentId);
+      return next;
+    });
+  }, []);
+
 
   const openFeedbackForSession = useCallback(
     (session: SessionRecord) => {
@@ -306,6 +357,8 @@ export function CommentsPane() {
                           const primary = c.messages[0];
                           const replies = c.messages.slice(1);
                           const isReplying = replyingId === c.id;
+                          const threadCollapsed =
+                            replies.length > 0 && collapsedCommentIds.has(c.id);
                           const renderMessage = (
                             message: CommentMessage | undefined,
                             kind: "primary" | "reply",
@@ -337,10 +390,16 @@ export function CommentsPane() {
                                   )}
                                   <button
                                     type="button"
-                                    className="btn btn--ghost btn--small comment-card__msg-edit"
+                                    className="icon-btn comment-card__msg-edit"
+                                    title="Edit"
+                                    aria-label={
+                                      kind === "reply"
+                                        ? "Edit reply"
+                                        : "Edit comment"
+                                    }
                                     onClick={() => startEdit(c, message)}
                                   >
-                                    Edit
+                                    <Icon name="edit" />
                                   </button>
                                 </div>
                                 {editingHere ? (
@@ -388,44 +447,151 @@ export function CommentsPane() {
                           };
 
                           return (
-                            <li key={c.id} className="comment-card">
-                              <button
-                                type="button"
-                                className="comment-card__jump"
-                                title={`${c.target.file_path}:${c.target.start_line}`}
-                                onClick={() => {
-                                  setExpandedSession(session.id);
-                                  void jumpToComment(c, session.id);
-                                }}
-                              >
-                                <span className="comment-card__head">
-                                  <span className="comment-card__loc">
-                                    <span className="comment-card__file">
-                                      {fileBasename(c.target.file_path)}
-                                      <span className="comment-card__line">
-                                        :{c.target.start_line}
+                            <li
+                              key={c.id}
+                              className={`comment-card${
+                                threadCollapsed ? " is-collapsed" : ""
+                              }`}
+                            >
+                              <div className="comment-card__top">
+                                <button
+                                  type="button"
+                                  className="comment-card__jump"
+                                  title={`${c.target.file_path}:${c.target.start_line}`}
+                                  onClick={() => {
+                                    setExpandedSession(session.id);
+                                    void jumpToComment(c, session.id);
+                                  }}
+                                >
+                                  <span className="comment-card__head">
+                                    <span className="comment-card__loc">
+                                      <span className="comment-card__file">
+                                        {fileBasename(c.target.file_path)}
+                                        <span className="comment-card__line">
+                                          :{c.target.start_line}
+                                        </span>
                                       </span>
+                                      {fileDirname(c.target.file_path) ? (
+                                        <span
+                                          className="comment-card__dir"
+                                          title={c.target.file_path}
+                                        >
+                                          {fileDirname(c.target.file_path)}
+                                        </span>
+                                      ) : null}
                                     </span>
-                                    {fileDirname(c.target.file_path) ? (
-                                      <span
-                                        className="comment-card__dir"
-                                        title={c.target.file_path}
-                                      >
-                                        {fileDirname(c.target.file_path)}
-                                      </span>
-                                    ) : null}
                                   </span>
-                                  <span className={`chip chip--${c.status}`}>
-                                    {c.status}
-                                  </span>
-                                </span>
-                              </button>
+                                </button>
+                                <div className="comment-card__status-wrap">
+                                  <button
+                                    type="button"
+                                    ref={(el) => {
+                                      statusBtnRefs.current[c.id] = el;
+                                    }}
+                                    className={`comment-card__status-btn chip--${c.status}`}
+                                    title="Change status"
+                                    aria-label="Change status"
+                                    aria-haspopup="menu"
+                                    aria-expanded={statusMenuId === c.id}
+                                    onClick={() =>
+                                      setStatusMenuId(
+                                        statusMenuId === c.id ? null : c.id,
+                                      )
+                                    }
+                                  >
+                                    <span className="comment-card__status-label">
+                                      {c.status}
+                                    </span>
+                                    <Icon name="chevron-down" />
+                                  </button>
+                                  {statusMenuId === c.id ? (
+                                    <StatusMenu
+                                      anchorRef={{
+                                        current: statusBtnRefs.current[c.id],
+                                      }}
+                                      current={c.status}
+                                      onClose={() => setStatusMenuId(null)}
+                                      onPick={(s) => {
+                                        void (async () => {
+                                          await ensureWritable(session);
+                                          await setStatus(c.id, s);
+                                        })();
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="icon-btn comment-card__reply-btn"
+                                  title="Reply"
+                                  aria-label="Reply"
+                                  onClick={() => {
+                                    setReplyingId(c.id);
+                                    setReplyBody("");
+                                    cancelEdit();
+                                    if (threadCollapsed) {
+                                      toggleCommentCollapsed(c.id);
+                                    }
+                                  }}
+                                >
+                                  <Icon name="reply" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="icon-btn comment-card__delete"
+                                  title="Delete comment"
+                                  aria-label="Delete comment"
+                                  onClick={() => {
+                                    if (
+                                      !window.confirm(
+                                        "Delete this comment thread permanently?",
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                    void (async () => {
+                                      await ensureWritable(session);
+                                      await deleteComment(c.id);
+                                    })();
+                                  }}
+                                >
+                                  <Icon name="trash" />
+                                </button>
+                              </div>
 
                               <div className="comment-card__thread">
                                 {renderMessage(primary, "primary")}
-                                {replies.map((message) =>
-                                  renderMessage(message, "reply"),
-                                )}
+                                {replies.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    className="comment-card__replies-toggle"
+                                    onClick={() =>
+                                      toggleCommentCollapsed(c.id)
+                                    }
+                                    aria-expanded={!threadCollapsed}
+                                  >
+                                    <Icon
+                                      name={
+                                        threadCollapsed
+                                          ? "chevron-right"
+                                          : "chevron-down"
+                                      }
+                                    />
+                                    <span>
+                                      {threadCollapsed
+                                        ? `${replies.length} ${
+                                            replies.length === 1
+                                              ? "reply"
+                                              : "replies"
+                                          }`
+                                        : "Hide replies"}
+                                    </span>
+                                  </button>
+                                ) : null}
+                                {!threadCollapsed &&
+                                  replies.map((message) =>
+                                    renderMessage(message, "reply"),
+                                  )}
                               </div>
 
                               {isReplying ? (
@@ -462,59 +628,6 @@ export function CommentsPane() {
                                   </div>
                                 </div>
                               ) : null}
-
-                              <div className="comment-card__footer">
-                                <select
-                                  className="comment-card__status"
-                                  value={c.status}
-                                  onChange={(e) => {
-                                    void (async () => {
-                                      await ensureWritable(session);
-                                      await setStatus(
-                                        c.id,
-                                        e.target.value as typeof c.status,
-                                      );
-                                    })();
-                                  }}
-                                >
-                                  <option value="discussing">discussing</option>
-                                  <option value="need_modify">
-                                    need_modify
-                                  </option>
-                                  <option value="closed">closed</option>
-                                </select>
-                                <div className="comment-card__actions">
-                                  <button
-                                    type="button"
-                                    className="btn btn--ghost btn--small"
-                                    onClick={() => {
-                                      setReplyingId(c.id);
-                                      setReplyBody("");
-                                      cancelEdit();
-                                    }}
-                                  >
-                                    Reply
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn--ghost btn--small"
-                                    onClick={() => {
-                                      if (
-                                        window.confirm(
-                                          "Delete this comment thread permanently?",
-                                        )
-                                      ) {
-                                        void (async () => {
-                                          await ensureWritable(session);
-                                          await deleteComment(c.id);
-                                        })();
-                                      }
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </div>
                             </li>
                           );
                         })}
@@ -528,6 +641,87 @@ export function CommentsPane() {
         </ul>
       )}
     </div>
+  );
+}
+
+const STATUS_OPTIONS = [
+  "discussing",
+  "need_modify",
+  "closed",
+] as const;
+
+type CommentStatus = (typeof STATUS_OPTIONS)[number];
+
+/**
+ * Status dropdown rendered into document.body via portal so it escapes any
+ * ancestor with overflow:hidden (e.g. .comment-card). Anchored to the button.
+ */
+function StatusMenu({
+  anchorRef,
+  current,
+  onPick,
+  onClose,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  current: CommentStatus;
+  onPick: (status: CommentStatus) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+      const r = anchor.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: r.right });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [anchorRef]);
+
+  if (!pos) return null;
+
+  return createPortal(
+    <>
+      <div className="status-menu__backdrop" onClick={onClose} />
+      <div
+        ref={menuRef}
+        className="status-menu"
+        role="menu"
+        style={{
+          // Position then shift left by width once measured via CSS translate
+          top: pos.top,
+          left: pos.left,
+          transform: "translateX(-100%)",
+        }}
+      >
+        {STATUS_OPTIONS.map((s) => (
+          <button
+            key={s}
+            type="button"
+            className={`status-menu__item${s === current ? " is-active" : ""}`}
+            role="menuitemradio"
+            aria-checked={s === current}
+            onClick={() => {
+              onPick(s);
+              onClose();
+            }}
+          >
+            <span className={`status-menu__dot chip--${s}`} />
+            <span className="status-menu__text">{s}</span>
+            {s === current ? <Icon name="check" /> : null}
+          </button>
+        ))}
+      </div>
+    </>,
+    document.body,
   );
 }
 

@@ -110,6 +110,12 @@ export interface HostSession {
   stat(path: string): Promise<StatResult>;
   exists(path: string): Promise<boolean>;
   mkdirp(path: string): Promise<void>;
+  /** Recursively remove a file or directory (missing path is not an error). */
+  remove(path: string): Promise<void>;
+  /** Move/rename a file or directory. */
+  rename(oldPath: string, newPath: string): Promise<void>;
+  /** Recursively copy a file or directory to a new path. */
+  copyPath(src: string, dst: string): Promise<void>;
   openPty(
     cwd: string,
     cols: number,

@@ -224,6 +224,36 @@ export class LocalHostSession implements HostSession {
     }
   }
 
+  async remove(targetPath: string): Promise<void> {
+    try {
+      await fs.rm(targetPath, { recursive: true, force: true });
+    } catch (err) {
+      throw mapFsError(err, `Cannot delete: ${targetPath}`);
+    }
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    try {
+      await fs.rename(oldPath, newPath);
+    } catch (err) {
+      // EXDEV (cross-device) or fallback: copy then remove the source.
+      try {
+        await fs.cp(oldPath, newPath, { recursive: true });
+        await fs.rm(oldPath, { recursive: true, force: true });
+      } catch (err2) {
+        throw mapFsError(err, `Cannot rename: ${oldPath} → ${newPath}`);
+      }
+    }
+  }
+
+  async copyPath(src: string, dst: string): Promise<void> {
+    try {
+      await fs.cp(src, dst, { recursive: true });
+    } catch (err) {
+      throw mapFsError(err, `Cannot copy: ${src} → ${dst}`);
+    }
+  }
+
   async openPty(
     cwd: string,
     cols: number,

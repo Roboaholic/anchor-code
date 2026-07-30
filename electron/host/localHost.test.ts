@@ -51,6 +51,62 @@ describe("LocalHostSession (integration)", () => {
     }
   });
 
+  it("remove deletes a file and recursively a directory", async () => {
+    const file = path.join(tmp, "gone.txt");
+    const dir = path.join(tmp, "tree");
+    await host.writeFile(file, "x");
+    await host.mkdirp(path.join(dir, "sub"));
+    await host.writeFile(path.join(dir, "sub", "deep.txt"), "y");
+
+    await host.remove(file);
+    expect(await host.exists(file)).toBe(false);
+
+    await host.remove(dir);
+    expect(await host.exists(dir)).toBe(false);
+    expect(await host.exists(path.join(dir, "sub", "deep.txt"))).toBe(false);
+  });
+
+  it("remove on a missing path is not an error", async () => {
+    // fs.rm force:true treats a missing path as success.
+    await expect(host.remove(path.join(tmp, "never-existed"))).resolves.toBeUndefined();
+  });
+
+  it("rename moves a file and overwrites the destination", async () => {
+    const src = path.join(tmp, "a.txt");
+    const dst = path.join(tmp, "b.txt");
+    await host.writeFile(src, "payload");
+    await host.rename(src, dst);
+
+    expect(await host.exists(src)).toBe(false);
+    expect(await host.readFile(dst)).toBe("payload");
+  });
+
+  it("rename moves a directory tree", async () => {
+    const src = path.join(tmp, "src");
+    const dst = path.join(tmp, "dst");
+    await host.mkdirp(path.join(src, "sub"));
+    await host.writeFile(path.join(src, "sub", "f.txt"), "z");
+
+    await host.rename(src, dst);
+    expect(await host.exists(src)).toBe(false);
+    expect(await host.readFile(path.join(dst, "sub", "f.txt"))).toBe("z");
+  });
+
+  it("copyPath duplicates a directory tree without removing the source", async () => {
+    const src = path.join(tmp, "orig");
+    const dst = path.join(tmp, "copy");
+    await host.mkdirp(path.join(src, "sub"));
+    await host.writeFile(path.join(src, "sub", "f.txt"), "data");
+
+    await host.copyPath(src, dst);
+
+    // Source is untouched.
+    expect(await host.exists(src)).toBe(true);
+    expect(await host.readFile(path.join(src, "sub", "f.txt"))).toBe("data");
+    // Copy has the same contents.
+    expect(await host.readFile(path.join(dst, "sub", "f.txt"))).toBe("data");
+  });
+
   it("runs a simple command via run()", async () => {
     // Prefer a portable binary (shell builtins are not always spawnable).
     const r = await host.run(tmp, process.execPath, [

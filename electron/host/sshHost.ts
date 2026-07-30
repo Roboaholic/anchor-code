@@ -374,6 +374,53 @@ export class SshHostSession implements HostSession {
     }
   }
 
+  /** Run a one-line shell script via `bash -s` + stdin (avoids -lc quoting). */
+  private async runShellScript(
+    cwd: string,
+    script: string,
+    failMessage: string,
+  ): Promise<void> {
+    const r = await this.run(cwd, "bash", ["-s"], { stdin: script });
+    if (r.code !== 0) {
+      const stderr = (r.stderr || r.stdout || "").trim();
+      if (/no such file or directory/i.test(stderr)) {
+        throw new HostError("not_found", failMessage, stderr);
+      }
+      if (/permission denied/i.test(stderr)) {
+        throw new HostError("permission", failMessage, stderr);
+      }
+      throw new HostError("failed", failMessage, stderr);
+    }
+  }
+
+  async remove(targetPath: string): Promise<void> {
+    const p = hostNormalize("ssh", targetPath);
+    const dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) || "/" : "/";
+    await this.runShellScript(dir, `rm -rf ${shellQuote(p)}\n`, `Cannot delete: ${p}`);
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    const src = hostNormalize("ssh", oldPath);
+    const dst = hostNormalize("ssh", newPath);
+    const dir = src.includes("/") ? src.slice(0, src.lastIndexOf("/")) || "/" : "/";
+    await this.runShellScript(
+      dir,
+      `mv ${shellQuote(src)} ${shellQuote(dst)}\n`,
+      `Cannot rename: ${src} → ${dst}`,
+    );
+  }
+
+  async copyPath(srcPath: string, dstPath: string): Promise<void> {
+    const src = hostNormalize("ssh", srcPath);
+    const dst = hostNormalize("ssh", dstPath);
+    const dir = src.includes("/") ? src.slice(0, src.lastIndexOf("/")) || "/" : "/";
+    await this.runShellScript(
+      dir,
+      `cp -r ${shellQuote(src)} ${shellQuote(dst)}\n`,
+      `Cannot copy: ${src} → ${dst}`,
+    );
+  }
+
   async openPty(
     cwd: string,
     cols: number,

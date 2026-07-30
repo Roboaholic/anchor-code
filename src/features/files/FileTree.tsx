@@ -13,6 +13,10 @@ import {
   openWorkspacePath,
 } from "@/features/shell/orchestrate";
 import {
+  invalidateFileIndexCache,
+  warmFileIndexCache,
+} from "@/features/shell/QuickOpen";
+import {
   useWorkspaceStore,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
@@ -91,6 +95,12 @@ export function FileTree() {
   const selectedPath = useWorkspaceStore((s) => s.selectedPath);
   const recent = useWorkspaceStore((s) => s.recent);
   const toggleDir = useWorkspaceStore((s) => s.toggleDir);
+  const refreshDir = useWorkspaceStore((s) => s.refreshDir);
+  const deleteNode = useWorkspaceStore((s) => s.deleteNode);
+  const renameNode = useWorkspaceStore((s) => s.renameNode);
+  const copyNode = useWorkspaceStore((s) => s.copyNode);
+  const createEntry = useWorkspaceStore((s) => s.createEntry);
+  const hostKind = useWorkspaceStore((s) => s.hostKind);
   const workspaceExcludes = useWorkspaceStore((s) => s.excludes);
   const addExclude = useWorkspaceStore((s) => s.addExclude);
   const removeExclude = useWorkspaceStore((s) => s.removeExclude);
@@ -104,6 +114,17 @@ export function FileTree() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [workspaceFilterOpen, setWorkspaceFilterOpen] = useState(false);
   const [excludeDraft, setExcludeDraft] = useState("");
+  /** Inline-rename target path; the matching TreeRow swaps to an <input>. */
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  /** New entry being created: rendered as a temporary input row. */
+  const [creating, setCreating] = useState<{
+    parentPath: string;
+    type: "file" | "dir";
+    depth: number;
+  } | null>(null);
+  const [createDraft, setCreateDraft] = useState("");
+  const [clipboardPath, setClipboardPath] = useState<string | null>(null);
   const [treeMenu, setTreeMenu] = useState<{
     path: string;
     name: string;
@@ -141,6 +162,79 @@ export function FileTree() {
     };
   }, [treeMenu]);
 
+  // ── auto-refresh: start/stop the main-process watcher on workspace open ──
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    void window.anchor?.workspace?.watchStart?.(workspaceRoot).catch(() => {});
+    return () => {
+      void window.anchor?.workspace?.watchStop?.().catch(() => {});
+    };
+  }, [workspaceRoot]);
+
+  // ── auto-refresh: react to fs.watch change events (local hosts) ──
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    const off =
+      window.anchor?.workspace?.onFileChange?.(({ dir }) => {
+        void refreshDir(dir);
+        invalidateFileIndexCache();
+        warmFileIndexCache(workspaceRoot);
+      }) ?? (() => undefined);
+    return off;
+  }, [workspaceRoot, refreshDir]);
+
+  // ── auto-refresh: poll expanded dirs for WSL/SSH (fs.watch unusable there) ──
+  useEffect(() => {
+    if (!workspaceRoot || hostKind === "local") return;
+    const collectExpandedDirs = (nodes: TreeNode[], acc: string[]) => {
+      for (const node of nodes) {
+        if (node.type === "dir" && node.expanded && node.loaded) {
+          acc.push(node.path);
+        }
+        if (node.children?.length) collectExpandedDirs(node.children, acc);
+      }
+      return acc;
+    };
+    const snapshot = (nodes: TreeNode[]): Map<string, string> => {
+      const m = new Map<string, string>();
+      const walk = (ns: TreeNode[]) => {
+        for (const n of ns) {
+          if (n.type === "dir" && n.expanded && n.loaded && n.children) {
+            m.set(
+              n.path,
+              n.children.map((c) => `${c.type[0]}${c.name}`).sort().join("\n"),
+            );
+          }
+          if (n.children?.length) walk(n.children);
+        }
+      };
+      walk(nodes);
+      return m;
+    };
+    const timer = window.setInterval(async () => {
+      const { rootEntries } = useWorkspaceStore.getState();
+      const dirs = collectExpandedDirs(rootEntries, [workspaceRoot]);
+      const prev = snapshot(rootEntries);
+      for (const dir of dirs) {
+        try {
+          const entries = await window.anchor.workspace.listDir(dir);
+          const sig = entries
+            .map((e) => `${e.type[0]}${e.name}`)
+            .sort()
+            .join("\n");
+          if (prev.get(dir) !== sig) {
+            await refreshDir(dir);
+          }
+        } catch {
+          // non-fatal
+        }
+      }
+      invalidateFileIndexCache();
+      warmFileIndexCache(workspaceRoot);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [workspaceRoot, hostKind, refreshDir]);
+
   const openTreeMenu = useCallback(
     (
       e: ReactMouseEvent,
@@ -150,7 +244,7 @@ export function FileTree() {
       e.stopPropagation();
       const pad = 4;
       const menuW = 200;
-      const menuH = 40;
+      const menuH = 320;
       const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
       const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
       setTreeMenu({
@@ -162,6 +256,84 @@ export function FileTree() {
       });
     },
     [],
+  );
+
+  // ── file operation handlers (used by the context menu) ──
+  const startRename = useCallback((path: string, name: string) => {
+    setRenamingPath(path);
+    setRenameDraft(name);
+  }, []);
+
+  const commitRename = useCallback(
+    (oldPath: string) => {
+      const next = renameDraft.trim();
+      if (next && next !== fileBasename(oldPath)) {
+        void renameNode(oldPath, next);
+      }
+      setRenamingPath(null);
+      setRenameDraft("");
+    },
+    [renameDraft, renameNode],
+  );
+
+  const startCreate = useCallback(
+    (parentPath: string, type: "file" | "dir", depth: number) => {
+      // Ensure the target dir is expanded so the input row is visible.
+      void toggleDir(parentPath).then(() => {
+        setCreating({ parentPath, type, depth });
+        setCreateDraft("");
+      });
+    },
+    [toggleDir],
+  );
+
+  const commitCreate = useCallback(() => {
+    const c = creating;
+    const name = createDraft.trim();
+    if (c && name) {
+      void createEntry(c.parentPath, name, c.type).then((newPath) => {
+        if (c.type === "file" && newPath) void openFileFromTree(newPath);
+      });
+    }
+    setCreating(null);
+    setCreateDraft("");
+  }, [creating, createDraft, createEntry]);
+
+  const handleDelete = useCallback(
+    (path: string, name: string) => {
+      if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
+      void deleteNode(path);
+    },
+    [deleteNode],
+  );
+
+  const handleDuplicate = useCallback(
+    (path: string) => {
+      void copyNode(path);
+    },
+    [copyNode],
+  );
+
+  const handleCopyPath = useCallback((path: string) => {
+    setClipboardPath(path);
+    try {
+      void navigator.clipboard?.writeText?.(path);
+    } catch {
+      // ignore — clipboardPath state still enables Paste
+    }
+  }, []);
+
+  const handlePaste = useCallback(
+    (targetDir: string) => {
+      if (!clipboardPath) return;
+      // Copy the clipboard entry into the target directory.
+      const base = fileBasename(clipboardPath);
+      const dst = joinPath(targetDir, base);
+      void window.anchor.workspace
+        .copyPath(clipboardPath, dst)
+        .then(() => void refreshDir(targetDir));
+    },
+    [clipboardPath, refreshDir],
   );
   /** Collapse search results list; file tree stays visible either way. */
   const [resultsOpen, setResultsOpen] = useState(true);
@@ -627,12 +799,32 @@ export function FileTree() {
       <div className="files-tree-scroll">
         {rootEntries.length > 0 ? (
           <ul className="file-tree" role="tree">
+            {creating && creating.parentPath === workspaceRoot ? (
+              <CreateRow
+                depth={0}
+                type={creating.type}
+                draft={createDraft}
+                onChange={setCreateDraft}
+                onCommit={commitCreate}
+                onCancel={() => setCreating(null)}
+              />
+            ) : null}
             {rootEntries.map((node) => (
               <TreeRow
                 key={node.path}
                 node={node}
                 depth={0}
                 selectedPath={selectedPath}
+                renamingPath={renamingPath}
+                renameDraft={renameDraft}
+                onRenameDraftChange={setRenameDraft}
+                onCommitRename={commitRename}
+                onCancelRename={() => setRenamingPath(null)}
+                creating={creating}
+                createDraft={createDraft}
+                onCreateDraftChange={setCreateDraft}
+                onCommitCreate={commitCreate}
+                onCancelCreate={() => setCreating(null)}
                 onToggle={(p) => void toggleDir(p)}
                 onOpenFile={(p) => void openFileFromTree(p)}
                 onContextMenu={openTreeMenu}
@@ -660,6 +852,107 @@ export function FileTree() {
           role="menu"
           aria-label={`${treeMenu.name} actions`}
         >
+          {/* New File / New Folder — only for directories (create inside). */}
+          {treeMenu.type === "dir" ? (
+            <>
+              <button
+                type="button"
+                className="file-tree-menu__item"
+                role="menuitem"
+                onClick={() => {
+                  startCreate(treeMenu.path, "file", 0);
+                  setTreeMenu(null);
+                }}
+              >
+                New File…
+              </button>
+              <button
+                type="button"
+                className="file-tree-menu__item"
+                role="menuitem"
+                onClick={() => {
+                  startCreate(treeMenu.path, "dir", 0);
+                  setTreeMenu(null);
+                }}
+              >
+                New Folder…
+              </button>
+              <div className="tab-context-menu__sep" />
+            </>
+          ) : null}
+
+          {/* Rename */}
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              startRename(treeMenu.path, treeMenu.name);
+              setTreeMenu(null);
+            }}
+          >
+            Rename…
+          </button>
+
+          {/* Duplicate (copy file/folder into same dir). */}
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              handleDuplicate(treeMenu.path);
+              setTreeMenu(null);
+            }}
+          >
+            Duplicate
+          </button>
+
+          {/* Copy path / Cut for paste. */}
+          <button
+            type="button"
+            className="file-tree-menu__item"
+            role="menuitem"
+            onClick={() => {
+              handleCopyPath(treeMenu.path);
+              setTreeMenu(null);
+            }}
+          >
+            Copy Path
+          </button>
+
+          {/* Paste into directory. */}
+          {treeMenu.type === "dir" ? (
+            <button
+              type="button"
+              className="file-tree-menu__item"
+              role="menuitem"
+              disabled={!clipboardPath}
+              onClick={() => {
+                void handlePaste(treeMenu.path);
+                setTreeMenu(null);
+              }}
+            >
+              Paste
+            </button>
+          ) : null}
+
+          <div className="tab-context-menu__sep" />
+
+          {/* Delete — destructive. */}
+          <button
+            type="button"
+            className="file-tree-menu__item file-tree-menu__item--danger"
+            role="menuitem"
+            onClick={() => {
+              handleDelete(treeMenu.path, treeMenu.name);
+              setTreeMenu(null);
+            }}
+          >
+            Delete…
+          </button>
+
+          <div className="tab-context-menu__sep" />
+
           <button
             type="button"
             className="file-tree-menu__item"
@@ -913,10 +1206,101 @@ export function FileTree() {
   );
 }
 
+type TreeRowEditProps = {
+  renamingPath: string | null;
+  renameDraft: string;
+  onRenameDraftChange: (v: string) => void;
+  onCommitRename: (path: string) => void;
+  onCancelRename: () => void;
+  /** Active "new entry" creation, if any (rendered as an input row). */
+  creating: { parentPath: string; type: "file" | "dir"; depth: number } | null;
+  createDraft: string;
+  onCreateDraftChange: (v: string) => void;
+  onCommitCreate: () => void;
+  onCancelCreate: () => void;
+};
+
+function RenameInput({
+  draft,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  draft: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <input
+      className="file-tree__rename-input"
+      autoFocus
+      value={draft}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+    />
+  );
+}
+
+function CreateRow({
+  depth,
+  type,
+  draft,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  type: "file" | "dir";
+  draft: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const pad = 8 + depth * 12 + (type === "file" ? 14 : 0);
+  return (
+    <li role="treeitem" className="file-tree__create-row">
+      <div className="file-tree__row" style={{ paddingLeft: pad }}>
+        {type === "dir" ? (
+          <Icon name="folder" className="file-tree__icon" />
+        ) : (
+          <Icon name="file" className="file-tree__icon" />
+        )}
+        <RenameInput
+          draft={draft}
+          onChange={onChange}
+          onCommit={onCommit}
+          onCancel={onCancel}
+        />
+      </div>
+    </li>
+  );
+}
+
 function TreeRow({
   node,
   depth,
   selectedPath,
+  renamingPath,
+  renameDraft,
+  onRenameDraftChange,
+  onCommitRename,
+  onCancelRename,
+  creating,
+  createDraft,
+  onCreateDraftChange,
+  onCommitCreate,
+  onCancelCreate,
   onToggle,
   onOpenFile,
   onContextMenu,
@@ -930,9 +1314,24 @@ function TreeRow({
     e: ReactMouseEvent,
     node: { path: string; name: string; type: "file" | "dir" },
   ) => void;
-}) {
+} & TreeRowEditProps) {
   const selected = selectedPath === node.path;
   const pad = 8 + depth * 12;
+  const isRenaming = renamingPath === node.path;
+
+  // Shared edit props forwarded to every recursive child.
+  const editProps: TreeRowEditProps = {
+    renamingPath,
+    renameDraft,
+    onRenameDraftChange,
+    onCommitRename,
+    onCancelRename,
+    creating,
+    createDraft,
+    onCreateDraftChange,
+    onCommitCreate,
+    onCancelCreate,
+  };
 
   if (node.type === "dir") {
     return (
@@ -958,7 +1357,16 @@ function TreeRow({
             name={node.expanded ? "folder-opened" : "folder"}
             className="file-tree__icon"
           />
-          <span className="file-tree__name">{node.name}</span>
+          {isRenaming ? (
+            <RenameInput
+              draft={renameDraft}
+              onChange={onRenameDraftChange}
+              onCommit={() => onCommitRename(node.path)}
+              onCancel={onCancelRename}
+            />
+          ) : (
+            <span className="file-tree__name">{node.name}</span>
+          )}
         </button>
         {node.error ? (
           <div className="file-tree__error" style={{ paddingLeft: pad + 20 }}>
@@ -967,6 +1375,16 @@ function TreeRow({
         ) : null}
         {node.expanded && node.children ? (
           <ul className="file-tree file-tree--nested" role="group">
+            {creating && creating.parentPath === node.path ? (
+              <CreateRow
+                depth={depth + 1}
+                type={creating.type}
+                draft={createDraft}
+                onChange={onCreateDraftChange}
+                onCommit={onCommitCreate}
+                onCancel={onCancelCreate}
+              />
+            ) : null}
             {node.children.map((child) => (
               <TreeRow
                 key={child.path}
@@ -976,6 +1394,7 @@ function TreeRow({
                 onToggle={onToggle}
                 onOpenFile={onOpenFile}
                 onContextMenu={onContextMenu}
+                {...editProps}
               />
             ))}
           </ul>
@@ -1000,7 +1419,16 @@ function TreeRow({
         }
       >
         <Icon name={fileIcon(node.name)} className="file-tree__icon" />
-        <span className="file-tree__name">{node.name}</span>
+        {isRenaming ? (
+          <RenameInput
+            draft={renameDraft}
+            onChange={onRenameDraftChange}
+            onCommit={() => onCommitRename(node.path)}
+            onCancel={onCancelRename}
+          />
+        ) : (
+          <span className="file-tree__name">{node.name}</span>
+        )}
       </button>
     </li>
   );

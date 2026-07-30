@@ -4,6 +4,7 @@ import type { HostManager } from "../host/hostManager.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
   hostBasename,
+  hostJoin,
   hostNormalize,
 } from "../host/paths.js";
 import { HostError } from "../host/types.js";
@@ -39,6 +40,7 @@ import {
   loadRepoStatusesBulk,
 } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
+import { FileWatcherService } from "../services/fileWatcherService.js";
 import {
   detectAgentClis,
   getDefaultAgentId,
@@ -126,8 +128,9 @@ export function registerIpc(opts: {
   getMainWindow: () => BrowserWindow | null;
   appVersion: string;
   terminal: TerminalService;
+  fileWatcher: FileWatcherService;
 }): void {
-  const { hosts, getMainWindow, appVersion, terminal } = opts;
+  const { hosts, getMainWindow, appVersion, terminal, fileWatcher } = opts;
 
   const host = () => hosts.session;
 
@@ -285,6 +288,7 @@ export function registerIpc(opts: {
           throw new HostError("not_found", `Host profile not found: ${profileId}`);
         }
         terminal.disposeAll();
+        fileWatcher.stop();
         const session = await hosts.useProfile(profile);
         return {
           id: session.id,
@@ -512,6 +516,7 @@ export function registerIpc(opts: {
             );
           }
           terminal.disposeAll();
+          fileWatcher.stop();
           await hosts.useProfile(profile);
         }
 
@@ -537,6 +542,8 @@ export function registerIpc(opts: {
         } catch (err) {
           console.warn("[ipc] terminal.disposeAll failed:", err);
         }
+        // Renderer restarts the watcher on the new root; stop the old one.
+        fileWatcher.stop();
         return {
           root: resolved,
           name: hostBasename(h.kind, resolved) || resolved,
@@ -593,6 +600,94 @@ export function registerIpc(opts: {
       rethrowIpc(err);
     }
   });
+
+  // ── file watcher (auto-refresh) ───────────────────
+  ipcMain.handle("fileWatcher:start", async (_evt, root?: string) => {
+    try {
+      const h = host();
+      const target = root ?? h.workspaceRoot;
+      if (!target) throw new HostError("failed", "No workspace open");
+      fileWatcher.start(target);
+      return { ok: true };
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle("fileWatcher:stop", async () => {
+    fileWatcher.stop();
+    return { ok: true };
+  });
+
+  // ── file operations (delete / rename / copy / new entry) ──────────
+  ipcMain.handle("workspace:delete", async (_evt, args: { path: string }) => {
+    try {
+      const h = host();
+      const p = hostNormalize(h.kind, args.path);
+      await h.remove(p);
+      return { ok: true };
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "workspace:rename",
+    async (_evt, args: { oldPath: string; newPath: string }) => {
+      try {
+        const h = host();
+        await h.rename(
+          hostNormalize(h.kind, args.oldPath),
+          hostNormalize(h.kind, args.newPath),
+        );
+        return { ok: true };
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:copy",
+    async (_evt, args: { src: string; dst: string }) => {
+      try {
+        const h = host();
+        await h.copyPath(
+          hostNormalize(h.kind, args.src),
+          hostNormalize(h.kind, args.dst),
+        );
+        return { ok: true };
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:newEntry",
+    async (
+      _evt,
+      args: { parentDir: string; name: string; type: "file" | "dir" },
+    ) => {
+      try {
+        const h = host();
+        const parent = hostNormalize(h.kind, args.parentDir);
+        const name = args.name.trim();
+        if (!name) throw new HostError("failed", "Name is empty");
+        const target = hostJoin(h.kind, parent, name);
+        if (args.type === "dir") {
+          await h.mkdirp(target);
+        } else {
+          // Empty file; create parent first for nested paths.
+          await h.mkdirp(parent);
+          await h.writeFile(target, "");
+        }
+        return { ok: true, path: target };
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
 
   ipcMain.handle(
     "workspace:findFiles",

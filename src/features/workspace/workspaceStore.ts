@@ -45,6 +45,17 @@ export interface WorkspaceState {
   ) => Promise<void>;
   pickAndOpen: () => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
+  /** Reload a directory's contents (for auto-refresh); no-op unless expanded+loaded. */
+  refreshDir: (dirPath: string) => Promise<void>;
+  /** File operations: call host IPC, then refresh the affected directory. */
+  deleteNode: (path: string) => Promise<void>;
+  renameNode: (oldPath: string, newName: string) => Promise<void>;
+  copyNode: (src: string) => Promise<void>;
+  createEntry: (
+    parentDir: string,
+    name: string,
+    type: "file" | "dir",
+  ) => Promise<string | null>;
   setSelectedPath: (path: string | null) => void;
   addExclude: (relOrAbsPath: string) => Promise<void>;
   removeExclude: (pattern: string) => Promise<void>;
@@ -72,6 +83,38 @@ async function loadChildren(
     loaded: e.type === "file" ? true : false,
     children: e.type === "dir" ? [] : undefined,
   }));
+}
+
+/** Last path segment (basename), handling both / and \ separators. */
+export function basenameOf(p: string): string {
+  const norm = p.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+/** Directory portion (without trailing separator); same on both OS styles. */
+export function parentDirOf(p: string): string {
+  const norm = p.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  if (i < 0) return p;
+  const parent = norm.slice(0, i);
+  return parent === "" ? "/" : parent.replace(/\//g, p.includes("\\") ? "\\" : "/");
+}
+
+/** Split a "name.ext" into [stem, ext] (dotfiles like .gitignore → full name). */
+export function splitExt(name: string): [string, string] {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return [name, ""];
+  return [name.slice(0, dot), name.slice(dot)];
+}
+
+/**
+ * Propose a non-clobbering copy name ("foo.txt" → "foo copy.txt").
+ * Collision is reconciled by the next refreshDir.
+ */
+export function uniqueCopyName(parent: string, name: string): string {
+  const [stem, ext] = splitExt(name);
+  return joinPath(parent, `${stem} copy${ext}`);
 }
 
 async function persistExcludes(
@@ -260,6 +303,99 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next = await updateNode(rootEntries);
     set({ rootEntries: next });
+  },
+
+  refreshDir: async (dirPath) => {
+    const { rootEntries, workspaceRoot, excludes } = get();
+    if (!workspaceRoot) return;
+
+    // Root changed → reload top-level entries directly.
+    if (dirPath === workspaceRoot) {
+      try {
+        const children = await loadChildren(
+          workspaceRoot,
+          workspaceRoot,
+          excludes,
+        );
+        set({ rootEntries: children });
+      } catch {
+        // non-fatal: leave existing tree
+      }
+      return;
+    }
+
+    // Reload only if the directory is currently expanded & loaded (mirrors
+    // toggleDir's recursion, but always refetches the matched node).
+    const reloadNode = async (nodes: TreeNode[]): Promise<TreeNode[]> => {
+      const result: TreeNode[] = [];
+      for (const node of nodes) {
+        if (node.path === dirPath && node.type === "dir") {
+          if (node.expanded && node.loaded) {
+            try {
+              const children = await loadChildren(
+                node.path,
+                workspaceRoot,
+                excludes,
+              );
+              result.push({ ...node, children, error: undefined });
+            } catch {
+              result.push(node);
+            }
+          } else {
+            result.push(node);
+          }
+        } else if (node.children && node.children.length > 0) {
+          result.push({
+            ...node,
+            children: await reloadNode(node.children),
+          });
+        } else {
+          result.push(node);
+        }
+      }
+      return result;
+    };
+
+    const next = await reloadNode(rootEntries);
+    set({ rootEntries: next });
+  },
+
+  deleteNode: async (path) => {
+    await window.anchor.workspace.deletePath(path);
+    // Clear selection if the deleted path was selected (or a parent of it).
+    const sel = get().selectedPath;
+    if (sel && (sel === path || sel.startsWith(path + "/") || sel.startsWith(path + "\\"))) {
+      set({ selectedPath: null });
+    }
+    await get().refreshDir(parentDirOf(path));
+  },
+
+  renameNode: async (oldPath, newName) => {
+    const parent = parentDirOf(oldPath);
+    const newPath = joinPath(parent, newName.trim());
+    await window.anchor.workspace.renamePath(oldPath, newPath);
+    if (get().selectedPath === oldPath) {
+      set({ selectedPath: newPath });
+    }
+    await get().refreshDir(parent);
+  },
+
+  copyNode: async (src) => {
+    const parent = parentDirOf(src);
+    const base = basenameOf(src);
+    const dst = uniqueCopyName(parent, base);
+    await window.anchor.workspace.copyPath(src, dst);
+    await get().refreshDir(parent);
+  },
+
+  createEntry: async (parentDir, name, type) => {
+    const res = await window.anchor.workspace.createEntry(
+      parentDir,
+      name.trim(),
+      type,
+    );
+    await get().refreshDir(parentDir);
+    return res.path ?? null;
   },
 
   setSelectedPath: (path) => set({ selectedPath: path }),

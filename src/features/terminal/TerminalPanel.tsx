@@ -26,7 +26,15 @@ import {
   setXtermTheme,
 } from "./xtermSessionPool";
 
-export function TerminalPanel({ mode }: { mode: RightTermMode }) {
+export function TerminalPanel({
+  mode,
+  maximized = false,
+  onToggleMaximized,
+}: {
+  mode: RightTermMode;
+  maximized?: boolean;
+  onToggleMaximized?: () => void;
+}) {
   // Guard: never fall through to the other mode if prop is missing after HMR.
   const panelMode: RightTermMode = mode === "agent" ? "agent" : "terminal";
   const tabs = useTerminalStore((s) => s.tabs);
@@ -126,6 +134,28 @@ export function TerminalPanel({ mode }: { mode: RightTermMode }) {
             </span>
           ) : null}
         </div>
+        {onToggleMaximized ? (
+          <div className="terminal-panel__header-right">
+            <button
+              type="button"
+              className={`icon-btn${maximized ? " is-active" : ""}`}
+              aria-label={
+                maximized
+                  ? `Restore ${isAgent ? "agent panel" : "terminal"}`
+                  : `Maximize ${isAgent ? "agent panel" : "terminal"}`
+              }
+              aria-pressed={maximized}
+              title={
+                maximized
+                  ? `Restore ${isAgent ? "agent panel" : "terminal"} (Esc)`
+                  : `Maximize ${isAgent ? "agent panel" : "terminal"}`
+              }
+              onClick={onToggleMaximized}
+            >
+              <Icon name={maximized ? "screen-normal" : "screen-full"} />
+            </button>
+          </div>
+        ) : null}
       </header>
 
       <div

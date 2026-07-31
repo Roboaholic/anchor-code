@@ -53,6 +53,8 @@ export interface HostProfile {
     port?: number;
     username: string;
     privateKeyPath?: string;
+    password?: string;
+    knownHostsPolicy?: "accept-new" | "strict" | "ignore";
   };
   wsl?: {
     distro?: string;
@@ -351,7 +353,9 @@ export interface AnchorApi {
       path: string;
       kind: "wsl" | "ssh";
       distro?: string;
+      profileId?: string;
     }) => Promise<DirEntry[]>;
+    testProfile: (profileId: string) => Promise<{ ok: true }>;
     useProfile: (
       profileId: string,
     ) => Promise<{ id: string; kind: HostKind; profileId: string }>;

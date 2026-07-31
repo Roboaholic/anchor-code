@@ -183,16 +183,17 @@ export function buildAgentLaunchArgs(
     return args;
   }
   if (id === "omp") {
+    const effort = opts.effort?.trim();
     if (opts.model?.trim()) {
-      const m = opts.model.trim();
-      const withEffort =
-        opts.effort?.trim() && !m.includes(":")
-          ? `${m}:${opts.effort.trim()}`
-          : m;
-      args.push(`--model=${withEffort}`);
-    } else if (opts.effort?.trim()) {
-      args.push(`--thinking=${opts.effort.trim()}`);
+      const rawModel = opts.model.trim();
+      const legacySuffix = effort ? `:${effort}` : "";
+      const model =
+        legacySuffix && rawModel.endsWith(legacySuffix)
+          ? rawModel.slice(0, -legacySuffix.length)
+          : rawModel;
+      args.push(`--model=${model}`);
     }
+    if (effort) args.push(`--thinking=${effort}`);
     if (prompt) args.push(prompt);
     return args;
   }

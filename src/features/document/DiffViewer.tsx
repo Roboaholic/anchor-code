@@ -14,6 +14,7 @@ import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
   overlapRegionsForModel,
   useAnnotationsStore,
+  visualDecorationSpec,
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
 import type { OpenItem } from "./documentStore";
@@ -261,6 +262,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const diffEditorRef =
     useRef<MonacoEditor.IStandaloneDiffEditor | null>(null);
+  const activeDiffIndexRef = useRef<number | null>(null);
+  const pendingDiffDirectionRef = useRef<"previous" | "next" | null>(null);
+  const goToDiffRef = useRef<(direction: "previous" | "next") => void>(() => {});
   const disposablesRef = useRef<{ dispose: () => void }[]>([]);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const specsRef = useRef<DecorationSpec[]>([]);
@@ -370,6 +374,40 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   useEffect(() => {
     diffEditorRef.current?.updateOptions({ renderSideBySide: sideBySide });
   }, [sideBySide]);
+
+  const goToDiff = useCallback((direction: "previous" | "next") => {
+    const editor = diffEditorRef.current;
+    if (!editor) return;
+    const changes = editor.getLineChanges();
+    if (!changes?.length) {
+      pendingDiffDirectionRef.current = direction;
+      return;
+    }
+    pendingDiffDirectionRef.current = null;
+
+    const current = activeDiffIndexRef.current;
+    const nextIndex =
+      current === null
+        ? direction === "next"
+          ? 0
+          : changes.length - 1
+        : direction === "next"
+          ? (current + 1) % changes.length
+          : (current - 1 + changes.length) % changes.length;
+    const change = changes[nextIndex]!;
+    activeDiffIndexRef.current = nextIndex;
+
+    const original = editor.getOriginalEditor();
+    const modified = editor.getModifiedEditor();
+    const originalLine = Math.max(1, change.originalStartLineNumber);
+    const modifiedLine = Math.max(1, change.modifiedStartLineNumber);
+    original.setPosition({ lineNumber: originalLine, column: 1 });
+    modified.setPosition({ lineNumber: modifiedLine, column: 1 });
+    original.revealLineInCenter(originalLine);
+    modified.revealLineInCenter(modifiedLine);
+    modified.focus();
+  }, []);
+  goToDiffRef.current = goToDiff;
 
   useEffect(() => {
     if (!resizingFiles) return;
@@ -573,14 +611,17 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       if (newText.length > 0 && model.getValueLength() === 0) return;
 
       const specs = decorationsFor(absActivePath, newText);
-      specsRef.current = specs;
+      const visualSpecs = specs.map((spec) =>
+        visualDecorationSpec(spec, (line) => model.getLineMaxColumn(line)),
+      );
+      specsRef.current = visualSpecs;
       const activeId =
         activeCommentId !== undefined
           ? activeCommentId
           : bubbleRef.current?.commentId ?? null;
       // Prefer resolved/relocated; fall back to stored coords for unresolved so
       // reopened diffs still show attachment while content is slightly off.
-      const paintable = specs.filter(
+      const paintable = visualSpecs.filter(
         (s) =>
           s.anchorStatus === "resolved" ||
           s.anchorStatus === "relocated" ||
@@ -614,7 +655,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         },
       );
       decorations.push(
-        ...overlapRegionsForModel(specs, (line) =>
+        ...overlapRegionsForModel(visualSpecs, (line) =>
           model.getLineMaxColumn(line),
         ).map((region) => ({
           range: {
@@ -640,7 +681,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
 
       const open = bubbleRef.current;
       if (!open) return;
-      const still = specs.find((s) => s.commentId === open.commentId);
+      const still = visualSpecs.find((s) => s.commentId === open.commentId);
       if (!still) {
         bubbleRef.current = null;
         setBubble(null);
@@ -772,6 +813,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     clearHoverCloseTimer();
 
     diffEditorRef.current = editor;
+    activeDiffIndexRef.current = null;
+    pendingDiffDirectionRef.current = null;
     editor.updateOptions({ renderSideBySide: sideBySide });
 
     const original = editor.getOriginalEditor();
@@ -789,6 +832,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     const repaint = () => {
       applyDecorationsRef.current(bubbleRef.current?.commentId ?? null);
       paintBlame();
+      const pendingDirection = pendingDiffDirectionRef.current;
+      if (pendingDirection) goToDiffRef.current(pendingDirection);
     };
 
     disposablesRef.current.push(editor.onDidUpdateDiff(repaint));
@@ -1139,11 +1184,28 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               </button>
             </div>
           </div>
-          <span className="diff-viewer__hint">
-            {sideBySide
-              ? "Right column · Ctrl/Cmd+M · Add comment"
-              : "Switch to Side by side to comment"}
-          </span>
+          <div className="diff-viewer__toolbar-actions">
+            <div className="diff-viewer__diff-nav" role="group" aria-label="Diff navigation">
+              <button
+                type="button"
+                className="icon-btn"
+                title="Previous diff"
+                aria-label="Previous diff"
+                onClick={() => goToDiff("previous")}
+              >
+                <Icon name="arrow-up" />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Next diff"
+                aria-label="Next diff"
+                onClick={() => goToDiff("next")}
+              >
+                <Icon name="arrow-down" />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="diff-viewer__editor" ref={overlayRef}>

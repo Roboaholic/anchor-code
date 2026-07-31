@@ -218,13 +218,22 @@ describe("buildAgentLaunchArgs", () => {
     ).toEqual(["-m", "grok-4.5", "--reasoning-effort", "high"]);
   });
 
-  it("builds omp --model with optional :effort", () => {
+  it("builds omp model and thinking as separate flags", () => {
     expect(
       buildAgentLaunchArgs("omp", {
-        model: "sudocode/gpt-5.5",
+        model: "sudocode/gpt-5.6-sol",
         effort: "high",
       }),
-    ).toEqual(["--model=sudocode/gpt-5.5:high"]);
+    ).toEqual(["--model=sudocode/gpt-5.6-sol", "--thinking=high"]);
+  });
+
+  it("strips a legacy thinking suffix from cached omp models", () => {
+    expect(
+      buildAgentLaunchArgs("omp", {
+        model: "sudocode/gpt-5.6-sol:high",
+        effort: "high",
+      }),
+    ).toEqual(["--model=sudocode/gpt-5.6-sol", "--thinking=high"]);
   });
 
   it("appends task prompt as first user message for codex/claude/grok/omp", () => {
@@ -260,7 +269,11 @@ describe("buildAgentLaunchArgs", () => {
         effort: "high",
         prompt: "refactor auth",
       }),
-    ).toEqual(["--model=sudocode/gpt-5.5:high", "refactor auth"]);
+    ).toEqual([
+      "--model=sudocode/gpt-5.5",
+      "--thinking=high",
+      "refactor auth",
+    ]);
   });
 });
 

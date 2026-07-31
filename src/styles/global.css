@@ -292,6 +292,10 @@ button:disabled {
   min-width: 0;
 }
 
+.shell__panels--main {
+  position: relative;
+}
+
 .shell__panels--col {
   flex-direction: column;
 }
@@ -796,6 +800,7 @@ button.search-field:hover {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
   display: flex;
   flex-direction: column;
 }
@@ -2549,6 +2554,50 @@ body.files-split-resizing .monaco-editor {
 
 .terminal-panel--bottom {
   border-top: 1px solid var(--terminal-border);
+}
+
+.shell__agent-panel.is-maximized {
+  position: absolute !important;
+  inset: 0 0 0 auto;
+  z-index: 20;
+  width: auto !important;
+  height: auto !important;
+  flex: none !important;
+}
+
+.agent-maximized-drag-handle {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.agent-maximized-drag-handle:hover {
+  background: var(--accent);
+}
+
+.shell__terminal-panel.is-maximized {
+  position: absolute !important;
+  inset: 0;
+  z-index: 20;
+  width: auto !important;
+  height: auto !important;
+  flex: none !important;
+}
+
+.terminal-maximized-drag-handle {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.terminal-maximized-drag-handle:hover {
+  background: var(--accent);
 }
 
 
@@ -4987,9 +5036,30 @@ body.files-split-resizing .monaco-editor {
   color: var(--accent);
 }
 
-.diff-viewer__hint {
-  font-size: 11px;
+.diff-viewer__toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.diff-viewer__diff-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  border-left: none;
+  padding-left: 0;
+}
+
+.diff-viewer__diff-nav .icon-btn {
+  width: 22px;
+  height: 22px;
   color: var(--text-muted);
+}
+
+.diff-viewer__diff-nav .icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .diff-viewer__meta {
@@ -5039,7 +5109,6 @@ body.files-split-resizing .monaco-editor {
 
 .anno-inline {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .anno-decoration {
@@ -5047,24 +5116,20 @@ body.files-split-resizing .monaco-editor {
 }
 
 .anno-inline-intersection {
-  border-bottom: 2px solid color-mix(in srgb, var(--accent) 95%, transparent);
   box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .anno-inline-intersection--3 {
-  border-bottom-color: var(--accent);
   box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .anno-inline--active {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, var(--accent) 90%, transparent);
 }
 
 /* Stored coords when text match failed — still visible after reopening a diff */
 .anno-inline--unresolved {
   background: color-mix(in srgb, var(--warn) 18%, transparent);
-  border-bottom: 2px dashed color-mix(in srgb, var(--warn) 70%, transparent);
 }
 
 .anno-decoration--active {
@@ -5494,8 +5559,8 @@ body.files-split-resizing .monaco-editor {
 
 .host-choice {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
   padding: 0;
   border-radius: 0;
   background: transparent;
@@ -5505,8 +5570,9 @@ body.files-split-resizing .monaco-editor {
 .host-choice__card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  min-width: 0;
+  gap: 3px;
+  padding: 7px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
@@ -5545,13 +5611,13 @@ body.files-split-resizing .monaco-editor {
 
 .host-choice__title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .host-choice__desc {
-  font-size: 11.5px;
+  font-size: 10px;
   color: var(--text-secondary);
-  line-height: 1.35;
+  line-height: 1.2;
 }
 
 .field--grow {
@@ -5588,15 +5654,51 @@ body.files-split-resizing .monaco-editor {
   font: inherit;
 }
 
+/* Keep focused SSH inputs inside the modal border on narrow windows. */
+.modal--wide .modal__body,
+.modal--wide .modal__fields,
+.modal--wide .field,
+.modal--wide .field__input {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.modal--wide .field__input {
+  width: 100%;
+}
+
 .field__input:focus {
   outline: none;
   border-color: var(--accent-border-strong);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
+.modal--wide {
+  width: min(560px, calc(100vw - 32px));
+  height: min(620px, calc(100vh - 32px));
+  max-height: min(620px, calc(100vh - 32px));
+  padding-bottom: 16px;
+}
 
-.field__input--mono {
-  font-family: var(--font-mono);
-  font-size: 12px;
+.modal--wide .modal__body--ssh {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 8px;
+}
+.modal__body--ssh .modal__fields {
+  gap: 6px;
+}
+
+.modal__body--ssh .field {
+  gap: 2px;
+}
+
+.modal__body--ssh .field__input {
+  height: 27px;
+}
+
+.modal__body--ssh .wsl-browser {
+  gap: 5px;
+  padding: 6px;
 }
 
 select.field__input {
@@ -5609,6 +5711,53 @@ select.field__input {
   height: min(580px, calc(100vh - 48px));
   max-height: min(580px, calc(100vh - 48px));
   padding-bottom: 22px;
+}
+
+/* SSH has five connection fields; use two columns so the remote browser and actions remain visible. */
+.modal__body--ssh .modal__fields {
+  display: grid;
+  grid-template-columns: 3fr 2fr 5fr;
+  align-content: start;
+  gap: 6px 8px;
+}
+
+.modal__body--ssh .field--ssh-host {
+  grid-column: 1;
+}
+
+.modal__body--ssh .field--ssh-port {
+  grid-column: 2;
+}
+
+.modal__body--ssh .field--ssh-username {
+  grid-column: 3;
+}
+
+.modal__body--ssh .field--ssh-key {
+  grid-column: 1 / 3;
+}
+
+.modal__body--ssh .field--ssh-password {
+  grid-column: 3;
+}
+
+.modal__body--ssh .field--grow {
+  grid-column: 1 / -1;
+  min-height: 150px;
+}
+
+.modal__body--ssh .field__label {
+  font-size: 10.5px;
+}
+
+.modal__body--ssh .field__input {
+  height: 26px;
+}
+
+.modal__body--ssh {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
 }
 
 .wsl-browser {
@@ -5641,6 +5790,11 @@ select.field__input {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 2px;
+}
+
+.wsl-browser__list.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
 }
 
 .wsl-browser__list {
@@ -6712,4 +6866,11 @@ select.field__input {
   opacity: 0.72;
   padding-left: 16px;
   white-space: pre;
+}
+
+.monaco-editor .anno-inline .git-blame-inline,
+.monaco-editor .anno-inline-intersection .git-blame-inline {
+  background: transparent !important;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
 }

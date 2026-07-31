@@ -190,41 +190,40 @@ export function FileTree() {
     };
     const snapshot = (nodes: TreeNode[]): Map<string, string> => {
       const m = new Map<string, string>();
-      const walk = (ns: TreeNode[]) => {
+      const walk = (ns: TreeNode[], parentPath: string) => {
+        m.set(parentPath, ns.map((n) => `${n.type[0]}${n.name}`).sort().join("\n"));
         for (const n of ns) {
           if (n.type === "dir" && n.expanded && n.loaded && n.children) {
-            m.set(
-              n.path,
-              n.children.map((c) => `${c.type[0]}${c.name}`).sort().join("\n"),
-            );
+            walk(n.children, n.path);
           }
-          if (n.children?.length) walk(n.children);
         }
       };
-      walk(nodes);
+      walk(nodes, workspaceRoot);
       return m;
     };
+    let polling = false;
     const timer = window.setInterval(async () => {
-      const { rootEntries } = useWorkspaceStore.getState();
-      const dirs = collectExpandedDirs(rootEntries, [workspaceRoot]);
-      const prev = snapshot(rootEntries);
-      for (const dir of dirs) {
-        try {
-          const entries = await window.anchor.workspace.listDir(dir);
-          const sig = entries
-            .map((e) => `${e.type[0]}${e.name}`)
-            .sort()
-            .join("\n");
-          if (prev.get(dir) !== sig) {
-            await refreshDir(dir);
+      if (polling) return;
+      polling = true;
+      try {
+        const { rootEntries } = useWorkspaceStore.getState();
+        const dirs = collectExpandedDirs(rootEntries, [workspaceRoot]);
+        const prev = snapshot(rootEntries);
+        for (const dir of dirs) {
+          try {
+            const entries = await window.anchor.workspace.listDir(dir);
+            const sig = entries.map((e) => `${e.type[0]}${e.name}`).sort().join("\n");
+            if (dir !== workspaceRoot && prev.get(dir) !== sig) {
+              await refreshDir(dir);
+            }
+          } catch {
+            // Non-fatal: preserve the current tree on remote errors.
           }
-        } catch {
-          // non-fatal
         }
+      } finally {
+        polling = false;
       }
-      invalidateFileIndexCache();
-      warmFileIndexCache(workspaceRoot);
-    }, 4000);
+    }, 6000);
     return () => window.clearInterval(timer);
   }, [workspaceRoot, hostKind, refreshDir]);
 

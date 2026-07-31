@@ -89,6 +89,8 @@ export function createHostForProfile(profile: HostProfile): HostSession {
         port: profile.ssh.port,
         username: profile.ssh.username,
         privateKeyPath: profile.ssh.privateKeyPath,
+        password: profile.ssh.password,
+        knownHostsPolicy: profile.ssh.knownHostsPolicy,
       });
     }
     default: {

@@ -21,13 +21,16 @@ export interface SshHostOptions {
   /** Inline private key (prefer path). */
   privateKey?: string;
   passphrase?: string;
+  password?: string;
+  knownHostsPolicy?: "accept-new" | "strict" | "ignore";
   readyTimeoutMs?: number;
 }
 
-/**
- * Generic SSH HostSession (optional path for true remote; WSL prefers WslHostSession).
- */
+/** Generic SSH HostSession for remote workspaces. */
+const SSH_DIR_CACHE_TTL_MS = 1000;
+
 export class SshHostSession implements HostSession {
+
   readonly id: string;
   readonly kind = "ssh" as const;
   readonly profileId: string;
@@ -36,6 +39,7 @@ export class SshHostSession implements HostSession {
   private readonly opts: SshHostOptions;
   private client: Client | null = null;
   private sftp: SFTPWrapper | null = null;
+  private readonly dirCache = new Map<string, { expiresAt: number; entries: DirEntry[] }>();
   private connecting: Promise<void> | null = null;
   private openPtys = new Set<PtyHandle>();
 
@@ -117,17 +121,23 @@ export class SshHostSession implements HostSession {
         .on("close", () => {
           this.client = null;
           this.sftp = null;
-        })
-        .connect({
-          host: this.opts.host,
-          port: this.opts.port ?? 22,
-          username: this.opts.username,
-          privateKey,
-          passphrase: this.opts.passphrase,
-          readyTimeout: this.opts.readyTimeoutMs ?? 15_000,
-          // agent if no key
-          agent: privateKey ? undefined : process.env.SSH_AUTH_SOCK,
         });
+      if (this.opts.password) {
+        client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
+          finish(prompts.map(() => this.opts.password ?? ""));
+        });
+      }
+      client.connect({
+        host: this.opts.host,
+        port: this.opts.port ?? 22,
+        username: this.opts.username,
+        privateKey,
+        passphrase: this.opts.passphrase,
+        password: privateKey ? undefined : this.opts.password,
+        readyTimeout: this.opts.readyTimeoutMs ?? 15_000,
+        ...(this.opts.knownHostsPolicy === "ignore" ? { hostVerifier: () => true } : {}),
+        agent: privateKey || this.opts.password ? undefined : process.env.SSH_AUTH_SOCK,
+      });
     });
   }
 
@@ -298,6 +308,8 @@ export class SshHostSession implements HostSession {
   async listDir(dirPath: string): Promise<DirEntry[]> {
     const sftp = await this.ensureSftp();
     const p = hostNormalize("ssh", dirPath);
+    const cached = this.dirCache.get(p);
+    if (cached && cached.expiresAt > Date.now()) return cached.entries;
     return new Promise((resolve, reject) => {
       sftp.readdir(p, (err, list) => {
         if (err) {
@@ -306,14 +318,9 @@ export class SshHostSession implements HostSession {
         }
         const entries: DirEntry[] = (list ?? [])
           .filter((e) => e.filename !== "." && e.filename !== "..")
-          .map((e) => ({
-            name: e.filename,
-            type: (e.attrs.isDirectory?.() ? "dir" : "file") as "file" | "dir",
-          }));
-        entries.sort((a, b) => {
-          if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
-          return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-        });
+          .map((e) => ({ name: e.filename, type: (e.attrs.isDirectory?.() ? "dir" : "file") as "file" | "dir" }))
+          .sort((a, b) => a.type !== b.type ? (a.type === "dir" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        this.dirCache.set(p, { entries, expiresAt: Date.now() + SSH_DIR_CACHE_TTL_MS });
         resolve(entries);
       });
     });
@@ -553,7 +560,7 @@ function mapSftpError(err: Error & { code?: number | string }, message: string):
     return new HostError("not_found", message, err.message);
   }
   if (code === 3 || code === "EACCES") {
-    return new HostError("permission", message, err.message);
+    return new HostError("permission", `Permission denied. ${message}`, err.message);
   }
   return new HostError("failed", message, err.message);
 }

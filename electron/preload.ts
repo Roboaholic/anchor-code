@@ -48,6 +48,7 @@ export interface HostProfile {
     port?: number;
     username: string;
     privateKeyPath?: string;
+    knownHostsPolicy?: "accept-new" | "strict" | "ignore";
   };
   wsl?: {
     distro?: string;
@@ -171,9 +172,12 @@ const anchor = {
       ipcRenderer.invoke("host:wslHome", args ?? {}),
     browseListDir: (args: {
       path: string;
-      kind: "wsl" | "ssh";
+      kind?: "wsl" | "ssh";
       distro?: string;
+      profileId?: string;
     }): Promise<DirEntry[]> => ipcRenderer.invoke("host:browseListDir", args),
+    testProfile: (profileId: string): Promise<{ ok: true }> =>
+      ipcRenderer.invoke("host:testProfile", profileId),
     useProfile: (
       profileId: string,
     ): Promise<{ id: string; kind: HostKind; profileId: string }> =>

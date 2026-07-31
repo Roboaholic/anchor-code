@@ -25,6 +25,20 @@ export interface OverlapRegion {
   depth: number;
 }
 
+/** Monaco selections ending at column 1 visually stop at the previous line. */
+export function visualDecorationSpec(
+  spec: DecorationSpec,
+  lineMaxColumn: (line: number) => number,
+): DecorationSpec {
+  if (spec.endLine <= spec.startLine || spec.endColumn !== 1) return spec;
+  const endLine = spec.endLine - 1;
+  return {
+    ...spec,
+    endLine,
+    endColumn: lineMaxColumn(endLine),
+  };
+}
+
 function rangesOverlap(a: DecorationSpec, b: DecorationSpec): boolean {
   if (a.endLine < b.startLine || b.endLine < a.startLine) return false;
   if (a.startLine === a.endLine && b.startLine === b.endLine) {

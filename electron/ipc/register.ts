@@ -1,13 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import { applyWindowChromeTheme } from "../windowChrome.js";
-import type { HostManager } from "../host/hostManager.js";
+import { createHostForProfile, type HostManager } from "../host/hostManager.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
   hostBasename,
   hostJoin,
   hostNormalize,
 } from "../host/paths.js";
-import { HostError } from "../host/types.js";
+import { HostError, type HostSession } from "../host/types.js";
 import {
   addComment,
   copyYamlPath,
@@ -130,6 +130,7 @@ export function registerIpc(opts: {
   const { hosts, getMainWindow, appVersion, terminal, fileWatcher } = opts;
 
   const host = () => hosts.session;
+  const browseSessions = new Map<string, HostSession>();
 
   // ── shell ──────────────────────────────────────────
   ipcMain.handle("shell:getVersion", async () => {
@@ -252,29 +253,70 @@ export function registerIpc(opts: {
     "host:browseListDir",
     async (
       _evt,
-      args: { path: string; kind: "wsl" | "ssh"; distro?: string },
+      args: {
+        path: string;
+        kind?: "wsl" | "ssh";
+        distro?: string;
+        profileId?: string;
+      },
     ) => {
       try {
         if (!args?.path || typeof args.path !== "string") {
           throw new HostError("failed", "Invalid browse path");
         }
-        if (args.kind !== "wsl") {
-          throw new HostError("not_implemented", "Browse only supports WSL for now");
+        const kind = args.kind ?? (args.profileId ? "ssh" : undefined);
+        if (kind === "wsl") {
+          const session = new WslHostSession({
+            profileId: "wsl-browse",
+            distro: args.distro,
+          });
+          try {
+            return await session.listDir(args.path);
+          } finally {
+            await session.dispose();
+          }
         }
-        const session = new WslHostSession({
-          profileId: "wsl-browse",
-          distro: args.distro,
-        });
-        try {
-          return await session.listDir(args.path);
-        } finally {
-          await session.dispose();
+        if (kind !== "ssh" || !args.profileId) {
+          throw new HostError("failed", "SSH browse requires profileId");
         }
+        const profile = await getHostProfile(args.profileId);
+        if (!profile) {
+          throw new HostError("not_found", `Host profile not found: ${args.profileId}`);
+        }
+        if (profile.kind !== "ssh") {
+          throw new HostError("failed", "Host profile is not an SSH profile");
+        }
+        let session = browseSessions.get(profile.id);
+        if (!session) {
+          session = createHostForProfile(profile);
+          browseSessions.set(profile.id, session);
+        }
+        return await session.listDir(args.path);
       } catch (err) {
         rethrowIpc(err);
       }
     },
   );
+
+  ipcMain.handle("host:testProfile", async (_evt, profileId: string) => {
+    try {
+      if (!profileId || typeof profileId !== "string") {
+        throw new HostError("failed", "profileId required");
+      }
+      const profile = await getHostProfile(profileId);
+      if (!profile) throw new HostError("not_found", `Host profile not found: ${profileId}`);
+      if (profile.kind !== "ssh") throw new HostError("failed", "Host profile is not an SSH profile");
+      const session = createHostForProfile(profile);
+      try {
+        await session.run("/", "true", []);
+        return { ok: true };
+      } finally {
+        await session.dispose();
+      }
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
 
   ipcMain.handle(
     "host:useProfile",

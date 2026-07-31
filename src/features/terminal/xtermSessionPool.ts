@@ -5,10 +5,16 @@
  * Without a pool, that dispose()s xterm and wipes scrollback. Sessions here
  * survive React unmount; they only die when the PTY tab is closed/reset.
  */
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILink, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { xtermThemeFromCss, type UiTheme } from "@/core/theme/theme";
 import { useTerminalStore } from "./terminalStore";
+import { useDocumentStore } from "@/features/document/documentStore";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import {
+  findTerminalFileLinks,
+  resolveTerminalFilePath,
+} from "./terminalFileLinks";
 
 export type PooledXterm = {
   id: string;
@@ -21,6 +27,60 @@ export type PooledXterm = {
 
 const pool = new Map<string, PooledXterm>();
 const fitDebounceTimers = new Map<string, number>();
+
+function registerFileLinkProvider(term: Terminal): IDisposable {
+  return term.registerLinkProvider({
+    provideLinks(bufferLineNumber, callback) {
+      const line = term.buffer.active.getLine(bufferLineNumber - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      const workspaceRoot = useWorkspaceStore.getState().workspaceRoot;
+      if (!workspaceRoot) {
+        callback(undefined);
+        return;
+      }
+      const links = findTerminalFileLinks(line.translateToString(true));
+      if (links.length === 0) {
+        callback(undefined);
+        return;
+      }
+
+      void Promise.all(
+        links.map(async (link): Promise<ILink | null> => {
+          const path = resolveTerminalFilePath(workspaceRoot, link.path);
+          let isFile = false;
+          try {
+            isFile = (await window.anchor.workspace.stat(path)).isFile;
+          } catch {
+            isFile = false;
+          }
+          if (!isFile) return null;
+
+          return {
+            text: link.text,
+            range: {
+              start: { x: link.startIndex + 1, y: bufferLineNumber },
+              end: { x: link.endIndex, y: bufferLineNumber },
+            },
+            activate: () => {
+              useWorkspaceStore.getState().setSelectedPath(path);
+              void useDocumentStore.getState().openFile({
+                path,
+                workspaceRoot,
+                revealLine: link.line,
+              });
+            },
+          };
+        }),
+      ).then((resolved) => {
+        const valid = resolved.filter((link): link is ILink => link !== null);
+        callback(valid.length > 0 ? valid : undefined);
+      });
+    },
+  });
+}
 
 /**
  * Resize terminal to the host box. Skips when cols/rows already match so
@@ -83,6 +143,7 @@ export function acquireXtermSession(
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(hostEl);
+  const fileLinks = registerFileLinkProvider(term);
 
   const offData = window.anchor.terminal.onData((payload) => {
     if (payload.id === id) term.write(payload.data);
@@ -90,11 +151,11 @@ export function acquireXtermSession(
   const offExit = window.anchor.terminal.onExit((payload) => {
     if (payload.id !== id) return;
     term.writeln(`\r\n[process exited: ${payload.exitCode}]`);
-    if (kind === "agent" || payload.kind === "agent") {
-      window.setTimeout(() => {
-        useTerminalStore.getState().removeTabLocal(id);
-      }, 80);
-    }
+    useTerminalStore.setState((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === id ? { ...tab, status: "exited" } : tab,
+      ),
+    }));
   });
 
   term.onData((data) => useTerminalStore.getState().write(id, data));
@@ -173,6 +234,7 @@ export function acquireXtermSession(
     () => {
       offData();
       offExit();
+      fileLinks.dispose();
     };
 
   const session: PooledXterm = { id, kind, term, fit, hostEl };

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   focusedSessionForDecorations,
   overlapRegionsForModel,
+  visualDecorationSpec,
   type DecorationSpec,
 } from "./annotationsStore";
 
@@ -22,6 +23,24 @@ function spec(
     overlapCount: 1,
   };
 }
+
+describe("visualDecorationSpec", () => {
+  it("stops a multiline column-one endpoint at the previous line end", () => {
+    const multiline = { ...spec("multi", 4, 1), startLine: 10, endLine: 12 };
+
+    expect(visualDecorationSpec(multiline, (line) => (line === 11 ? 24 : 1))).toMatchObject({
+      startLine: 10,
+      startColumn: 4,
+      endLine: 11,
+      endColumn: 24,
+    });
+  });
+
+  it("keeps other ranges unchanged", () => {
+    const range = { ...spec("multi", 4, 7), startLine: 10, endLine: 12 };
+    expect(visualDecorationSpec(range, () => 99)).toBe(range);
+  });
+});
 
 describe("overlapRegionsForModel", () => {
   it("darkens only the intersection of contained comments", () => {

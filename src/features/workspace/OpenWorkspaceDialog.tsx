@@ -29,8 +29,13 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const [browsePath, setBrowsePath] = useState<string>("/");
   const [dirs, setDirs] = useState<DirEntry[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
-  const [homePath, setHomePath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState("22");
+  const [sshUsername, setSshUsername] = useState("");
+  const [sshPrivateKeyPath, setSshPrivateKeyPath] = useState("");
+  const [sshProfileId, setSshProfileId] = useState<string | null>(null);
+  const [sshPassword, setSshPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   /** Skip distro-change effect on first open (init effect already loads). */
   const skipDistroEffect = useRef(true);
@@ -51,21 +56,25 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       },
     [profiles],
   );
-
-  const loadBrowse = useCallback(async (path: string, distro: string) => {
+  const loadBrowse = useCallback(async (
+    path: string,
+    distro: string,
+    browseKind: "wsl" | "ssh" = "wsl",
+    profileId?: string,
+  ) => {
     setBrowseLoading(true);
     setError(null);
     try {
       const entries = await window.anchor.host.browseListDir({
         path,
-        kind: "wsl",
+        kind: browseKind,
         distro: distro || undefined,
-      });
+        ...(profileId ? { profileId } : {}),
+      } as Parameters<typeof window.anchor.host.browseListDir>[0]);
       const onlyDirs = filterBrowseDirs(entries);
       setDirs(onlyDirs);
       setBrowsePath(path);
     } catch (err) {
-      setDirs([]);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBrowseLoading(false);
@@ -78,7 +87,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     setBusy(false);
     setDirs([]);
     setBrowsePath("/");
-    setHomePath(null);
     skipDistroEffect.current = true;
     let cancelled = false;
     void (async () => {
@@ -86,6 +94,18 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
         const list = (await window.anchor?.host?.listProfiles?.()) ?? [];
         if (cancelled) return;
         setProfiles(list);
+        const ssh = list.find((p) => p.kind === "ssh");
+        if (ssh?.ssh) {
+          setSshProfileId(ssh.id);
+          setSshHost(ssh.ssh.host);
+          setSshPort(String(ssh.ssh.port ?? 22));
+          setSshUsername(ssh.ssh.username);
+          setSshPrivateKeyPath(ssh.ssh.privateKeyPath ?? "");
+          setSshPassword(ssh.ssh.password ?? "");
+        } else {
+          setSshProfileId(null);
+          setSshPassword("");
+        }
         if (win) {
           const d = (await window.anchor?.host?.listWslDistros?.()) ?? [];
           if (cancelled) return;
@@ -97,7 +117,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
               distro: distro || undefined,
             })) ?? "/home";
           if (cancelled) return;
-          setHomePath(home);
           await loadBrowse(home, distro);
         }
         const last = list.find((p) =>
@@ -114,6 +133,35 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       cancelled = true;
     };
   }, [open, win, loadBrowse]);
+  useEffect(() => {
+    if (!open || kind !== "ssh" || !sshHost.trim() || !sshUsername.trim()) return;
+    let cancelled = false;
+    void (async () => {
+      const profile: HostProfile = {
+        id: sshProfileId ?? "ssh-workspace",
+        kind: "ssh",
+        label: `${sshUsername.trim()}@${sshHost.trim()}`,
+        ssh: {
+          host: sshHost.trim(),
+          port: Number(sshPort) || 22,
+          username: sshUsername.trim(),
+          ...(!sshPassword && sshPrivateKeyPath.trim() ? { privateKeyPath: sshPrivateKeyPath.trim() } : {}),
+          ...(sshPassword ? { password: sshPassword } : {}),
+        },
+      };
+      try {
+        await window.anchor.host.upsertProfile(profile);
+        if (cancelled) return;
+        setSshProfileId(profile.id);
+        await loadBrowse("/", "", "ssh", profile.id);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, kind, sshHost, sshPort, sshUsername, sshPrivateKeyPath, sshProfileId, loadBrowse]);
 
   useEffect(() => {
     if (!open || kind !== "wsl" || !win || !selectedDistro) return;
@@ -128,7 +176,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           (await window.anchor.host.wslHome({ distro: selectedDistro })) ??
           "/home";
         if (cancelled) return;
-        setHomePath(home);
         await loadBrowse(home, selectedDistro);
       } catch (err) {
         if (!cancelled) {
@@ -199,6 +246,29 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       setBusy(false);
     }
   }
+  async function chooseSsh() {
+    const host = sshHost.trim();
+    const username = sshUsername.trim();
+    const path = browsePath.trim();
+    const port = Number(sshPort);
+    if (!host || !username) { setError("Enter an SSH host and username"); return; }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) { setError("Enter a valid SSH port"); return; }
+    if (!path.startsWith("/")) { setError("Select a remote POSIX folder"); return; }
+    setBusy(true); setError(null);
+    try {
+      const profile: HostProfile = {
+        id: sshProfileId ?? `ssh-${host}-${username}`,
+        kind: "ssh",
+        label: `${username}@${host}`,
+        ssh: { host, port, username, ...(sshPrivateKeyPath.trim() ? { privateKeyPath: sshPrivateKeyPath.trim() } : {}), ...(sshPassword ? { password: sshPassword } : {}) },
+      };
+      await window.anchor.host.upsertProfile(profile);
+      await window.anchor.host.useProfile(profile.id);
+      onOpen({ path, hostProfileId: profile.id, hostKind: "ssh" });
+      onClose();
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  }
 
   const parent = parentPosix(browsePath);
   const canGoUp = parent !== null;
@@ -248,136 +318,73 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           </label>
 
           {win ? (
-            <label
-              className={`host-choice__card${kind === "wsl" ? " is-selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="host-kind"
-                checked={kind === "wsl"}
-                onChange={() => setKind("wsl")}
-              />
+            <label className={`host-choice__card${kind === "wsl" ? " is-selected" : ""}`}>
+              <input type="radio" name="host-kind" checked={kind === "wsl"} onChange={() => setKind("wsl")} />
               <span className="host-choice__title">WSL</span>
-              <span className="host-choice__desc">
-                Linux distro via wsl.exe — POSIX paths, shell inside WSL
-              </span>
+              <span className="host-choice__desc">Linux distro via wsl.exe — POSIX paths, shell inside WSL</span>
             </label>
           ) : null}
+          <label className={`host-choice__card${kind === "ssh" ? " is-selected" : ""}`}>
+            <input type="radio" name="host-kind" checked={kind === "ssh"} onChange={() => setKind("ssh")} />
+            <span className="host-choice__title">SSH</span>
+            <span className="host-choice__desc">Remote Linux host via SSH — POSIX paths</span>
+          </label>
         </div>
+        <div className={`modal__body${kind === "ssh" ? " modal__body--ssh" : ""}`}>
 
-        <div className="modal__body">
-          {kind === "wsl" && win ? (
+          {kind === "ssh" ? (
             <div className="modal__fields">
-              {distros.length > 0 ? (
-                <label className="field">
-                  <span className="field__label">Distro</span>
-                  <select
-                    className="field__input"
-                    value={selectedDistro}
-                    onChange={(e) => setSelectedDistro(e.target.value)}
-                  >
-                    {distros.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
+              <label className="field field--ssh-host">
+                <span className="field__label">Host</span>
+                <input className="field__input" value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+              </label>
+              <label className="field field--ssh-port">
+                <span className="field__label">Port</span>
+                <input className="field__input" inputMode="numeric" value={sshPort} onChange={(e) => setSshPort(e.target.value)} />
+              </label>
+              <label className="field field--ssh-username">
+                <span className="field__label">Username</span>
+                <input className="field__input" value={sshUsername} onChange={(e) => setSshUsername(e.target.value)} />
+              </label>
+              <label className="field field--ssh-key">
+                <span className="field__label">Private key path (optional)</span>
+                <input className="field__input" value={sshPrivateKeyPath} onChange={(e) => setSshPrivateKeyPath(e.target.value)} />
+              </label>
+              <label className="field field--ssh-password">
+                <span className="field__label">Password (optional)</span>
+                <input className="field__input" type="password" value={sshPassword} onChange={(e) => setSshPassword(e.target.value)} autoComplete="new-password" />
+              </label>
+              <div className="field field--grow">
+                <span className="field__label">Remote POSIX folder</span>
+                <div className="wsl-browser">
+                  <div className="wsl-browser__toolbar">
+                    <button type="button" className="btn btn--ghost btn--small" disabled={!canGoUp || browseLoading} onClick={() => { if (parent) void loadBrowse(parent, "", "ssh", sshProfileId ?? undefined); }}>Up</button>
+                    <span className="wsl-browser__path">{browsePath}</span>
+                  </div>
+                  <div className={`wsl-browser__list${browseLoading ? " is-loading" : ""}`} role="listbox" aria-label="Remote folders">
+                    {dirs.length === 0 && browseLoading ? <div className="wsl-browser__empty">Loading…</div> : dirs.length === 0 ? <div className="wsl-browser__empty">No subfolders</div> : dirs.map((d) => (
+                      <button key={d.name} type="button" role="option" className="wsl-browser__row" disabled={browseLoading} onClick={() => void loadBrowse(joinPosix(browsePath, d.name), "", "ssh", sshProfileId ?? undefined)}>
+                        <Icon name="folder" className="wsl-browser__icon" />
+                        <span className="wsl-browser__name">{d.name}</span>
+                      </button>
                     ))}
-                  </select>
-                </label>
-              ) : (
-                <p className="modal__hint">
-                  No distros listed — default WSL distro will be used.
-                </p>
-              )}
-
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : kind === "wsl" && win ? (
+            <div className="modal__fields">
+              {distros.length > 0 ? <label className="field"><span className="field__label">Distro</span><select className="field__input" value={selectedDistro} onChange={(e) => setSelectedDistro(e.target.value)}>{distros.map((d) => <option key={d} value={d}>{d}</option>)}</select></label> : <p className="modal__hint">No distros listed — default WSL distro will be used.</p>}
               <div className="field field--grow">
                 <span className="field__label">Workspace folder</span>
                 <div className="wsl-browser">
-                  <div className="wsl-browser__toolbar">
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--small"
-                      disabled={!canGoUp || browseLoading}
-                      onClick={() => {
-                        if (parent) void loadBrowse(parent, selectedDistro);
-                      }}
-                      title="Go up"
-                    >
-                      <Icon
-                        name="chevron-right"
-                        className="btn__icon wsl-browser__up-icon"
-                      />
-                      Up
-                    </button>
-                    {homePath ? (
-                      <button
-                        type="button"
-                        className="btn btn--ghost btn--small"
-                        disabled={browseLoading || browsePath === homePath}
-                        onClick={() =>
-                          void loadBrowse(homePath, selectedDistro)
-                        }
-                        title={homePath}
-                      >
-                        <Icon name="home" className="btn__icon" />
-                        Home
-                      </button>
-                    ) : null}
-                    <span className="wsl-browser__path" title={browsePath}>
-                      {browsePath}
-                    </span>
-                  </div>
-
-                  <div
-                    className="wsl-browser__list"
-                    role="listbox"
-                    aria-label="Folders"
-                  >
-                    {browseLoading ? (
-                      <div className="wsl-browser__empty">Loading…</div>
-                    ) : dirs.length === 0 ? (
-                      <div className="wsl-browser__empty">No subfolders</div>
-                    ) : (
-                      dirs.map((d) => (
-                        <button
-                          key={d.name}
-                          type="button"
-                          role="option"
-                          className="wsl-browser__row"
-                          onClick={() =>
-                            void loadBrowse(
-                              joinPosix(browsePath, d.name),
-                              selectedDistro,
-                            )
-                          }
-                        >
-                          <Icon name="folder" className="wsl-browser__icon" />
-                          <span className="wsl-browser__name">{d.name}</span>
-                          <Icon
-                            name="chevron-right"
-                            className="wsl-browser__chevron"
-                          />
-                        </button>
-                      ))
-                    )}
-                  </div>
-
-                  <p className="wsl-browser__hint">
-                    Selected:{" "}
-                    <code className="wsl-browser__code">{browsePath}</code>
-                    {" — "}
-                    click a folder to enter, then Open Workspace.
-                  </p>
+                  <div className="wsl-browser__toolbar"><button type="button" className="btn btn--ghost btn--small" disabled={!canGoUp || browseLoading} onClick={() => { if (parent) void loadBrowse(parent, selectedDistro); }}>Up</button><span className="wsl-browser__path">{browsePath}</span></div>
+                  <div className="wsl-browser__list" role="listbox" aria-label="Folders">{browseLoading ? <div className="wsl-browser__empty">Loading…</div> : dirs.length === 0 ? <div className="wsl-browser__empty">No subfolders</div> : dirs.map((d) => <button key={d.name} type="button" role="option" className="wsl-browser__row" onClick={() => void loadBrowse(joinPosix(browsePath, d.name), selectedDistro)}><Icon name="folder" className="wsl-browser__icon" /><span className="wsl-browser__name">{d.name}</span></button>)}</div>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="modal__body-local">
-              <strong>Local workspace</strong>
-              <span>
-                Use the system folder picker to choose a directory on this
-                machine. Paths stay native Windows/macOS/Linux.
-              </span>
-            </div>
+            <div className="modal__body-local"><strong>Local workspace</strong><span>Use the system folder picker to choose a directory on this machine.</span></div>
           )}
         </div>
 
@@ -406,7 +413,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
               type="button"
               className="btn btn--accent"
               disabled={busy || !browsePath.startsWith("/") || browseLoading}
-              onClick={() => void chooseWsl()}
+              onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}
             >
               {busy ? "Opening…" : "Open Workspace"}
             </button>

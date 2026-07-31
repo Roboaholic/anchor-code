@@ -14,6 +14,8 @@ export interface SshProfileConfig {
   port?: number;
   username: string;
   privateKeyPath?: string;
+  /** Session-only password; never persisted by the settings writer. */
+  password?: string;
   knownHostsPolicy?: "accept-new" | "strict" | "ignore";
 }
 

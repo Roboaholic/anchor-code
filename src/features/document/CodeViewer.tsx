@@ -12,6 +12,7 @@ import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
   overlapRegionsForModel,
   useAnnotationsStore,
+  visualDecorationSpec,
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
@@ -270,12 +271,18 @@ export function CodeViewer({
       const ed = editorRef.current;
       if (!ed) return;
       const specs = decorationsFor(path, content);
-      specsRef.current = specs;
+      const model = ed.getModel();
+      const visualSpecs = model
+        ? specs.map((spec) =>
+            visualDecorationSpec(spec, (line) => model.getLineMaxColumn(line)),
+          )
+        : specs;
+      specsRef.current = visualSpecs;
       const activeId =
         activeCommentId !== undefined
           ? activeCommentId
           : bubbleRef.current?.commentId ?? null;
-      const decorations: MonacoEditor.IModelDeltaDecoration[] = specs
+      const decorations: MonacoEditor.IModelDeltaDecoration[] = visualSpecs
         .filter(
           (s) =>
             s.anchorStatus === "resolved" || s.anchorStatus === "relocated",
@@ -302,10 +309,9 @@ export function CodeViewer({
             },
           };
         });
-      const model = ed.getModel();
       if (model) {
         decorations.push(
-          ...overlapRegionsForModel(specs, (line) => model.getLineMaxColumn(line)).map(
+          ...overlapRegionsForModel(visualSpecs, (line) => model.getLineMaxColumn(line)).map(
             (region) => ({
               range: {
                 startLineNumber: region.startLine,
@@ -327,7 +333,7 @@ export function CodeViewer({
 
       const open = bubbleRef.current;
       if (!open) return;
-      const still = specs.find((s) => s.commentId === open.commentId);
+      const still = visualSpecs.find((s) => s.commentId === open.commentId);
       if (!still) {
         // Spec gone (session switched / comment deleted) — close bubble only.
         bubbleRef.current = null;

@@ -78,6 +78,18 @@ export function TerminalPanel({
       useTerminalStore.getState().setSessionListOpen(panelMode, true);
     }
   }, [tabsPlacement, panelMode, sessionListOpenByMode]);
+  useEffect(() => {
+    if (!activeTabId) return;
+    let frame = 0;
+    let attempts = 0;
+    const refit = () => {
+      fitXtermSession(activeTabId, true);
+      if (attempts++ < 8) frame = requestAnimationFrame(refit);
+    };
+    frame = requestAnimationFrame(refit);
+    scheduleFitXtermSession(activeTabId, 180);
+    return () => cancelAnimationFrame(frame);
+  }, [activeTabId, maximized]);
 
   const onAdd = useCallback(() => {
     if (!workspaceRoot) return;
@@ -147,7 +159,9 @@ export function TerminalPanel({
               aria-pressed={maximized}
               title={
                 maximized
-                  ? `Restore ${isAgent ? "agent panel" : "terminal"} (Esc)`
+                  ? isAgent
+                    ? "Restore agent panel"
+                    : "Restore terminal (Esc)"
                   : `Maximize ${isAgent ? "agent panel" : "terminal"}`
               }
               onClick={onToggleMaximized}

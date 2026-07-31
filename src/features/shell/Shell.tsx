@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import {
   Panel,
   PanelGroup,
@@ -86,6 +87,9 @@ export function Shell() {
   const [terminalOverlayTop, setTerminalOverlayTop] = useState(0);
   const [agentMaximized, setAgentMaximized] = useState(false);
   const [agentOverlayLeft, setAgentOverlayLeft] = useState(0);
+  const [agentOverlayWidth, setAgentOverlayWidth] = useState(0);
+  const [agentOverlayHeight, setAgentOverlayHeight] = useState(0);
+  const [agentOverlayTop, setAgentOverlayTop] = useState(0);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(
     null,
   );
@@ -98,8 +102,8 @@ export function Shell() {
   const leftPanelRef = useRef<ImperativePanelHandle>(null);
   const agentPanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
+  const agentTerminalPanelRef = useRef<ImperativePanelHandle>(null);
   const terminalDragCleanupRef = useRef<(() => void) | null>(null);
-  const agentDragCleanupRef = useRef<(() => void) | null>(null);
   const terminalRestoreSizeRef = useRef(28);
   const agentRestoreSizeRef = useRef(28);
 
@@ -173,11 +177,31 @@ export function Shell() {
     window.addEventListener("pointerup", onEnd, true);
     window.addEventListener("pointercancel", onEnd, true);
   };
+  const measureAgentOverlayBounds = () => {
+    const group = document.querySelector<HTMLElement>(".shell__panels--main");
+    if (!group) return { left: 0, top: 0, width: 0, height: 0 };
+    const groupRect = group.getBoundingClientRect();
+    const leftHandle = group.querySelector<HTMLElement>(".resize-handle--left");
+    const leftPanel = group.querySelector<HTMLElement>(".shell__left-panel");
+    const left = leftVisible
+      ? (leftHandle?.getBoundingClientRect().right ?? leftPanel?.getBoundingClientRect().right ?? groupRect.left)
+      : groupRect.left;
+    return {
+      left,
+      top: groupRect.top,
+      width: Math.max(0, groupRect.right - left),
+      height: groupRect.height,
+    };
+  };
 
   const enterAgentMaximized = () => {
     setTerminalMaximized(false);
     agentRestoreSizeRef.current = agentPanelRef.current?.getSize() ?? 28;
-    setAgentOverlayLeft(leftVisible ? (leftPanelRef.current?.getSize() ?? 0) : 0);
+    const bounds = measureAgentOverlayBounds();
+    setAgentOverlayLeft(bounds.left);
+    setAgentOverlayTop(bounds.top);
+    setAgentOverlayWidth(bounds.width);
+    setAgentOverlayHeight(bounds.height);
     setAgentMaximized(true);
   };
 
@@ -186,60 +210,26 @@ export function Shell() {
     setAgentMaximized(false);
   };
 
-  const beginAgentLimitDrag = (event: PointerEvent, fromMaximized: boolean) => {
-    if (event.button !== 0) return;
-    agentDragCleanupRef.current?.();
-    const startX = event.clientX;
-    let limitX: number | null =
-      !fromMaximized && (agentPanelRef.current?.getSize() ?? 0) >= 49.5
-        ? startX
-        : null;
-    const group = (event.target as Element | null)?.closest(".shell__panels--main");
-    const groupRect = group?.getBoundingClientRect() ?? null;
-    const fullLeft = agentOverlayLeft;
-    let restoreSize: number | null = null;
-
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onEnd, true);
-      window.removeEventListener("pointercancel", onEnd, true);
-      agentDragCleanupRef.current = null;
+  useEffect(() => {
+    if (!agentMaximized) return;
+    const group = document.querySelector<HTMLElement>(".shell__panels--main");
+    const leftPanel = group?.querySelector<HTMLElement>(".shell__left-panel");
+    const leftHandle = group?.querySelector<HTMLElement>(".resize-handle--left");
+    if (!group) return;
+    const sync = () => {
+      const bounds = measureAgentOverlayBounds();
+      setAgentOverlayLeft(bounds.left);
+      setAgentOverlayTop(bounds.top);
+      setAgentOverlayWidth(bounds.width);
+      setAgentOverlayHeight(bounds.height);
     };
-    const onMove = (moveEvent: PointerEvent) => {
-      if (fromMaximized && groupRect) {
-        const minimumLeft = groupRect.left + groupRect.width * (fullLeft / 100);
-        const nextX = Math.max(
-          minimumLeft,
-          Math.min(moveEvent.clientX, groupRect.right - groupRect.width * 0.18),
-        );
-        const leftRatio = ((nextX - groupRect.left) / groupRect.width) * 100;
-        setAgentOverlayLeft(leftRatio);
-        restoreSize = leftRatio >= 50 ? Math.max(18, 100 - leftRatio) : null;
-        return;
-      }
+    const observer = new ResizeObserver(sync);
+    observer.observe(group);
+    if (leftPanel) observer.observe(leftPanel);
+    if (leftHandle) observer.observe(leftHandle);
+    return () => observer.disconnect();
+  }, [agentMaximized, leftVisible]);
 
-      const panelAtLimit = (agentPanelRef.current?.getSize() ?? 0) >= 49.5;
-      if (!panelAtLimit) {
-        limitX = null;
-        return;
-      }
-      if (limitX == null) limitX = moveEvent.clientX;
-      if (limitX - moveEvent.clientX < 32) return;
-      cleanup();
-      enterAgentMaximized();
-    };
-    const onEnd = () => {
-      cleanup();
-      if (!fromMaximized) return;
-      if (restoreSize == null) setAgentOverlayLeft(fullLeft);
-      else restoreAgent(restoreSize);
-    };
-
-    agentDragCleanupRef.current = cleanup;
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onEnd, true);
-    window.addEventListener("pointercancel", onEnd, true);
-  };
   useEffect(() => {
     if (terminalMaximized) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -252,23 +242,11 @@ export function Shell() {
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [terminalMaximized]);
 
-  useEffect(() => {
-    if (agentMaximized) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const handle = document.querySelector<HTMLElement>(".resize-handle--agent");
-      const rect = handle?.getBoundingClientRect();
-      if (!rect || Math.abs(event.clientX - rect.left) > 8) return;
-      beginAgentLimitDrag(event, false);
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [agentMaximized, leftVisible]);
 
 
   useEffect(
     () => () => {
       terminalDragCleanupRef.current?.();
-      agentDragCleanupRef.current?.();
     },
     [],
   );
@@ -415,21 +393,30 @@ export function Shell() {
   }, [showAgent, agentMaximized]);
 
   useEffect(() => {
-    if (!terminalMaximized && !agentMaximized) return;
+    if (!terminalMaximized) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       restoreTerminal();
-      restoreAgent();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [terminalMaximized, agentMaximized]);
+  }, [terminalMaximized]);
+
+  useEffect(() => {
+    if (agentMaximized || !showTerminal) return;
+    let frame = requestAnimationFrame(() => {
+      terminalPanelRef.current?.resize(28);
+      frame = requestAnimationFrame(() => terminalPanelRef.current?.resize(28));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [agentMaximized, showTerminal]);
 
   // Never remount PanelGroup for these toggles — only collapse/expand.
   useCollapsiblePanel(leftPanelRef, leftVisible, 22);
   useCollapsiblePanel(agentPanelRef, showAgent, 28);
   useCollapsiblePanel(terminalPanelRef, showTerminal, 28);
+  useCollapsiblePanel(agentTerminalPanelRef, agentMaximized && showTerminal, 28);
 
   return (
     <div className="shell">
@@ -529,11 +516,11 @@ export function Shell() {
         */}
         <PanelGroup
           direction="horizontal"
-          autoSaveId="anchor-shell-v7"
-          className="shell__panels shell__panels--main"
+          className={`shell__panels shell__panels--main${agentMaximized ? " is-agent-maximized" : ""}`}
         >
           <Panel
             ref={leftPanelRef}
+            className="shell__left-panel"
             order={1}
             collapsible
             collapsedSize={0}
@@ -546,7 +533,7 @@ export function Shell() {
             <LeftNav />
           </Panel>
           <PanelResizeHandle
-            className="resize-handle"
+            className="resize-handle resize-handle--left"
             style={{ display: leftVisible ? undefined : "none" }}
           />
 
@@ -589,7 +576,7 @@ export function Shell() {
                       }
                     />
                   ) : null}
-                  {workspaceRoot ? (
+                  {workspaceRoot && !agentMaximized ? (
                     <TerminalPanel
                       mode="terminal"
                       maximized={terminalMaximized}
@@ -603,15 +590,14 @@ export function Shell() {
               </PanelGroup>
             </div>
           </Panel>
-
           <PanelResizeHandle
             className="resize-handle resize-handle--agent"
             style={{ display: showAgent && !agentMaximized ? undefined : "none" }}
           />
+
           <Panel
             ref={agentPanelRef}
-            className={`shell__agent-panel${agentMaximized ? " is-maximized" : ""}`}
-            style={agentMaximized ? { left: `${agentOverlayLeft}%` } : undefined}
+            className="shell__agent-panel"
             order={3}
             collapsible
             collapsedSize={0}
@@ -620,28 +606,67 @@ export function Shell() {
             maxSize={50}
             id="agent"
           >
-            {agentMaximized ? (
-              <div
-                className="agent-maximized-drag-handle"
-                aria-label="Drag right to restore agent panel"
-                onPointerDown={(event) =>
-                  beginAgentLimitDrag(event.nativeEvent, true)
-                }
-              />
-            ) : null}
-            {workspaceRoot ? (
-              <TerminalPanel
-                mode="agent"
-                maximized={agentMaximized}
-                onToggleMaximized={() => {
-                  if (agentMaximized) restoreAgent();
-                  else enterAgentMaximized();
-                }}
-              />
+            {workspaceRoot && !agentMaximized ? (
+              <div className="shell__agent-content">
+                <TerminalPanel
+                  mode="agent"
+                  maximized={false}
+                  onToggleMaximized={enterAgentMaximized}
+                />
+              </div>
             ) : null}
           </Panel>
         </PanelGroup>
       </div>
+      {workspaceRoot && agentMaximized
+        ? createPortal(
+            <div
+              className="shell__agent-content is-maximized"
+              style={{
+                left: agentOverlayLeft,
+                top: agentOverlayTop,
+                width: agentOverlayWidth,
+                height: agentOverlayHeight,
+              }}
+            >
+              <PanelGroup
+                direction="vertical"
+                autoSaveId="anchor-shell-agent-maximized-v1"
+                className="shell__panels shell__panels--col"
+              >
+                <Panel order={1} defaultSize={showTerminal ? 72 : 100} minSize={25}>
+                  <TerminalPanel
+                    mode="agent"
+                    maximized={true}
+                    onToggleMaximized={() => restoreAgent()}
+                  />
+                </Panel>
+                <PanelResizeHandle
+                  className="resize-handle resize-handle--row"
+                  style={{ display: showTerminal ? undefined : "none" }}
+                />
+                <Panel
+                  ref={agentTerminalPanelRef}
+                  order={2}
+                  collapsible
+                  collapsedSize={0}
+                  defaultSize={showTerminal ? 28 : 0}
+                  minSize={12}
+                  maxSize={75}
+                >
+                  {showTerminal ? (
+                    <TerminalPanel
+                      mode="terminal"
+                      maximized={false}
+                      onToggleMaximized={enterTerminalMaximized}
+                    />
+                  ) : null}
+                </Panel>
+              </PanelGroup>
+            </div>,
+            document.body,
+          )
+        : null}
 
       <OpenWorkspaceDialog
         open={openWorkspaceDialog}

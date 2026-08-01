@@ -391,18 +391,6 @@ button:disabled {
   color: var(--text-secondary);
   box-shadow: none;
 }
-.app-menubar__mode {
-  height: 26px;
-  padding: 0 8px;
-  gap: 5px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-
-.app-menubar__mode.is-active {
-  color: var(--accent);
-  background: var(--bg-muted);
-}
 
 .btn.app-menubar__rail.is-active:hover,
 .app-menubar__rail.is-active:hover {

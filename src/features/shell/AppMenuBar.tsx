@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/shared/Icon";
 import { useShellStore } from "./shellStore";
-
 type MenuId = "file" | "view" | "window";
 
 type MenuItem =
@@ -121,14 +120,11 @@ async function runMenuAction(action: string): Promise<void> {
 export function AppMenuBar() {
   const [openId, setOpenId] = useState<MenuId | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const toggleLeft = useShellStore((s) => s.toggleLeft);
   const leftVisible = useShellStore((s) => s.leftVisible);
-  // macOS renders the native app menu bar at the top of the screen; showing the
-  // in-window File/View/Window menus here would duplicate it (and the duplicate
-  // has click/timing issues). Hide the menus on macOS but keep the rail toggle.
-  const isMac =
-    document.documentElement.dataset.platform === "darwin";
-
+  const toggleLeft = useShellStore((s) => s.toggleLeft);
+  const leftMode = useShellStore((s) => s.leftMode);
+  const setLeftMode = useShellStore((s) => s.setLeftMode);
+  const isMac = document.documentElement.dataset.platform === "darwin";
   useEffect(() => {
     if (!openId) return;
     const onKey = (e: KeyboardEvent) => {
@@ -166,65 +162,85 @@ export function AppMenuBar() {
       >
         <Icon name="layout-sidebar-left" className="btn__icon" />
       </button>
-      {isMac
-        ? null
-        : MENUS.map((menu) => {
-            const open = openId === menu.id;
-            return (
-          <div key={menu.id} className="app-menubar__item">
-            <button
-              type="button"
-              className={`app-menubar__btn${open ? " is-open" : ""}`}
-              role="menuitem"
-              aria-haspopup="menu"
-              aria-expanded={open}
-              onClick={() => setOpenId(open ? null : menu.id)}
-              onMouseEnter={() => {
-                if (openId) setOpenId(menu.id);
-              }}
-            >
-              {menu.label}
-            </button>
-            {open ? (
-              <div className="app-menubar__menu" role="menu">
-                {menu.items.map((item, idx) => {
-                  if (item.kind === "separator") {
+      {isMac ? (
+        ([
+          ["files", "FILES", "files"],
+          ["comments", "COMMENTS", "comment-discussion"],
+          ["history", "HISTORY", "history"],
+        ] as const).map(([id, label, icon]) => (
+          <button
+            key={id}
+            type="button"
+            className={`btn btn--ghost app-menubar__mode${leftMode === id ? " is-active" : ""}`}
+            onClick={() => {
+              setLeftMode(id);
+              useShellStore.getState().setLeftVisible(true);
+            }}
+            aria-pressed={leftMode === id}
+            title={label}
+          >
+            <Icon name={icon} className="btn__icon" />
+            {label}
+          </button>
+        ))
+      ) : (
+        MENUS.map((menu) => {
+          const open = openId === menu.id;
+          return (
+            <div key={menu.id} className="app-menubar__item">
+              <button
+                type="button"
+                className={`app-menubar__btn${open ? " is-open" : ""}`}
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpenId(open ? null : menu.id)}
+                onMouseEnter={() => {
+                  if (openId) setOpenId(menu.id);
+                }}
+              >
+                {menu.label}
+              </button>
+              {open ? (
+                <div className="app-menubar__menu" role="menu">
+                  {menu.items.map((item, idx) => {
+                    if (item.kind === "separator") {
+                      return (
+                        <div
+                          key={`sep-${menu.id}-${idx}`}
+                          className="app-menubar__sep"
+                          role="separator"
+                        />
+                      );
+                    }
                     return (
-                      <div
-                        key={`sep-${menu.id}-${idx}`}
-                        className="app-menubar__sep"
-                        role="separator"
-                      />
-                    );
-                  }
-                  return (
-                    <button
-                      key={item.action}
-                      type="button"
-                      className="app-menubar__entry"
-                      role="menuitem"
-                      onClick={() => {
-                        setOpenId(null);
-                        void runMenuAction(item.action);
-                      }}
-                    >
-                      <span className="app-menubar__entry-label">
-                        {item.label}
-                      </span>
-                      {item.accelerator ? (
-                        <span className="app-menubar__entry-accel">
-                          {item.accelerator}
+                      <button
+                        key={item.action}
+                        type="button"
+                        className="app-menubar__entry"
+                        role="menuitem"
+                        onClick={() => {
+                          setOpenId(null);
+                          void runMenuAction(item.action);
+                        }}
+                      >
+                        <span className="app-menubar__entry-label">
+                          {item.label}
                         </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        );
-          })}
-      <div className="app-menubar__drag" aria-hidden />
+                        {item.accelerator ? (
+                          <span className="app-menubar__entry-accel">
+                            {item.accelerator}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

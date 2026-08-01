@@ -212,8 +212,11 @@ export function FileTree() {
         for (const dir of dirs) {
           try {
             const entries = await window.anchor.workspace.listDir(dir);
-            const sig = entries.map((e) => `${e.type[0]}${e.name}`).sort().join("\n");
-            if (dir !== workspaceRoot && prev.get(dir) !== sig) {
+            const sig = entries
+              .map((e) => `${e.type[0]}${e.name}`)
+              .sort()
+              .join("\n");
+            if (prev.get(dir) !== sig) {
               await refreshDir(dir);
             }
           } catch {

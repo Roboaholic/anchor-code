@@ -27,6 +27,24 @@ export type PooledXterm = {
 
 const pool = new Map<string, PooledXterm>();
 const fitDebounceTimers = new Map<string, number>();
+export function terminalKeySequence(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}): string | null {
+  if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    return "\t";
+  }
+  if (
+    event.key === "Enter" &&
+    (event.ctrlKey || event.shiftKey || event.metaKey)
+  ) {
+    return "\x1b\r";
+  }
+  return null;
+}
 
 function registerFileLinkProvider(term: Terminal): IDisposable {
   return term.registerLinkProvider({
@@ -136,6 +154,9 @@ export function acquireXtermSession(
     allowProposedApi: true,
     rightClickSelectsWord: false,
     scrollback: 50_000,
+    windowsPty: navigator.platform.startsWith("Win")
+      ? { backend: "conpty", buildNumber: 21376 }
+      : undefined,
     windowOptions: {
       setWinLines: false,
     },
@@ -162,11 +183,10 @@ export function acquireXtermSession(
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
-    if (e.key === "Enter" && (e.ctrlKey || e.shiftKey || e.metaKey)) {
+    const sequence = terminalKeySequence(e);
+    if (sequence !== null) {
       e.preventDefault();
-      // ESC + CR is the conventional terminal sequence used by multiline
-      // prompts for Shift/Ctrl+Enter; plain Enter remains a bare CR submit.
-      useTerminalStore.getState().write(id, "\x1b\r");
+      useTerminalStore.getState().write(id, sequence);
       return false;
     }
     const mod = e.ctrlKey || e.metaKey;

@@ -252,50 +252,59 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   refreshDir: async (dirPath) => {
-    const { rootEntries, workspaceRoot } = get();
+    const workspaceRoot = get().workspaceRoot;
     if (!workspaceRoot) return;
 
-    // Root changed → reload top-level entries directly.
-    if (dirPath === workspaceRoot) {
-      try {
-        const children = await loadChildren(workspaceRoot);
-        set({ rootEntries: children });
-      } catch {
-        // non-fatal: leave existing tree
-      }
+    let children: TreeNode[];
+    try {
+      children = await loadChildren(dirPath);
+    } catch {
+      // Non-fatal: preserve the current tree on transient watcher errors.
       return;
     }
 
-    // Reload only if the directory is currently expanded & loaded (mirrors
-    // toggleDir's recursion, but always refetches the matched node).
-    const reloadNode = async (nodes: TreeNode[]): Promise<TreeNode[]> => {
-      const result: TreeNode[] = [];
-      for (const node of nodes) {
-        if (node.path === dirPath && node.type === "dir") {
-          if (node.expanded && node.loaded) {
-            try {
-              const children = await loadChildren(node.path);
-              result.push({ ...node, children, error: undefined });
-            } catch {
-              result.push(node);
-            }
-          } else {
-            result.push(node);
-          }
-        } else if (node.children && node.children.length > 0) {
-          result.push({
-            ...node,
-            children: await reloadNode(node.children),
-          });
-        } else {
-          result.push(node);
-        }
-      }
-      return result;
+    const preserveLoadedState = (
+      fresh: TreeNode[],
+      previous: TreeNode[],
+    ): TreeNode[] => {
+      const byPath = new Map(previous.map((node) => [node.path, node]));
+      return fresh.map((node) => {
+        const old = byPath.get(node.path);
+        if (!old || node.type !== "dir" || old.type !== "dir") return node;
+        return {
+          ...node,
+          expanded: old.expanded,
+          loaded: old.loaded,
+          children: old.children,
+          error: old.error,
+        };
+      });
     };
 
-    const next = await reloadNode(rootEntries);
-    set({ rootEntries: next });
+    set((state) => {
+      // Apply against the latest tree so concurrent watcher refreshes compose.
+      if (dirPath === workspaceRoot) {
+        return {
+          rootEntries: preserveLoadedState(children, state.rootEntries),
+        };
+      }
+
+      const reloadNode = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.map((node) => {
+          if (node.path === dirPath && node.type === "dir") {
+            if (!node.expanded || !node.loaded) return node;
+            return {
+              ...node,
+              children: preserveLoadedState(children, node.children ?? []),
+              error: undefined,
+            };
+          }
+          if (!node.children?.length) return node;
+          return { ...node, children: reloadNode(node.children) };
+        });
+
+      return { rootEntries: reloadNode(state.rootEntries) };
+    });
   },
 
   deleteNode: async (path) => {

@@ -181,9 +181,12 @@ function buildPtyEnv(): Record<string, string> {
     // Git fetch/push often look "dead" in an Electron-hosted PTY because:
     // 1) Credential Manager needs an interactive UI (browser/dialog)
     // 2) up-to-date fetch prints almost nothing
-    // Force interactive credential prompts when possible.
+    // Keep credential prompts interactive and make fetch/push progress immediate.
     if (!env.GCM_INTERACTIVE) env.GCM_INTERACTIVE = "always";
     if (!env.GIT_TERMINAL_PROMPT) env.GIT_TERMINAL_PROMPT = "1";
+    if (!env.GIT_PROGRESS_DELAY) env.GIT_PROGRESS_DELAY = "0";
+    // Native Git progress is emitted on stderr; force it for quiet remotes too.
+    if (!env.GIT_FLUSH) env.GIT_FLUSH = "1";
     // Prefer the Windows Git credential manager UI over a blank TTY wait.
     if (!env.GIT_ASKPASS && !env.SSH_ASKPASS) {
       // Leave unset so GCM/schannel can use their native UI; do not force

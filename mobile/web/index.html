@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+    <meta name="theme-color" content="#0b0f14" />
+    <title>Anchor Mobile</title>
+    <script>
+      if (!Object.hasOwn) {
+        Object.defineProperty(Object, "hasOwn", {
+          configurable: true,
+          writable: true,
+          value: function (object, property) {
+            return Object.prototype.hasOwnProperty.call(object, property);
+          }
+        });
+      }
+      if (!Array.prototype.at) {
+        Object.defineProperty(Array.prototype, "at", {
+          configurable: true,
+          writable: true,
+          value: function (index) {
+            var length = this.length >>> 0;
+            var normalized = Number(index) || 0;
+            if (normalized < 0) normalized += length;
+            return normalized < 0 || normalized >= length ? undefined : this[normalized];
+          }
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <main style="min-height:100vh;display:grid;place-content:center;padding:28px;background:#090d12;color:#edf2f7;font-family:system-ui;text-align:center">
+        <div style="font:600 48px Georgia;color:#d8ff67">A</div>
+        <h1 style="margin:14px 0 8px">Anchor Mobile</h1>
+        <p style="color:#93a0ad;line-height:1.6">源码页面不能通过 file:// 直接运行，请使用本地预览服务。</p>
+        <a href="http://127.0.0.1:5174/" style="display:block;margin-top:16px;padding:14px 20px;border-radius:14px;background:#d8ff67;color:#101409;text-decoration:none;font-weight:800">打开手机端预览</a>
+      </main>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

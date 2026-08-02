@@ -288,6 +288,10 @@ export function Shell() {
           openPalette("quickOpen");
         } else if (cmd.type === "openFilePath") {
           openPalette("openPath");
+        } else if (cmd.type === "workspaceChanged" && cmd.path) {
+          void import("./orchestrate").then((m) =>
+            m.openWorkspacePath(cmd.path!, cmd.hostProfileId),
+          );
         }
       }) ?? (() => undefined);
 

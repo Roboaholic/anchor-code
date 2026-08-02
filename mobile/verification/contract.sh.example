@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+export ANCHOR_RELAY_URL='https://anchor-code-relay.anchor-code-mobile.workers.dev'
+export ANCHOR_APK='/absolute/path/to/mobile/android/app/build/outputs/apk/debug/app-debug.apk'
+
+export ANDROID_ADB='/home/zhenyu/env/android-sdk/platform-tools/adb'
+export ANDROID_EMULATOR_SERIAL='emulator-5554'
+
+# Windows ADB sees the attached tablet. Keep its server separate from WSL ADB.
+export TABLET_ADB='/mnt/c/platform-tools/adb.exe'
+export TABLET_ADB_PORT='5038'
+export TABLET_SERIAL='<adb serial>'

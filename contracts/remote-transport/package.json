@@ -1,0 +1,9 @@
+{
+  "name": "@anchor-code/remote-transport",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./v1": "./v1/index.ts"
+  }
+}

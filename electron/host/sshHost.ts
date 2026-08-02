@@ -477,18 +477,29 @@ export class SshHostSession implements HostSession {
     const id = `ssh-pty-${randomUUID().slice(0, 8)}`;
     const dataListeners = new Set<(data: string) => void>();
     const exitListeners = new Set<(code: number) => void>();
+    let pendingData = "";
+    let pendingExitCode: number | null = null;
     let alive = true;
 
     channel.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
+      if (dataListeners.size === 0) {
+        pendingData = `${pendingData}${text}`.slice(-512 * 1024);
+        return;
+      }
       for (const cb of dataListeners) cb(text);
     });
     channel.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
+      if (dataListeners.size === 0) {
+        pendingData = `${pendingData}${text}`.slice(-512 * 1024);
+        return;
+      }
       for (const cb of dataListeners) cb(text);
     });
     channel.on("close", () => {
       alive = false;
+      if (exitListeners.size === 0) pendingExitCode = 0;
       for (const cb of exitListeners) cb(0);
       this.openPtys.delete(handle);
     });
@@ -509,9 +520,19 @@ export class SshHostSession implements HostSession {
       },
       onData(cb) {
         dataListeners.add(cb);
+        if (pendingData) {
+          const replay = pendingData;
+          pendingData = "";
+          cb(replay);
+        }
       },
       onExit(cb) {
         exitListeners.add(cb);
+        if (pendingExitCode !== null) {
+          const replay = pendingExitCode;
+          pendingExitCode = null;
+          cb(replay);
+        }
       },
       kill() {
         if (!alive) return;

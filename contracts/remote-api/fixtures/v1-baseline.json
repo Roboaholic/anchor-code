@@ -1,0 +1,32 @@
+{
+  "protocolMajor": 1,
+  "requiredCapabilities": [
+    "workspace.select",
+    "review.inline-diff",
+    "comments.lifecycle",
+    "agent.session-sync",
+    "terminal.snapshot-seq",
+    "terminal.long-poll-events"
+  ],
+  "requiredPaths": [
+    "/meta",
+    "/health",
+    "/bootstrap",
+    "/workspaces",
+    "/workspaces/select",
+    "/files",
+    "/file",
+    "/search",
+    "/history/log",
+    "/history/status",
+    "/history/compare",
+    "/history/file-diff",
+    "/comments",
+    "/agents/sessions",
+    "/terminals",
+    "/terminal-events",
+    "/terminals/{terminalId}",
+    "/terminals/{terminalId}/input",
+    "/terminals/{terminalId}/resize"
+  ]
+}

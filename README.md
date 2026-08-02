@@ -31,6 +31,24 @@ Feedback is meant to go back to the agent: copy the session YAML path from Comme
 
 Repeat until you are satisfied.
 
+## Android companion (development preview)
+
+The repository now includes `mobile/`, an Android companion that connects back
+to the Anchor Code desktop app. It supports mobile review of code/Markdown,
+worktree diffs, structured comments, comment status/replies, and remote Agent
+CLI sessions. See [mobile/README.md](mobile/README.md) for build, security,
+encrypted Relay access, emulator, and tablet verification instructions.
+
+PC and companion development are separated by a versioned Remote API and a
+shared PC application-facade layer. See [ARCHITECTURE.md](ARCHITECTURE.md) for
+module ownership, dependency rules, and compatibility policy.
+
+The mobile app connects only through the end-to-end encrypted Cloudflare Relay.
+The PC opens an outbound WSS connection, so users do not expose a port or enter
+an IP address/token in the App. See
+[REMOTE_CONNECTIVITY_PLAN.md](REMOTE_CONNECTIVITY_PLAN.md) for the security
+model, deployment status, and acceptance criteria.
+
 ## Requirements
 
 - Desktop: Windows, macOS, or Linux

@@ -29,11 +29,57 @@ export interface TerminalCreateOptions {
   agentId?: string;
 }
 
+export type TerminalServiceEvent =
+  | { type: "created"; info: TerminalTabInfo }
+  | { type: "updated"; info: TerminalTabInfo }
+  | { type: "data"; id: string; data: string; seq: number }
+  | {
+      type: "exit";
+      id: string;
+      exitCode: number;
+      kind: TerminalSessionKind;
+    }
+  | { type: "removed"; id: string; kind: TerminalSessionKind };
+
 interface TabInternal {
   info: TerminalTabInfo;
   handle: PtyHandle;
-  /** Recent PTY output for agent topic scraping (TUI apps like Codex). */
-  outBuf?: string;
+  /** Recent raw PTY output for reconnecting remote xterm clients. */
+  outBuf: BoundedTextBuffer;
+  /** Monotonic per-session output cursor used to merge snapshot + live data. */
+  outputSeq: number;
+}
+
+const REMOTE_REPLAY_MAX_CHARS = 512 * 1024;
+const TERMINAL_EVENT_MAX_CHARS = 64 * 1024;
+
+/** Chunked ring buffer avoids repeatedly copying a 512 KiB string per PTY write. */
+class BoundedTextBuffer {
+  private chunks: string[] = [];
+  private length = 0;
+
+  constructor(private readonly maxChars: number) {}
+
+  append(value: string): void {
+    if (!value) return;
+    this.chunks.push(value);
+    this.length += value.length;
+    while (this.length > this.maxChars && this.chunks.length > 0) {
+      const overflow = this.length - this.maxChars;
+      const first = this.chunks[0]!;
+      if (first.length <= overflow) {
+        this.chunks.shift();
+        this.length -= first.length;
+      } else {
+        this.chunks[0] = first.slice(overflow);
+        this.length -= overflow;
+      }
+    }
+  }
+
+  toString(): string {
+    return this.chunks.join("");
+  }
 }
 
 /**
@@ -45,6 +91,7 @@ export class TerminalService {
   private getWindow: () => BrowserWindow | null;
   private getHost: () => HostSession;
   private counter = 0;
+  private subscribers = new Set<(event: TerminalServiceEvent) => void>();
 
   constructor(
     getWindow: () => BrowserWindow | null,
@@ -61,8 +108,40 @@ export class TerminalService {
     }
   }
 
+  subscribe(listener: (event: TerminalServiceEvent) => void): () => void {
+    this.subscribers.add(listener);
+    return () => this.subscribers.delete(listener);
+  }
+
+  private emit(event: TerminalServiceEvent): void {
+    for (const listener of this.subscribers) {
+      try {
+        listener(event);
+      } catch {
+        // A remote observer must never disrupt the PTY callback.
+      }
+    }
+  }
+
+  private publishInfo(type: "created" | "updated", info: TerminalTabInfo): void {
+    this.send(`terminal:${type}`, { info });
+    this.emit({ type, info });
+  }
+
   list(): TerminalTabInfo[] {
     return [...this.tabs.values()].map((t) => t.info);
+  }
+
+  snapshot(id: string): string | null {
+    const tab = this.tabs.get(id);
+    if (!tab) return null;
+    return tab.outBuf.toString();
+  }
+
+  snapshotState(id: string): { data: string; seq: number } | null {
+    const tab = this.tabs.get(id);
+    if (!tab) return null;
+    return { data: tab.outBuf.toString(), seq: tab.outputSeq };
   }
 
   async create(opts: TerminalCreateOptions): Promise<TerminalTabInfo> {
@@ -101,25 +180,45 @@ export class TerminalService {
       agentId: opts.agentId,
       titleSource: "default",
     };
-    this.tabs.set(handle.id, { info, handle });
+    this.tabs.set(handle.id, {
+      info,
+      handle,
+      outBuf: new BoundedTextBuffer(REMOTE_REPLAY_MAX_CHARS),
+      outputSeq: 0,
+    });
 
     handle.onData((data) => {
-      this.send("terminal:data", { id: handle.id, data });
+      const current = this.tabs.get(handle.id);
+      if (!current) return;
+      current.outBuf.append(data);
+      for (let offset = 0; offset < data.length; offset += TERMINAL_EVENT_MAX_CHARS) {
+        const chunk = data.slice(offset, offset + TERMINAL_EVENT_MAX_CHARS);
+        current.outputSeq += 1;
+        const seq = current.outputSeq;
+        this.send("terminal:data", { id: handle.id, data: chunk, seq });
+        this.emit({ type: "data", id: handle.id, data: chunk, seq });
+      }
       // Intentionally no PTY topic inference for agents — TUI noise is unreliable.
     });
     handle.onExit((exitCode) => {
       const tab = this.tabs.get(handle.id);
       if (tab) {
         tab.info = { ...tab.info, status: "exited" };
-        tab.outBuf = undefined;
       }
       this.send("terminal:exit", {
         id: handle.id,
         exitCode,
-        kind: tab?.info.kind ?? "shell",
+        kind: tab?.info.kind ?? info.kind,
+      });
+      this.emit({
+        type: "exit",
+        id: handle.id,
+        exitCode,
+        kind: tab?.info.kind ?? info.kind,
       });
     });
 
+    this.publishInfo("created", info);
     return info;
   }
 
@@ -128,6 +227,7 @@ export class TerminalService {
     if (!tab) return null;
     const next = title.trim() || tab.info.title;
     tab.info = { ...tab.info, title: next, titleSource: "user" };
+    this.publishInfo("updated", tab.info);
     return tab.info;
   }
 
@@ -145,6 +245,7 @@ export class TerminalService {
     const next = normalizeDynamicTitle(rawTitle, tab.info.title);
     if (!next || next === tab.info.title) return tab.info;
     tab.info = { ...tab.info, title: next, titleSource: "inferred" };
+    this.publishInfo("updated", tab.info);
     return tab.info;
   }
   /**
@@ -174,12 +275,15 @@ export class TerminalService {
   kill(id: string): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    const kind = tab.info.kind;
     try {
       tab.handle.kill();
     } catch {
       // ignore
     }
     this.tabs.delete(id);
+    this.send("terminal:removed", { id, kind });
+    this.emit({ type: "removed", id, kind });
   }
 
   disposeAll(): void {

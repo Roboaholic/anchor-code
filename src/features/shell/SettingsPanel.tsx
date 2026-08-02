@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import QRCode from "qrcode";
 import {
   DEFAULT_FONT_SIZE,
   MAX_FONT_SIZE,
@@ -7,6 +8,7 @@ import {
 import { Icon } from "@/shared/Icon";
 import type {
   AppUpdateState,
+  RemoteAccessInfo,
   SessionTabLayout,
   SkillInstallStatus,
   UiTheme,
@@ -59,10 +61,11 @@ const LAYOUT_OPTIONS: Array<{
   },
 ];
 
-type SettingsSection = "appearance" | "agent-skill" | "updates";
+type SettingsSection = "appearance" | "remote" | "agent-skill" | "updates";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
+  { id: "remote", label: "Mobile access" },
   { id: "agent-skill", label: "Agent skill" },
   { id: "updates", label: "Updates" },
 ];
@@ -94,6 +97,11 @@ export function SettingsPanel() {
   const [selectedTargets, setSelectedTargets] = useState<Record<string, true>>(
     {},
   );
+  const [remoteInfo, setRemoteInfo] = useState<RemoteAccessInfo | null>(null);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [relayEnabled, setRelayEnabled] = useState(false);
+  const [pairingQr, setPairingQr] = useState<string | null>(null);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
 
   const onClose = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
 
@@ -114,12 +122,91 @@ export function SettingsPanel() {
     if (!open) return;
     if (
       settingsFocusSection === "appearance" ||
+      settingsFocusSection === "remote" ||
       settingsFocusSection === "agent-skill" ||
       settingsFocusSection === "updates"
     ) {
       setSection(settingsFocusSection);
     }
   }, [open, settingsFocusSection]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!window.anchor?.remote?.getInfo) {
+      setRemoteError("桌面主进程版本过旧，请完全退出并重新启动 Anchor Code。");
+      return;
+    }
+    setRemoteError(null);
+    void window.anchor.remote.getInfo().then((info) => {
+      setRemoteInfo(info);
+      setRelayEnabled(info.enabled);
+    }).catch((error: unknown) => {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || section !== "remote" || !window.anchor?.remote?.getInfo) return;
+    let cancelled = false;
+    const refresh = () => {
+      void window.anchor.remote.getInfo().then((info) => {
+        if (!cancelled) setRemoteInfo(info);
+      }).catch(() => {
+        // Keep the last useful status; explicit Apply surfaces configuration errors.
+      });
+    };
+    const timer = window.setInterval(refresh, 1_000);
+    refresh();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, section]);
+
+  useEffect(() => {
+    if (!open || section !== "remote") {
+      setPairingQr(null);
+      return;
+    }
+    const pairing = remoteInfo?.relay?.state === "online" ? remoteInfo.relay.pairing : undefined;
+    if (!pairing) {
+      setPairingQr(null);
+      return;
+    }
+    const payload = JSON.stringify(pairing);
+    let cancelled = false;
+    void QRCode.toDataURL(payload, {
+      width: 800,
+      margin: 4,
+      errorCorrectionLevel: "M",
+      color: { dark: "#10151b", light: "#ffffff" },
+    }).then((dataUrl) => {
+      if (!cancelled) setPairingQr(dataUrl);
+    }).catch(() => {
+      if (!cancelled) setPairingQr(null);
+    });
+    return () => { cancelled = true; };
+  }, [open, remoteInfo, section]);
+
+  const saveRemote = useCallback(async (enabled?: boolean) => {
+    if (!window.anchor?.remote?.update) {
+      setRemoteError("桌面主进程版本过旧，请完全退出并重新启动 Anchor Code。");
+      return;
+    }
+    setRemoteBusy(true);
+    setRemoteError(null);
+    try {
+      const next = await window.anchor.remote.update({
+        enabled: enabled ?? relayEnabled,
+      });
+      setRemoteInfo(next);
+      setRelayEnabled(next.enabled);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoteBusy(false);
+    }
+  }, [relayEnabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -467,6 +554,102 @@ export function SettingsPanel() {
                   })}
                 </div>
 
+              </section>
+            ) : null}
+
+            {section === "remote" ? (
+              <section className="settings-section mobile-access" aria-label="Mobile access">
+                <div className="mobile-access__heading">
+                  <div>
+                    <h3 className="settings-section__title">Anchor Mobile access</h3>
+                    <p className="settings-section__desc muted">
+                      Secure remote review through the end-to-end encrypted Anchor Relay.
+                    </p>
+                  </div>
+                  <span className={`mobile-access__state is-${remoteInfo?.relay?.state ?? "disabled"}`}>
+                    <i />{remoteInfo?.relay?.state ?? "disabled"}
+                  </span>
+                </div>
+
+                <div className="mobile-access__control">
+                  <span className="mobile-access__control-icon"><Icon name="radio-tower" /></span>
+                  <div className="mobile-access__control-copy">
+                    <b>Encrypted relay</b>
+                    <code>{remoteInfo?.relay?.url ?? "https://anchor-code-relay.anchor-code-mobile.workers.dev"}</code>
+                  </div>
+                  <label className="mobile-access__toggle">
+                    <input
+                      type="checkbox"
+                      checked={relayEnabled}
+                      onChange={(event) => setRelayEnabled(event.target.checked)}
+                    />
+                    <span aria-hidden />
+                    <em>{relayEnabled ? "Enabled" : "Disabled"}</em>
+                  </label>
+                  <div className="mobile-access__control-actions">
+                    <button
+                      type="button"
+                      className="btn btn--accent btn--small"
+                      disabled={remoteBusy || !window.anchor?.remote?.update}
+                      onClick={() => void saveRemote(relayEnabled)}
+                    >
+                      {remoteBusy ? "Applying…" : remoteInfo?.enabled ? "Apply & refresh QR" : "Apply"}
+                    </button>
+                    {remoteInfo?.enabled ? (
+                      <button type="button" className="btn btn--small" disabled={remoteBusy} onClick={() => void saveRemote(false)}>
+                        Disable
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {remoteError || remoteInfo?.relay?.error ? (
+                  <p className="settings-update-card__err mobile-access__error" role="alert">{remoteError ?? remoteInfo?.relay?.error}</p>
+                ) : null}
+
+                <div className="mobile-access__layout">
+                  <section className="mobile-access__devices" aria-label="Paired devices">
+                    <div className="mobile-access__subhead">
+                      <div><span>Devices</span><b>Paired and pending access</b></div>
+                      <strong>{remoteInfo?.relay?.connectedGuests ?? 0} online</strong>
+                    </div>
+                    <div className="mobile-access__device-list">
+                      {remoteInfo?.relay?.pendingDevices?.map((peerId) => (
+                        <div className="mobile-access__device is-pending" key={`pending:${peerId}`}>
+                          <span className="mobile-access__device-icon"><Icon name="device-mobile" /></span>
+                          <span className="mobile-access__device-copy"><b>New pairing request</b><code>{peerId}</code></span>
+                          <button type="button" className="btn btn--accent btn--small" onClick={() => void window.anchor.remote.approveDevice(peerId).then(setRemoteInfo)}>Approve</button>
+                          <button type="button" className="btn btn--small" onClick={() => void window.anchor.remote.revokeDevice(peerId).then(setRemoteInfo)}>Reject</button>
+                        </div>
+                      ))}
+                      {remoteInfo?.relay?.devices?.map((device) => (
+                        <div className="mobile-access__device" key={device.peerId}>
+                          <span className="mobile-access__device-icon"><Icon name="device-mobile" /></span>
+                          <span className="mobile-access__device-copy"><b>{device.online ? "Online device" : "Paired device"}</b><code>{device.peerId}</code></span>
+                          <span className={`mobile-access__presence${device.online ? " is-online" : ""}`} />
+                          <button type="button" className="btn btn--small" onClick={() => void window.anchor.remote.revokeDevice(device.peerId).then(setRemoteInfo)}>Revoke</button>
+                        </div>
+                      ))}
+                      {!remoteInfo?.relay?.pendingDevices?.length && !remoteInfo?.relay?.devices?.length ? (
+                        <div className="mobile-access__empty"><Icon name="device-mobile" /><span><b>No paired devices</b><small>Scan the QR code to add this phone.</small></span></div>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  <section className="mobile-access__pairing" aria-label="Quick pairing">
+                    <div className="mobile-access__subhead">
+                      <div><span>Quick pairing</span><b>Scan with Anchor Mobile</b></div>
+                    </div>
+                    <div className="settings-pairing-qr" aria-live="polite">
+                      {pairingQr ? (
+                        <img src={pairingQr} alt="Anchor Mobile encrypted relay pairing code" draggable={false} />
+                      ) : (
+                        <span>{remoteInfo?.relay?.state === "connecting" ? "Connecting to relay…" : "Enable mobile access first"}</span>
+                      )}
+                    </div>
+                    <p>Pairing codes expire quickly. Source code and terminal data remain encrypted before entering the Relay.</p>
+                  </section>
+                </div>
               </section>
             ) : null}
 

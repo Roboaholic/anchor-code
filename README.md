@@ -1,33 +1,77 @@
-# Anchor Code
 
 **Agent it. Review it. Feed it back.**
 
-A **human-in-the-loop** reader for agent coding.
+Anchor Code is a human-in-the-loop review workbench for AI-assisted coding. It sits beside Claude Code, Codex, and other terminal agents so people can inspect changes, ask precise questions, request modifications, and verify the next iteration.
 
-Use your AI coding CLI (Claude Code, Codex, and similar) in the terminal. Use Anchor Code to read the result carefully, review the diff, leave selection comments, and hand structured feedback back to the agent.
+The core idea is simple: **agent output is not the end of the workflow. Review, feedback, and verification are part of the workflow.**
 
-This is not a general-purpose IDE and not an agent orchestrator. Reading, dual-commit compare, annotations, and a multi-tab terminal exist to keep **you** in the loop.
+## The review loop
+
+```text
+Agent changes code
+        |
+        v
+Compare commits or worktree in the Diff Workbench
+        |
+        v
+Select code, leave a comment, and set its review status
+        |
+        v
+Send the session path back to the agent
+        |
+        v
+Agent replies or modifies code
+        |
+        +----> review the new diff and close the thread
+```
+
+### Review comments that go somewhere
+
+Comments are anchored to files, lines, and selections, then stored in a review session. Each thread has an explicit state:
+
+- `discussing` for questions and clarification
+- `need_modify` for actionable change requests
+- `closed` when the issue is resolved or no further action is needed
+
+The **Feedback** action exports the structured session context for the agent. The agent can read the session, reply in context, make changes, and leave the human with a clear status to close or continue. This creates a durable **review → comment → feedback → change → re-review** loop instead of a one-off chat message.
+
+![Session comments and Feedback action](assets/review-session-feedback.png)
+
+### A Diff Workbench for human review
+
+History lets you choose two commits, or compare a commit with the current worktree. The side-by-side Diff Workbench keeps the changed-file list, old and new code, line context, and review comments in one place. Comments written in a diff retain machine-readable diff context, so the agent knows which branch, revisions, file, and line range the feedback refers to.
+
+![Diff Workbench with anchored review comment](assets/review-diff-workbench.png)
+
+The original product screenshot remains available here:
 
 ![Anchor Code — History compare and side-by-side diff](assets/screenshot.png)
 
-## What you can do
+## What Anchor Code is for
 
-| Area | Purpose |
-|------|---------|
-| **Files** | Open a workspace; browse and read code and Markdown |
-| **History** | Pick two commits (or a commit vs worktree) and Compare |
-| **Document** | Read-only code viewer, Markdown, and side-by-side diff |
-| **Comments** | Select text, add annotations, store them in session YAML |
-| **Terminal** | Multi-tab shell with cwd set to the workspace — run your agent CLI here |
+| Capability | Why it matters |
+|---|---|
+| **History and worktree compare** | Review committed changes, uncommitted changes, or a selected commit range |
+| **Side-by-side diff** | Read what changed in context without leaving the workspace |
+| **Anchored comments** | Attach a question or request to the exact file and selection |
+| **Review states** | Make discussion, modification requests, and closure visible |
+| **Session-based feedback** | Give the agent structured, durable context it can consume |
+| **Agent terminal** | Run the coding CLI beside the review surface |
+| **Local and WSL workspaces** | Review code where it actually lives |
 
-Feedback is meant to go back to the agent: copy the session YAML path from Comments and paste it into the terminal for the CLI to read. Install the **Anchor Review** agent skill from **Settings → Agent skill** (or accept the prompt when opening a workspace) so agents know how to process `need_modify` comments and close them.
+## How it compares
 
-## Typical loop
+Anchor Code is deliberately focused on the human review stage of agent coding. It complements tools that edit code, launch agents, or host terminals.
 
-1. **Open a workspace** — files, code, and docs in one place. If prompted, install the Anchor Review skill into `.agents/skills/`.
-2. **Review the change** — in History, select commits and Compare (or compare with the worktree).
-3. **Leave feedback** — open a file or diff, select text, add a comment (or use ⌘/Ctrl+M). Mark actionable items `need_modify`.
-4. **Close the loop** — in Comments, **Copy path** (session YAML absolute path), paste it into the agent terminal, and ask the agent to apply the feedback.
+| | Anchor Code | Zed | VS Code | Warp |
+|---|---|---|---|---|
+| Primary role | Human review workbench for agent changes | Fast, collaborative code editor | Extensible general-purpose editor | AI-native terminal |
+| Diff review | Commit/worktree selection with a dedicated review surface | Git diff and editor workflows | Git/SCM views and extensions | Terminal and command output context |
+| Anchored review comments | First-class selection comments with session state | Available through editor/collaboration features | Available through extensions, SCM, or code review integrations | Conversation-oriented terminal interaction |
+| Feedback handoff | Session YAML and Feedback action designed for agent consumption | Depends on workflow or integration | Depends on extension and agent setup | Primarily through terminal context |
+| Best fit | Inspecting, questioning, directing, and verifying agent edits | Editing and collaborative development | Building and customizing a full IDE workflow | Running commands and working with terminal agents |
+
+Anchor Code does not try to replace these tools. Use your preferred editor or agent, then bring the result into Anchor Code when the change needs careful human review and an auditable feedback loop.
 
 Repeat until you are satisfied.
 
@@ -62,15 +106,25 @@ model, deployment status, and acceptance criteria.
 Download a build from [Releases](https://github.com/Roboaholic/anchor-code/releases):
 
 | Platform | Installer | Portable / other |
-|----------|-----------|------------------|
+|---|---|---|
 | Windows | `Anchor.Code-*-win-x64.exe` (NSIS setup) | `Anchor.Code-*-win-x64-portable.exe` |
 | macOS | `Anchor.Code-*-mac-*.dmg` | `.zip` |
 | Linux | `.AppImage` or `.deb` | — |
 
-1. Install or run the downloaded package (unsigned builds may need an OS “Open anyway” / SmartScreen allow).
-2. Open Anchor Code.
-3. **Open Workspace** — pick Local or WSL, then choose a folder.
-4. Use History / Comments / Terminal as in the loop above.
+1. Install or run the downloaded package.
+2. Open Anchor Code and choose **Local** or **WSL**.
+3. Open the repository that your coding agent is changing.
+4. In **History**, choose the commits or worktree to compare.
+5. Select code, add comments, mark actionable feedback as `need_modify`, and use **Feedback** to send the session path to the agent.
+6. Re-review the next diff and close resolved threads.
+
+Install the **Anchor Review** agent skill from **Settings → Agent skill**, or accept the prompt when opening a workspace. It teaches compatible agents how to process `need_modify` comments and close review threads.
+
+## Requirements
+
+- Windows, macOS, or Linux desktop
+- System `git` on PATH on the selected host
+- WSL support when opening a WSL workspace on Windows
 
 ## License
 

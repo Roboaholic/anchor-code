@@ -94,8 +94,9 @@ It contains two layers and does not require an Android emulator:
    verifies the scanner frame, scrolling and bottom navigation, Agent
    full-screen transitions, Review comments, and older WebView compatibility.
 
-Both the pull-request CI APK job and the mobile release workflow run this gate
-before building an APK. A failed baseline therefore prevents APK publication.
+Both the pull-request CI APK job and the unified PC/mobile release workflow run
+this gate before building an APK. A failed baseline therefore prevents the
+GitHub Release from being published without its APK.
 
 ## Build APK
 
@@ -103,7 +104,7 @@ Mobile Web has its own package manifest and type-check boundary in `mobile/web/`
 It consumes only the versioned types under `contracts/remote-api/v1`; PC service
 implementation files are not imported into the mobile application.
 
-APK release versions can be supplied independently from the PC version:
+Local APK versions can be supplied independently when needed:
 
 ```bash
 ./gradlew assembleRelease -PanchorMobileVersionCode=2 -PanchorMobileVersionName=0.2.0
@@ -118,6 +119,10 @@ Output:
 ```text
 mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Official APK releases use the same version as the PC application. Pushing a
+`v*` tag builds the desktop installers and `Anchor-Mobile-<version>.apk`, then
+attaches all of them to the same GitHub Release.
 
 The Android shell is deliberately small: one Java Activity hosts the bundled
 React application in a WebView. The web bundle is generated directly into

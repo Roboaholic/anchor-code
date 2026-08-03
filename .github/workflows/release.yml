@@ -1,6 +1,6 @@
 name: Release
 
-# Create / update a GitHub Release with Windows / macOS / Linux installers.
+# Create / update one GitHub Release with desktop installers and the Android APK.
 #
 # Tag push (normal):
 #   # bump package.json version first (must match tag without leading v)
@@ -219,11 +219,89 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  mobile:
+    name: Build (Android APK)
+    needs: verify
+    # Tag releases always include Android. Targeted manual desktop rebuilds do not.
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.platforms == 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/web/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install mobile dependencies
+        run: npm --prefix mobile/web ci
+
+      - name: Install mobile browser baseline runtime
+        run: npm --prefix mobile/web exec -- playwright install --with-deps chromium
+
+      - name: Mobile baseline gate
+        run: npm run mobile:baseline
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-mobile-playwright-report
+          path: |
+            mobile/web/playwright-report
+            mobile/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Build mobile web bundle
+        run: npm --prefix mobile/web run build
+
+      - name: Build versioned APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug -PanchorMobileVersionCode=${{ github.run_number }} -PanchorMobileVersionName=${{ needs.verify.outputs.version }}
+
+      - name: Stage APK and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+          apk="Anchor-Mobile-${{ needs.verify.outputs.version }}.apk"
+          test -f "$src"
+          unzip -l "$src" > apk-contents.txt
+          grep -q 'assets/index.html' apk-contents.txt
+          mkdir -p staged-mobile
+          cp "$src" "staged-mobile/$apk"
+          cd staged-mobile
+          sha256sum "$apk" > "$apk.sha256"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-mobile
+          path: staged-mobile/*
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish GitHub Release
-    # Publish whatever platforms succeeded (fail-fast is false on the matrix).
-    needs: [verify, build]
-    if: ${{ always() && !cancelled() && needs.verify.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    # Tag releases require an APK. Targeted manual desktop rebuilds skip mobile.
+    needs: [verify, build, mobile]
+    if: ${{ always() && !cancelled() && needs.verify.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.mobile.result == 'success' || needs.mobile.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all packages
@@ -251,6 +329,9 @@ jobs:
           tag_name: ${{ needs.verify.outputs.tag }}
           name: ${{ needs.verify.outputs.tag }}
           generate_release_notes: true
+          # Keep the PC channel as the repository's stable Latest release.
+          prerelease: false
+          make_latest: true
           fail_on_unmatched_files: false
           # Append/replace assets on the existing release when re-run manually.
           files: |

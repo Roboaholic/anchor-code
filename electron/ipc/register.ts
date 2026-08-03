@@ -1198,6 +1198,9 @@ export function registerIpc(opts: {
         const sessionId = typeof args === "string" ? undefined : args.sessionId;
         const abs = await application.comments.yamlPath(repoRoot, sessionId);
         clipboard.writeText(abs);
+        if (clipboard.readText() !== abs) {
+          throw new Error("Failed to verify the YAML path in the system clipboard");
+        }
         return abs;
       } catch (err) {
         rethrowIpc(err);

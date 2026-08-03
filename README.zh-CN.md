@@ -1,10 +1,10 @@
 # Anchor Code
 
-**面向 Agent 编程的 Human-in-the-loop 工作区。**
+**Agent 编程流程中的 Human-in-the-loop Reviewer。**
 
 **让 Agent 执行，让人 Review，让反馈回到 Agent。**
 
-Anchor Code 将代码库、技术文档、文件管理、Git History、Diff、Review Comment 和 Agent CLI 整合到一个工作区。Agent 继续在原生终端环境中工作，人则持续掌握上下文、代码变化、反馈和最终结果。
+Anchor Code 将代码库、技术文档、文件管理、Git History、Diff、Review Comment 和 Agent CLI 集中到同一个界面。Agent 继续在原生终端环境中工作，人负责检查上下文、指导修改、反馈问题，并决定结果是否可以交付。
 
 [English](README.md) · [下载 Anchor Code](https://github.com/Roboaholic/anchor-code/releases)
 
@@ -14,11 +14,11 @@ Anchor Code 将代码库、技术文档、文件管理、Git History、Diff、Re
 
 Agent 编程显著提高了实现速度，围绕它的人工工作流依然分散：代码在编辑器里，方案在 Markdown 里，改动在 Git 里，反馈留在聊天中，Agent 则运行在终端里。
 
-Anchor Code 将这些界面重新连接起来。阅读项目、运行熟悉的 Agent、检查真实改动、针对准确位置展开讨论、发送结构化反馈，并由人决定结果何时可以交付。
+Anchor Code 将这些界面重新连接起来。浏览代码库与技术文档、运行熟悉的 Agent、检查真实改动、针对准确位置展开讨论、发送结构化反馈，并由人决定结果何时可以交付。
 
-| 理解工作区 | 与 Agent 协作 | 检查改动 | 完成闭环 |
+| 代码与文档阅读 | Agent CLI | Git 与 Diff | Comment 与 Feedback |
 |---|---|---|---|
-| 浏览文件、搜索代码，阅读源代码、Markdown 和 Mermaid 技术文档。 | 在工作区上下文中运行原生 Agent CLI/TUI，并选择模型和推理配置。 | 通过 Git History、分支与 Worktree 状态、Side-by-side 或 Inline Diff 检查完整改动。 | 将 Comment 锚定到代码，把 Review Session 交给 Agent，并在原上下文中验证回复和修改。 |
+| 浏览文件、搜索代码，阅读源代码、Markdown 和 Mermaid 技术文档。 | 在当前项目中运行原生 Agent CLI/TUI，并选择模型和推理配置。 | 查看 Commit History、分支与 Worktree 状态，通过 Side-by-side 或 Inline Diff 检查完整改动。 | 评论准确的代码选区，将 Review Session 交给 Agent，并在原线程中验证回复和修改。 |
 
 ## 为审查而设计的 Git History
 

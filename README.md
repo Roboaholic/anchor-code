@@ -1,10 +1,10 @@
 # Anchor Code
 
-**A human-in-the-loop workspace for agentic coding.**
+**The human-in-the-loop reviewer for agentic coding.**
 
 **Agent it. Review it. Feed it back.**
 
-Anchor Code brings your codebase, technical documents, file management, Git history, diffs, review comments, and agent CLIs into one workspace. Agents keep working in their native terminal environment while you stay in control of the context, changes, feedback, and final outcome.
+Anchor Code gives human reviewers the codebase, technical documents, file management, Git history, diffs, review comments, and agent CLIs in one place. Agents keep working in their native terminal environment while you inspect the context, direct changes, send feedback, and decide whether the result is ready.
 
 [中文](README.zh-CN.md) · [Download Anchor Code](https://github.com/Roboaholic/anchor-code/releases)
 
@@ -14,11 +14,11 @@ Anchor Code brings your codebase, technical documents, file management, Git hist
 
 Agentic coding has accelerated implementation, but the surrounding human workflow remains fragmented. Code lives in an editor, plans live in Markdown, changes live in Git, feedback lives in chat, and the agent runs in a terminal.
 
-Anchor Code reconnects these surfaces. Read the project, run the agents you already use, inspect their actual changes, discuss exact lines, send structured feedback, and decide when the result is ready.
+Anchor Code reconnects these surfaces. Browse the codebase and technical documents, run the agents you already use, inspect their actual changes, discuss exact lines, send structured feedback, and decide when the result is ready.
 
-| Explore the workspace | Work with agents | Inspect changes | Close the loop |
+| Code and documentation | Agent CLI sessions | Git and Diff | Comments and Feedback |
 |---|---|---|---|
-| Browse files, search code, and read source, Markdown, and Mermaid documents. | Run native Agent CLI and TUI sessions with workspace context, model selection, and reasoning settings. | Review Git history, branch and worktree state, and complete changes in side-by-side or inline diffs. | Anchor comments to code, send review sessions to agents, and verify replies and revisions in context. |
+| Browse files, search code, and read source, Markdown, and Mermaid documents. | Run native Agent CLI and TUI sessions in the current project, with model selection and reasoning settings. | Review commit history, branch and worktree state, and complete changes in side-by-side or inline diffs. | Comment on exact code selections, send review sessions to agents, and verify replies and revisions in the original context. |
 
 ## Git history built for inspection
 

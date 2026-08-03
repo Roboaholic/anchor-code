@@ -1,122 +1,96 @@
+# Anchor Code
+
+**A human-in-the-loop workspace for agentic coding.**
 
 **Agent it. Review it. Feed it back.**
 
-Anchor Code is a human-in-the-loop review workbench for AI-assisted coding. It sits beside Claude Code, Codex, and other terminal agents so people can inspect changes, ask precise questions, request modifications, and verify the next iteration.
+Anchor Code brings your codebase, technical documents, file management, Git history, diffs, review comments, and agent CLIs into one workspace. Agents keep working in their native terminal environment while you stay in control of the context, changes, feedback, and final outcome.
 
-The core idea is simple: **agent output is not the end of the workflow. Review, feedback, and verification are part of the workflow.**
+[中文](README.zh-CN.md) · [Download Anchor Code](https://github.com/Roboaholic/anchor-code/releases)
 
-## The review loop
+![Anchor Code workspace with files, documents, Git history, review comments, and agent terminals](assets/screenshot.png)
 
-```text
-Agent changes code
-        |
-        v
-Compare commits or worktree in the Diff Workbench
-        |
-        v
-Select code, leave a comment, and set its review status
-        |
-        v
-Send the session path back to the agent
-        |
-        v
-Agent replies or modifies code
-        |
-        +----> review the new diff and close the thread
-```
+## Keep agents moving. Keep humans in control.
 
-### Review comments that go somewhere
+Agentic coding has accelerated implementation, but the surrounding human workflow remains fragmented. Code lives in an editor, plans live in Markdown, changes live in Git, feedback lives in chat, and the agent runs in a terminal.
 
-Comments are anchored to files, lines, and selections, then stored in a review session. Each thread has an explicit state:
+Anchor Code reconnects these surfaces. Read the project, run the agents you already use, inspect their actual changes, discuss exact lines, send structured feedback, and decide when the result is ready.
 
-- `discussing` for questions and clarification
-- `need_modify` for actionable change requests
-- `closed` when the issue is resolved or no further action is needed
+| Explore the workspace | Work with agents | Inspect changes | Close the loop |
+|---|---|---|---|
+| Browse files, search code, and read source, Markdown, and Mermaid documents. | Run native Agent CLI and TUI sessions with workspace context, model selection, and reasoning settings. | Review Git history, branch and worktree state, and complete changes in side-by-side or inline diffs. | Anchor comments to code, send review sessions to agents, and verify replies and revisions in context. |
 
-The **Feedback** action exports the structured session context for the agent. The agent can read the session, reply in context, make changes, and leave the human with a clear status to close or continue. This creates a durable **review → comment → feedback → change → re-review** loop instead of a one-off chat message.
+## Git history built for inspection
 
-![Session comments and Feedback action](assets/review-session-feedback.png)
+Select any two commits, or compare a commit with the current worktree. Anchor Code presents the complete changed-file set and diff in one focused workspace, with side-by-side and inline viewing modes.
 
-### A Diff Workbench for human review
+Branch state, revisions, files, source lines, and comments stay together. A comment created in a diff retains its branch, base, head, file, and line-range context, giving both the human and the agent an exact reference.
 
-History lets you choose two commits, or compare a commit with the current worktree. The side-by-side Diff Workbench keeps the changed-file list, old and new code, line context, and review comments in one place. Comments written in a diff retain machine-readable diff context, so the agent knows which branch, revisions, file, and line range the feedback refers to.
+![Side-by-side Diff Workbench with changed files and anchored review comments](assets/review-diff-workbench.png)
 
-![Diff Workbench with anchored review comment](assets/review-diff-workbench.png)
+## Feedback that returns with an answer
 
-The original product screenshot remains available here:
+Comments are anchored to exact selections in source code and rendered Markdown. Review sessions distinguish questions (`discussing`), concrete change requests (`need_modify`), and resolved threads (`closed`).
 
-![Anchor Code — History compare and side-by-side diff](assets/screenshot.png)
+The **Feedback** action sends the structured session to the selected agent. The agent can reply in the original thread, implement requested changes, and update its status. The next diff and the full discussion remain available for human verification.
 
-## What Anchor Code is for
+![Review sessions with threaded comments, status tracking, and Agent Feedback](assets/review-session-feedback.png)
 
-| Capability | Why it matters |
-|---|---|
-| **History and worktree compare** | Review committed changes, uncommitted changes, or a selected commit range |
-| **Side-by-side diff** | Read what changed in context without leaving the workspace |
-| **Anchored comments** | Attach a question or request to the exact file and selection |
-| **Review states** | Make discussion, modification requests, and closure visible |
-| **Session-based feedback** | Give the agent structured, durable context it can consume |
-| **Agent terminal** | Run the coding CLI beside the review surface |
-| **Local and WSL workspaces** | Review code where it actually lives |
+## Why Anchor Code
 
-## How it compares
+Zed and VS Code center the editing experience. Warp centers the terminal and agent experience. Anchor Code connects files, documents, Git inspection, review context, and Agent CLIs around a continuous human-in-the-loop workflow.
 
-Anchor Code is deliberately focused on the human review stage of agent coding. It complements tools that edit code, launch agents, or host terminals.
+`✅` built in · `△` available through a broader workflow, integration, or extension · `❌` no comparable workflow
 
-| | Anchor Code | Zed | VS Code | Warp |
+| Capability | Anchor Code | Zed | VS Code | Warp |
 |---|---|---|---|---|
-| Primary role | Human review workbench for agent changes | Fast, collaborative code editor | Extensible general-purpose editor | AI-native terminal |
-| Diff review | Commit/worktree selection with a dedicated review surface | Git diff and editor workflows | Git/SCM views and extensions | Terminal and command output context |
-| Anchored review comments | First-class selection comments with session state | Available through editor/collaboration features | Available through extensions, SCM, or code review integrations | Conversation-oriented terminal interaction |
-| Feedback handoff | Session YAML and Feedback action designed for agent consumption | Depends on workflow or integration | Depends on extension and agent setup | Primarily through terminal context |
-| Best fit | Inspecting, questioning, directing, and verifying agent edits | Editing and collaborative development | Building and customizing a full IDE workflow | Running commands and working with terminal agents |
+| Files, code, and Markdown | ✅ Built in | ✅ Built in | ✅ Built in | △ Terminal-oriented |
+| Integrated terminal and Agent CLI | ✅ Native CLI/TUI | ✅ Integrated terminal | ✅ Integrated terminal | ✅ Core experience |
+| Git commit history | ✅ Review-oriented history | ✅ Project/file history | ✅ Source Control Graph | △ CLI and integrations |
+| Commit ↔ Commit / Worktree comparison | ✅ First-class Diff workspace | △ Commit and file diffs | △ Built-in Git views; GitLens adds deeper comparison | △ Primarily CLI-driven |
+| Comments anchored to code and diffs | ✅ Review Sessions | △ Editor/collaboration workflows | △ Extensions or PR integrations | ❌ |
+| Structured feedback returned to CLI agents | ✅ Stateful feedback loop | △ Agent/editor context | △ Depends on Agent extensions | △ Terminal conversation |
 
-Anchor Code does not try to replace these tools. Use your preferred editor or agent, then bring the result into Anchor Code when the change needs careful human review and an auditable feedback loop.
+The difference is what happens around the diff. Anchor Code makes comparison, code-anchored discussion, Agent handoff, and human verification one native path.
 
+Comparison references: [Zed Git](https://zed.dev/docs/git), [VS Code Source Control](https://code.visualstudio.com/docs/sourcecontrol/overview), [GitLens features](https://help.gitkraken.com/gitlens/gitlens-features/), and [Warp documentation](https://docs.warp.dev/).
 
-## Android companion (development preview)
+## Stay in the loop away from your desk
 
-The repository now includes `mobile/`, an Android companion that connects back
-to the Anchor Code desktop app. It supports mobile review of code/Markdown,
-worktree diffs, structured comments, comment status/replies, and remote Agent
-CLI sessions. See [mobile/README.md](mobile/README.md) for build, security,
-encrypted Relay access, emulator, and tablet verification instructions.
+**Anchor Mobile** extends the workspace to Android phones and tablets. Review code and Markdown, inspect worktree diffs, manage comments, and operate Agent terminal sessions running on your PC.
 
-PC and companion development are separated by a versioned Remote API and a
-shared PC application-facade layer. See [ARCHITECTURE.md](ARCHITECTURE.md) for
-module ownership, dependency rules, and compatibility policy.
+Pair with a QR code through the end-to-end encrypted Anchor Relay. Files, Git operations, shells, and agents remain on the PC; the Relay forwards encrypted frames. See [Anchor Mobile](mobile/README.md) for setup and APK instructions, and [Anchor Relay](relay/cloudflare/README.md) for deployment details.
 
-The mobile app connects only through the end-to-end encrypted Cloudflare Relay.
-The PC opens an outbound WSS connection, so users do not expose a port or enter
-an IP address/token in the App. See
-[REMOTE_CONNECTIVITY_PLAN.md](REMOTE_CONNECTIVITY_PLAN.md) for the security
-model, deployment status, and acceptance criteria.
+## Supported agents and environments
 
+**Agent CLIs:** Claude Code, Codex, Gemini CLI, Aider, Grok, OMP, Cursor Agent, and custom profiles.
 
-## Install and run
+**Workspaces:** Local, WSL, and SSH.
 
-Download a build from [Releases](https://github.com/Roboaholic/anchor-code/releases):
+**Desktop:** Windows, macOS, and Linux.
+
+**Companion:** Android phones and tablets.
+
+## Quick start
+
+1. Download Anchor Code from [Releases](https://github.com/Roboaholic/anchor-code/releases).
+2. Open a Local, WSL, or SSH workspace.
+3. Launch an Agent CLI in the built-in terminal, or open a repository with existing changes.
+4. Read the code and documentation, then use **History** to inspect commits or the worktree.
+5. Add comments to exact selections and mark actionable requests as `need_modify`.
+6. Use **Feedback** to hand the session to an agent, then inspect the next diff and close resolved threads.
+
+Install the **Anchor Review** skill from **Settings → Agent skill**, or accept the workspace prompt. It teaches compatible agents how to read Anchor Code sessions, process `need_modify` comments, reply to threads, and update review status.
+
+## Download
 
 | Platform | Installer | Portable / other |
 |---|---|---|
 | Windows | `Anchor.Code-*-win-x64.exe` (NSIS setup) | `Anchor.Code-*-win-x64-portable.exe` |
 | macOS | `Anchor.Code-*-mac-*.dmg` | `.zip` |
-| Linux | `.AppImage` or `.deb` | — |
+| Linux | `.AppImage` or `.deb` | - |
 
-1. Install or run the downloaded package.
-2. Open Anchor Code and choose **Local** or **WSL**.
-3. Open the repository that your coding agent is changing.
-4. In **History**, choose the commits or worktree to compare.
-5. Select code, add comments, mark actionable feedback as `need_modify`, and use **Feedback** to send the session path to the agent.
-6. Re-review the next diff and close resolved threads.
-
-Install the **Anchor Review** agent skill from **Settings → Agent skill**, or accept the prompt when opening a workspace. It teaches compatible agents how to process `need_modify` comments and close review threads.
-
-## Requirements
-
-- Windows, macOS, or Linux desktop
-- System `git` on PATH on the selected host
-- WSL support when opening a WSL workspace on Windows
+Anchor Code requires system `git` on the selected host. WSL and SSH workspaces require their corresponding host environment and connection to be available.
 
 ## License
 

@@ -1,7 +1,11 @@
 import { app } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import type { HostKind } from "./host/types.js";
+
+export const DEFAULT_RELAY_URL =
+  "https://anchor-code-relay.anchor-code-mobile.workers.dev";
 
 export interface RecentWorkspace {
   path: string;
@@ -72,6 +76,16 @@ export interface AppSettings {
    * Key: workspace absolute path.
    */
   historyRecentCompares?: Record<string, HistoryCompareEntry[]>;
+  /**
+   * Per-workspace Files view filters (exclude paths/globs relative to root).
+   * Key: `${hostProfileId}::${workspaceRoot}`.
+   */
+  workspaceFilters?: Record<string, WorkspaceFilter>;
+  /** Mobile / remote review API settings. */
+  remoteAccess?: {
+    enabled: boolean;
+    relay?: RemoteRelayConfig;
+  };
   ui: {
     terminalVisible: boolean;
     leftWidth?: number;
@@ -92,6 +106,10 @@ export interface AppSettings {
   };
 }
 
+export interface WorkspaceFilter {
+  excludes: string[];
+}
+
 const DEFAULT_PROFILES: HostProfile[] = [
   { id: "local-default", kind: "local", label: "Local" },
   ...(process.platform === "win32"
@@ -107,6 +125,18 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentProfiles: [],
   agentLaunchCache: {},
   historyRecentCompares: {},
+  workspaceFilters: {},
+  remoteAccess: {
+    enabled: false,
+    relay: {
+      enabled: false,
+      url: DEFAULT_RELAY_URL,
+      roomId: randomBytes(16).toString("hex"),
+      hostPeerId: `pc-${randomBytes(8).toString("hex")}`,
+      ticket: randomBytes(32).toString("base64url"),
+      secret: randomBytes(32).toString("base64url"),
+    },
+  },
   ui: {
     terminalVisible: true,
     theme: "dark-modern",
@@ -151,6 +181,11 @@ export async function loadSettings(): Promise<AppSettings> {
       defaultAgentId: parsed.defaultAgentId,
       agentLaunchCache: parsed.agentLaunchCache ?? {},
       historyRecentCompares: parsed.historyRecentCompares ?? {},
+      workspaceFilters: parsed.workspaceFilters ?? {},
+      remoteAccess: {
+        enabled: parsed.remoteAccess?.relay?.enabled === true,
+        relay: normalizeRemoteRelayConfig(parsed.remoteAccess?.relay),
+      },
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
   } catch {
@@ -162,6 +197,74 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   const file = settingsPath();
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify(settings, null, 2), "utf8");
+}
+
+export interface RemoteAccessConfig {
+  enabled: boolean;
+  relay?: RemoteRelayConfig;
+}
+
+export interface RemoteRelayConfig {
+  enabled: boolean;
+  url: string;
+  roomId: string;
+  hostPeerId: string;
+  ticket: string;
+  secret: string;
+}
+
+export type RemoteAccessConfigUpdate = Omit<Partial<RemoteAccessConfig>, "relay"> & {
+  relay?: Partial<RemoteRelayConfig>;
+};
+
+export function normalizeRemoteRelayConfig(
+  value?: Partial<RemoteRelayConfig>,
+): RemoteRelayConfig {
+  return {
+    enabled: value?.enabled === true,
+    url: value?.url?.trim().replace(/\/+$/, "") || DEFAULT_RELAY_URL,
+    roomId: value?.roomId?.trim() || randomBytes(16).toString("hex"),
+    hostPeerId: value?.hostPeerId?.trim() || `pc-${randomBytes(8).toString("hex")}`,
+    ticket: value?.ticket?.trim() || randomBytes(32).toString("base64url"),
+    secret: value?.secret?.trim() || randomBytes(32).toString("base64url"),
+  };
+}
+
+export function normalizeRemoteAccessConfig(
+  value?: RemoteAccessConfigUpdate,
+): RemoteAccessConfig {
+  const enabled = value?.enabled === true;
+  return {
+    enabled,
+    relay: {
+      ...normalizeRemoteRelayConfig(value?.relay),
+      enabled,
+      url: DEFAULT_RELAY_URL,
+    },
+  };
+}
+
+export async function getRemoteAccessConfig(): Promise<RemoteAccessConfig> {
+  const settings = await loadSettings();
+  const config = normalizeRemoteAccessConfig(settings.remoteAccess);
+  settings.remoteAccess = config;
+  await saveSettings(settings);
+  return config;
+}
+
+export async function setRemoteAccessConfig(
+  value: RemoteAccessConfigUpdate,
+): Promise<RemoteAccessConfig> {
+  const settings = await loadSettings();
+  const current = normalizeRemoteAccessConfig(settings.remoteAccess);
+  const config = normalizeRemoteAccessConfig({
+    ...current,
+    ...value,
+    relay: { ...current.relay, ...(value.relay ?? {}), enabled: value.enabled ?? current.enabled },
+  });
+  settings.remoteAccess = config;
+  await saveSettings(settings);
+  return config;
 }
 
 export async function pushRecentWorkspace(
@@ -262,6 +365,62 @@ export function normalizeTheme(value: unknown): UiTheme {
     return value;
   }
   return "dark-modern";
+}
+
+export function workspaceFilterKey(
+  workspaceRoot: string,
+  hostProfileId?: string | null,
+): string {
+  const host = hostProfileId?.trim() || "local-default";
+  const root = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  return `${host}::${root}`;
+}
+
+export async function getWorkspaceFilter(
+  workspaceRoot: string,
+  hostProfileId?: string | null,
+): Promise<WorkspaceFilter> {
+  const settings = await loadSettings();
+  const raw = settings.workspaceFilters?.[
+    workspaceFilterKey(workspaceRoot, hostProfileId)
+  ];
+  return {
+    excludes: Array.isArray(raw?.excludes)
+      ? raw.excludes.filter(
+          (item): item is string =>
+            typeof item === "string" && item.trim().length > 0,
+        )
+      : [],
+  };
+}
+
+export async function setWorkspaceFilter(
+  workspaceRoot: string,
+  hostProfileId: string | null | undefined,
+  filter: WorkspaceFilter,
+): Promise<WorkspaceFilter> {
+  const settings = await loadSettings();
+  const excludes = [
+    ...new Set(
+      (filter.excludes ?? [])
+        .map((item) =>
+          item
+            .replace(/\\/g, "/")
+            .replace(/^\.\/+/, "")
+            .replace(/^\/+/, "")
+            .replace(/\/+$/, "")
+            .trim(),
+        )
+        .filter((item) => item && item !== "." && item !== "**"),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+  const next = { excludes };
+  settings.workspaceFilters = {
+    ...(settings.workspaceFilters ?? {}),
+    [workspaceFilterKey(workspaceRoot, hostProfileId)]: next,
+  };
+  await saveSettings(settings);
+  return next;
 }
 
 export async function getUiTheme(): Promise<UiTheme> {

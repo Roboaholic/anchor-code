@@ -1,0 +1,620 @@
+openapi: 3.1.0
+info:
+  title: Anchor Code Remote API
+  version: 1.0.0
+  description: Stable, additive v1 logical request contract carried inside encrypted Relay frames.
+paths:
+  /meta:
+    get:
+      operationId: getRemoteMeta
+      responses: { "200": { $ref: "#/components/responses/RemoteMeta" } }
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server, workspace and event-stream health.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteHealth" } } }
+  /bootstrap:
+    get:
+      operationId: getBootstrap
+      responses:
+        "200":
+          description: Initial mobile application state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteBootstrap" } } }
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      responses:
+        "200":
+          description: PC-approved workspaces.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteWorkspaceCatalog" } } }
+  /workspaces/select:
+    post:
+      operationId: selectWorkspace
+      requestBody: { $ref: "#/components/requestBodies/WorkspaceRef" }
+      responses: { "200": { $ref: "#/components/responses/Ok" } }
+  /files:
+    get:
+      operationId: listWorkspaceFiles
+      parameters:
+        - { $ref: "#/components/parameters/Path" }
+      responses:
+        "200":
+          description: Directory entries inside the active workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, entries]
+                properties:
+                  path: { type: string }
+                  entries: { type: array, items: { $ref: "#/components/schemas/RemoteDirEntry" } }
+  /file:
+    get:
+      operationId: readWorkspaceFile
+      parameters:
+        - { $ref: "#/components/parameters/RequiredPath" }
+      responses:
+        "200":
+          description: Text file content.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteReadFileResult" } } }
+  /file-index:
+    get:
+      operationId: indexWorkspaceFiles
+      parameters:
+        - { in: query, name: maxFiles, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: Searchable workspace file index.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteFileIndex" } } }
+  /search:
+    get:
+      operationId: searchWorkspace
+      parameters:
+        - { in: query, name: q, required: true, schema: { type: string } }
+        - { in: query, name: maxResults, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: caseSensitive, schema: { type: boolean } }
+        - { in: query, name: regex, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Workspace content search results.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hits]
+                properties:
+                  hits: { type: array, items: { $ref: "#/components/schemas/RemoteSearchHit" } }
+  /repos:
+    get:
+      operationId: listRepositories
+      responses:
+        "200":
+          description: Git repositories under the active workspace.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RemoteRepo" } }
+  /history/log:
+    get:
+      operationId: listCommits
+      parameters: [ { $ref: "#/components/parameters/RepoRoot" } ]
+      responses:
+        "200":
+          description: Repository commit log.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/RemoteCommit" } } } }
+  /history/status:
+    get:
+      operationId: getRepositoryStatus
+      parameters: [ { $ref: "#/components/parameters/RepoRoot" } ]
+      responses:
+        "200":
+          description: Worktree status.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteRepoStatus" } } }
+  /history/compare:
+    post:
+      operationId: compareRevisions
+      requestBody: { $ref: "#/components/requestBodies/Compare" }
+      responses:
+        "200":
+          description: Changed files between revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files]
+                properties:
+                  files: { type: array, items: { $ref: "#/components/schemas/RemoteDiffFile" } }
+  /history/file-diff:
+    post:
+      operationId: getFileDiff
+      requestBody: { $ref: "#/components/requestBodies/FileDiff" }
+      responses:
+        "200":
+          description: Old and new file text.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteFileDiff" } } }
+  /comments:
+    get:
+      operationId: listCommentSessions
+      parameters: [ { $ref: "#/components/parameters/RepoRoot" } ]
+      responses:
+        "200":
+          description: Review comment sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions: { type: array, items: { $ref: "#/components/schemas/RemoteCommentSession" } }
+    post:
+      operationId: addComment
+      requestBody: { $ref: "#/components/requestBodies/AddComment" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/session:
+    post:
+      operationId: ensureCommentSession
+      requestBody: { $ref: "#/components/requestBodies/CommentSessionRef" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/{commentId}:
+    parameters: [ { $ref: "#/components/parameters/CommentId" } ]
+    delete:
+      operationId: deleteComment
+      parameters: [ { $ref: "#/components/parameters/RepoRoot" } ]
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/{commentId}/status:
+    patch:
+      operationId: setCommentStatus
+      parameters: [ { $ref: "#/components/parameters/CommentId" } ]
+      requestBody: { $ref: "#/components/requestBodies/CommentStatus" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/{commentId}/reply:
+    post:
+      operationId: replyComment
+      parameters: [ { $ref: "#/components/parameters/CommentId" } ]
+      requestBody: { $ref: "#/components/requestBodies/CommentMessage" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/{commentId}/edit:
+    post:
+      operationId: editCommentMessage
+      parameters: [ { $ref: "#/components/parameters/CommentId" } ]
+      requestBody: { $ref: "#/components/requestBodies/CommentMessage" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/end-session:
+    post:
+      operationId: endCommentSession
+      requestBody: { $ref: "#/components/requestBodies/CommentSessionRef" }
+      responses:
+        "200":
+          description: Closed session and optional export path.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteEndCommentSessionResult" } } }
+  /comments/new-session:
+    post:
+      operationId: newCommentSession
+      requestBody: { $ref: "#/components/requestBodies/CommentSessionRef" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/restore-session:
+    post:
+      operationId: restoreCommentSession
+      requestBody: { $ref: "#/components/requestBodies/CommentSessionRef" }
+      responses: { "200": { $ref: "#/components/responses/CommentSession" } }
+  /comments/export:
+    post:
+      operationId: exportCommentSession
+      requestBody: { $ref: "#/components/requestBodies/CommentSessionRef" }
+      responses:
+        "200":
+          description: Exported comment payload.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteCommentExportResult" } } }
+  /agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          description: Available PC Agent profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles: { type: array, items: { $ref: "#/components/schemas/RemoteAgentProfile" } }
+                  defaultAgentId: { type: string }
+  /agents/launch-options:
+    get:
+      operationId: getAgentLaunchOptions
+      parameters:
+        - { in: query, name: profileId, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Supported models and effort levels.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteAgentLaunchOptions" } } }
+  /agents/sessions:
+    post:
+      operationId: createAgentSession
+      requestBody: { $ref: "#/components/requestBodies/CreateAgentSession" }
+      responses: { "200": { $ref: "#/components/responses/TerminalInfo" } }
+  /terminals:
+    get:
+      operationId: listTerminals
+      responses:
+        "200":
+          description: Shared terminal sessions.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/RemoteTerminalInfo" } } } }
+    post:
+      operationId: createTerminal
+      requestBody: { $ref: "#/components/requestBodies/CreateTerminal" }
+      responses: { "200": { $ref: "#/components/responses/TerminalInfo" } }
+  /terminal-events:
+    get:
+      operationId: pollApplicationEvents
+      parameters:
+        - { in: query, name: after, schema: { type: integer, minimum: 0 } }
+        - { in: query, name: waitMs, schema: { type: integer, minimum: 0, maximum: 25000 } }
+      responses:
+        "200":
+          description: Terminal and workspace synchronization events.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteTerminalEvents" } } }
+  /terminals/{terminalId}:
+    parameters: [ { $ref: "#/components/parameters/TerminalId" } ]
+    get:
+      operationId: getTerminalSnapshot
+      responses:
+        "200":
+          description: Reconnectable xterm snapshot.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RemoteTerminalSnapshot" } } }
+    delete:
+      operationId: deleteTerminal
+      responses: { "200": { $ref: "#/components/responses/Ok" } }
+  /terminals/{terminalId}/input:
+    post:
+      operationId: writeTerminalInput
+      parameters: [ { $ref: "#/components/parameters/TerminalId" } ]
+      requestBody: { $ref: "#/components/requestBodies/TerminalInput" }
+      responses: { "200": { $ref: "#/components/responses/Ok" } }
+  /terminals/{terminalId}/resize:
+    post:
+      operationId: resizeTerminal
+      parameters: [ { $ref: "#/components/parameters/TerminalId" } ]
+      requestBody: { $ref: "#/components/requestBodies/TerminalResize" }
+      responses: { "200": { $ref: "#/components/responses/Ok" } }
+components:
+  parameters:
+    Path: { in: query, name: path, schema: { type: string } }
+    RequiredPath: { in: query, name: path, required: true, schema: { type: string } }
+    RepoRoot: { in: query, name: repoRoot, required: true, schema: { type: string } }
+    CommentId: { in: path, name: commentId, required: true, schema: { type: string } }
+    TerminalId: { in: path, name: terminalId, required: true, schema: { type: string } }
+  requestBodies:
+    WorkspaceRef:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/RemoteWorkspaceRef" } } }
+    Compare:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/CompareInput" } } }
+    FileDiff:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/FileDiffInput" } } }
+    AddComment:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/AddRemoteCommentInput" } } }
+    CommentSessionRef:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/CommentSessionRef" } } }
+    CommentStatus:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/CommentStatusInput" } } }
+    CommentMessage:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/CommentMessageInput" } } }
+    CreateAgentSession:
+      required: true
+      content: { application/json: { schema: { $ref: "#/components/schemas/CreateAgentSessionInput" } } }
+    CreateTerminal:
+      content: { application/json: { schema: { $ref: "#/components/schemas/CreateTerminalInput" } } }
+    TerminalInput:
+      required: true
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { type: string } } } } }
+    TerminalResize:
+      required: true
+      content: { application/json: { schema: { type: object, required: [cols, rows], properties: { cols: { type: integer }, rows: { type: integer } } } } }
+  responses:
+    RemoteMeta:
+      description: Protocol compatibility and server capabilities.
+      content: { application/json: { schema: { $ref: "#/components/schemas/RemoteMeta" } } }
+    Ok:
+      description: Operation completed.
+      content: { application/json: { schema: { type: object, required: [ok], properties: { ok: { const: true } } } } }
+    CommentSession:
+      description: Updated comment session.
+      content: { application/json: { schema: { $ref: "#/components/schemas/RemoteCommentSession" } } }
+    TerminalInfo:
+      description: Shared terminal information.
+      content: { application/json: { schema: { $ref: "#/components/schemas/RemoteTerminalInfo" } } }
+  schemas:
+    RemoteMeta:
+      type: object
+      required: [serverVersion, protocolVersion, minProtocolVersion, capabilities, serverInstanceId]
+      properties:
+        serverVersion: { type: string }
+        protocolVersion: { type: string }
+        minProtocolVersion: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        serverInstanceId: { type: string }
+    RemoteHealth:
+      type: object
+      required: [ok, version, protocolVersion, capabilities, serverInstanceId, hostKind, workspaceRoot, terminalCursor]
+      properties:
+        ok: { const: true }
+        version: { type: string }
+        protocolVersion: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        serverInstanceId: { type: string }
+        hostKind: { type: string }
+        workspaceRoot: { type: [string, "null"] }
+        terminalCursor: { type: integer }
+    RemoteWorkspaceRef:
+      type: object
+      required: [path, hostProfileId]
+      properties: { path: { type: string }, hostProfileId: { type: string } }
+    RemoteWorkspaceOption:
+      allOf:
+        - { $ref: "#/components/schemas/RemoteWorkspaceRef" }
+        - type: object
+          required: [lastOpenedAt, name, hostKind, hostLabel]
+          properties: { lastOpenedAt: { type: string }, name: { type: string }, hostKind: { type: string }, hostLabel: { type: string } }
+    RemoteWorkspaceCatalog:
+      type: object
+      required: [active, recent]
+      properties:
+        active: { oneOf: [ { $ref: "#/components/schemas/RemoteWorkspaceRef" }, { type: "null" } ] }
+        recent: { type: array, items: { $ref: "#/components/schemas/RemoteWorkspaceOption" } }
+    RemoteDirEntry:
+      type: object
+      required: [name, type]
+      properties: { name: { type: string }, type: { enum: [file, dir] } }
+    RemoteReadFileResult:
+      type: object
+      required: [path, text, size, truncated]
+      properties: { path: { type: string }, text: { type: string }, size: { type: integer }, truncated: { type: boolean } }
+    RemoteFileIndex:
+      type: object
+      required: [root, files, truncated, source]
+      properties:
+        root: { type: string }
+        files: { type: array, items: { type: string } }
+        truncated: { type: boolean }
+        source: { enum: [git, walk, multi-git] }
+    RemoteSearchHit:
+      type: object
+      required: [path, line, text]
+      properties: { path: { type: string }, line: { type: integer }, text: { type: string } }
+    RemoteRepo:
+      type: object
+      required: [root, name]
+      properties: { root: { type: string }, name: { type: string } }
+    RemoteCommit:
+      type: object
+      required: [hash, shortHash, subject, author, dateIso]
+      properties: { hash: { type: string }, shortHash: { type: string }, subject: { type: string }, author: { type: string }, dateIso: { type: string } }
+    RemoteDiffFile:
+      type: object
+      required: [path, status]
+      properties: { path: { type: string }, status: { type: string } }
+    RemoteRepoStatus:
+      type: object
+      required: [entries, modified, added, deleted, untracked, branch]
+      properties:
+        repoRoot: { type: string }
+        entries:
+          type: array
+          items:
+            type: object
+            required: [path, status, code]
+            properties: { path: { type: string }, status: { type: string }, code: { type: string } }
+        modified: { type: integer }
+        added: { type: integer }
+        deleted: { type: integer }
+        untracked: { type: integer }
+        branch: { oneOf: [ { type: string }, { type: "null" } ] }
+        ahead: { type: [integer, "null"] }
+        behind: { type: [integer, "null"] }
+    RemoteFileDiff:
+      type: object
+      required: [path, oldText, newText, status]
+      properties: { path: { type: string }, oldText: { type: string }, newText: { type: string }, status: { type: string } }
+    CompareInput:
+      type: object
+      required: [repoRoot, base, head]
+      properties: { repoRoot: { type: string }, base: { type: string }, head: { type: string } }
+    FileDiffInput:
+      allOf:
+        - { $ref: "#/components/schemas/CompareInput" }
+        - type: object
+          required: [path, status]
+          properties: { path: { type: string }, status: { type: string } }
+    RemoteCommentMessage:
+      type: object
+      required: [id, author, body, created_at]
+      properties: { id: { type: string }, author: { type: string }, body: { type: string }, created_at: { type: string } }
+    RemoteCommentTarget:
+      type: object
+      required: [file_path, kind, start_line, end_line, selected_text]
+      properties:
+        file_path: { type: string }
+        kind: { enum: [source, markdown] }
+        start_line: { type: integer }
+        end_line: { type: integer }
+        start_column: { type: integer }
+        end_column: { type: integer }
+        selected_text: { type: string }
+        before_context: { type: string }
+        after_context: { type: string }
+    RemoteCommentRecord:
+      type: object
+      required: [id, status, target, created_at, updated_at, author, messages]
+      properties:
+        id: { type: string }
+        status: { enum: [discussing, need_modify, closed] }
+        target: { $ref: "#/components/schemas/RemoteCommentTarget" }
+        created_at: { type: string }
+        updated_at: { type: string }
+        author: { type: string }
+        messages: { type: array, items: { $ref: "#/components/schemas/RemoteCommentMessage" } }
+    RemoteCommentSession:
+      type: object
+      required: [version, id, title, status, created_at, ended_at, author, notes, comments]
+      properties:
+        version: { const: 1 }
+        id: { type: string }
+        title: { type: string }
+        status: { enum: [active, closed] }
+        created_at: { type: string }
+        ended_at: { type: [string, "null"] }
+        author: { type: string }
+        notes: { type: string }
+        filePath: { type: string }
+        comments: { type: array, items: { $ref: "#/components/schemas/RemoteCommentRecord" } }
+    AddRemoteCommentInput:
+      type: object
+      required: [repoRoot, filePath, kind, startLine, endLine, startColumn, endColumn, selectedText, beforeContext, afterContext, body]
+      properties:
+        repoRoot: { type: string }
+        filePath: { type: string }
+        kind: { enum: [source, markdown] }
+        startLine: { type: integer }
+        endLine: { type: integer }
+        startColumn: { type: integer }
+        endColumn: { type: integer }
+        selectedText: { type: string }
+        beforeContext: { type: string }
+        afterContext: { type: string }
+        body: { type: string }
+    CommentSessionRef:
+      type: object
+      required: [repoRoot]
+      properties: { repoRoot: { type: string }, sessionId: { type: string }, title: { type: string }, export: { type: boolean } }
+    CommentStatusInput:
+      type: object
+      required: [repoRoot, status]
+      properties: { repoRoot: { type: string }, status: { enum: [discussing, need_modify, closed] } }
+    CommentMessageInput:
+      type: object
+      required: [repoRoot, body]
+      properties: { repoRoot: { type: string }, body: { type: string }, messageId: { type: string } }
+    RemoteEndCommentSessionResult:
+      type: object
+      required: [session]
+      properties: { session: { oneOf: [ { $ref: "#/components/schemas/RemoteCommentSession" }, { type: "null" } ] }, exportPath: { type: string } }
+    RemoteCommentExportResult:
+      type: object
+      required: [exportPath, payload]
+      properties: { exportPath: { type: string }, payload: {} }
+    RemoteAgentProfile:
+      type: object
+      required: [id, name, command]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        command: { type: string }
+        args: { type: array, items: { type: string } }
+        detected: { type: boolean }
+        enabled: { type: boolean }
+    RemoteAgentModelOption:
+      type: object
+      required: [id, label, efforts]
+      properties: { id: { type: string }, label: { type: string }, efforts: { type: array, items: { type: string } }, defaultEffort: { type: string }, hidden: { type: boolean } }
+    RemoteAgentLaunchOptions:
+      type: object
+      required: [profileId, supportsModel, supportsEffort, models]
+      properties:
+        profileId: { type: string }
+        supportsModel: { type: boolean }
+        supportsEffort: { type: boolean }
+        models: { type: array, items: { $ref: "#/components/schemas/RemoteAgentModelOption" } }
+        defaultModel: { type: string }
+        defaultEffort: { type: string }
+        source: { type: string }
+        error: { type: string }
+        cached: { type: boolean }
+    CreateAgentSessionInput:
+      type: object
+      required: [profileId]
+      properties: { profileId: { type: string }, model: { type: string }, effort: { type: string }, prompt: { type: string }, cols: { type: integer }, rows: { type: integer } }
+    CreateTerminalInput:
+      type: object
+      properties: { cols: { type: integer }, rows: { type: integer } }
+    RemoteTerminalInfo:
+      type: object
+      required: [id, title, cwd, status, kind]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        cwd: { type: string }
+        status: { enum: [running, exited] }
+        kind: { enum: [shell, agent] }
+        agentId: { type: string }
+        titleSource: { enum: [default, user, inferred] }
+    RemoteTerminalSnapshot:
+      type: object
+      required: [id, data, seq]
+      properties:
+        id: { type: string }
+        data: { type: string }
+        seq: { type: integer }
+        unchanged:
+          type: boolean
+          description: True when afterSeq already matches the latest output and data is omitted.
+    RemoteApplicationEvent:
+      oneOf:
+        - type: object
+          required: [type, info]
+          properties: { type: { enum: [created, updated] }, info: { $ref: "#/components/schemas/RemoteTerminalInfo" } }
+        - type: object
+          required: [type, id, data, seq]
+          properties: { type: { const: data }, id: { type: string }, data: { type: string }, seq: { type: integer } }
+        - type: object
+          required: [type, id, exitCode, kind]
+          properties: { type: { const: exit }, id: { type: string }, exitCode: { type: integer }, kind: { enum: [shell, agent] } }
+        - type: object
+          required: [type, id, kind]
+          properties: { type: { const: removed }, id: { type: string }, kind: { enum: [shell, agent] } }
+        - type: object
+          required: [type, workspace]
+          properties:
+            type: { const: workspace }
+            workspace:
+              type: object
+              required: [path, name, hostProfileId, hostKind]
+              properties: { path: { type: string }, name: { type: string }, hostProfileId: { type: string }, hostKind: { type: string } }
+    RemoteEventEnvelope:
+      type: object
+      required: [seq, at, serverInstanceId, event]
+      properties: { seq: { type: integer }, at: { type: string }, serverInstanceId: { type: string }, event: { $ref: "#/components/schemas/RemoteApplicationEvent" } }
+    RemoteTerminalEvents:
+      type: object
+      required: [cursor, serverInstanceId, bootstrapRequired, events]
+      properties: { cursor: { type: integer }, serverInstanceId: { type: string }, bootstrapRequired: { type: boolean, description: Cursor is older than the bounded event cache and the client must bootstrap again. }, events: { type: array, items: { $ref: "#/components/schemas/RemoteEventEnvelope" } } }
+    RemoteBootstrap:
+      type: object
+      required: [version, protocolVersion, capabilities, serverInstanceId, host, workspace, repos, agents, terminals, terminalCursor]
+      properties:
+        version: { type: string }
+        protocolVersion: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        serverInstanceId: { type: string }
+        host: { type: object, required: [kind, profileId], properties: { kind: { type: string }, profileId: { type: string } } }
+        workspace: { type: object, required: [root, name], properties: { root: { type: string }, name: { type: string } } }
+        repos: { type: array, items: { $ref: "#/components/schemas/RemoteRepo" } }
+        agents: { type: array, items: { $ref: "#/components/schemas/RemoteAgentProfile" } }
+        defaultAgentId: { type: string }
+        terminals: { type: array, items: { $ref: "#/components/schemas/RemoteTerminalInfo" } }
+        terminalCursor: { type: integer }
+    RemoteErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties: { code: { type: string }, message: { type: string }, details: {}, requestId: { type: string }, retryable: { type: boolean } }

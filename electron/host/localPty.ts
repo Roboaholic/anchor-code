@@ -73,13 +73,23 @@ export async function spawnLocalPty(
 
   const dataListeners = new Set<(data: string) => void>();
   const exitListeners = new Set<(code: number) => void>();
+  let pendingData = "";
+  let pendingExitCode: number | null = null;
   let alive = true;
 
   pty.onData((data) => {
+    if (dataListeners.size === 0) {
+      // node-pty starts producing output immediately after spawn. The host
+      // returns its handle before TerminalService can attach listeners, so an
+      // Agent TUI's complete first frame can otherwise be lost permanently.
+      pendingData = `${pendingData}${data}`.slice(-512 * 1024);
+      return;
+    }
     for (const cb of dataListeners) cb(data);
   });
   pty.onExit(({ exitCode }) => {
     alive = false;
+    if (exitListeners.size === 0) pendingExitCode = exitCode;
     for (const cb of exitListeners) cb(exitCode);
   });
 
@@ -99,9 +109,19 @@ export async function spawnLocalPty(
     },
     onData(cb) {
       dataListeners.add(cb);
+      if (pendingData) {
+        const replay = pendingData;
+        pendingData = "";
+        cb(replay);
+      }
     },
     onExit(cb) {
       exitListeners.add(cb);
+      if (pendingExitCode !== null) {
+        const replay = pendingExitCode;
+        pendingExitCode = null;
+        cb(replay);
+      }
     },
     kill() {
       if (!alive) return;
@@ -192,10 +212,41 @@ function buildPtyEnv(): Record<string, string> {
       // Leave unset so GCM/schannel can use their native UI; do not force
       // a missing askpass helper that would hang with no terminal output.
     }
-  } else if (!env.PATH || env.PATH.length < 8) {
-    env.PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  } else {
+    env.PATH = mergePosixPath(
+      env.PATH || "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    );
   }
   return env;
+}
+
+/**
+ * Desktop launchers commonly omit user package-manager bins from PATH even
+ * though the same commands work in an interactive shell. Keep PTY agents
+ * independent from how Electron itself was started.
+ */
+export function mergePosixPath(
+  pathEnv: string,
+  home = process.env.HOME || "",
+): string {
+  const extras = [
+    home ? path.join(home, ".npm-global", "bin") : "",
+    home ? path.join(home, ".local", "bin") : "",
+    home ? path.join(home, "bin") : "",
+    home ? path.join(home, ".cargo", "bin") : "",
+    home ? path.join(home, ".bun", "bin") : "",
+    home ? path.join(home, ".volta", "bin") : "",
+    home ? path.join(home, ".local", "share", "pnpm") : "",
+  ].filter(Boolean);
+  const parts = pathEnv.split(path.delimiter).filter(Boolean);
+  const seen = new Set(parts);
+  for (const extra of extras.reverse()) {
+    if (!seen.has(extra) && fs.existsSync(extra)) {
+      parts.unshift(extra);
+      seen.add(extra);
+    }
+  }
+  return parts.join(path.delimiter);
 }
 
 /** Agent CLIs often install under user dirs not present in Electron's PATH. */
@@ -235,7 +286,19 @@ function resolveExecutable(
   if (/[\\/]/.test(cmd) || /\.(exe|cmd|bat|ps1)$/i.test(cmd)) {
     return cmd;
   }
-  if (process.platform !== "win32") return cmd;
+  if (process.platform !== "win32") {
+    const pathEnv = env.PATH || process.env.PATH || "";
+    for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+      const full = path.join(dir, cmd);
+      try {
+        fs.accessSync(full, fs.constants.X_OK);
+        if (fs.statSync(full).isFile()) return full;
+      } catch {
+        // continue
+      }
+    }
+    return cmd;
+  }
 
   const home = process.env.USERPROFILE || process.env.HOME || "";
   const candidates = [

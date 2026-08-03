@@ -6,8 +6,12 @@ import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 import { FileWatcherService } from "./services/fileWatcherService.js";
-import { getUiTheme, type UiTheme } from "./settings.js";
+import { getRemoteAccessConfig, getUiTheme, type UiTheme } from "./settings.js";
 import { initAppUpdater } from "./services/appUpdate.js";
+import { AnchorApplication } from "./application/anchorApplication.js";
+import { RemoteRequestHandler } from "./application/remoteRequestHandler.js";
+import { RelayConnector } from "./remote/relayConnector.js";
+import { registerRuntimeLifecycle } from "./application/runtimeLifecycle.js";
 import {
   shellBackground,
   titleBarOverlayFor,
@@ -32,6 +36,27 @@ const fileWatcher = new FileWatcherService(
   () => mainWindow,
   () => hosts.session,
 );
+const application = new AnchorApplication({
+  hosts,
+  terminal,
+});
+application.subscribe((event) => {
+  if (event.type === "workspace") {
+    fileWatcher.stop();
+    if (event.source === "remote") {
+      mainWindow?.webContents.send("shell:command", {
+        type: "workspaceChanged",
+        path: event.workspace.path,
+        hostProfileId: event.workspace.hostProfileId,
+      });
+    }
+  }
+});
+const remoteHandler = new RemoteRequestHandler({
+  application,
+  appVersion: app.getVersion(),
+});
+const relay = new RelayConnector(remoteHandler);
 
 /**
  * Preload must load as CommonJS when package.json has "type":"module".
@@ -222,13 +247,21 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
+  const automatedWorkspace = process.env.ANCHOR_REMOTE_WORKSPACE?.trim();
+  if (automatedWorkspace) {
+    hosts.session.workspaceRoot = automatedWorkspace;
+  }
   registerIpc({
     hosts,
     getMainWindow: () => mainWindow,
     appVersion: app.getVersion(),
     terminal,
     fileWatcher,
+    application,
+    relay,
   });
+  const remoteConfig = await getRemoteAccessConfig();
+  relay.start(remoteConfig.relay!);
   initAppUpdater({ getMainWindow: () => mainWindow });
   buildMenu();
   const theme = await getUiTheme().catch(() => "dark-modern" as UiTheme);
@@ -243,11 +276,15 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("window-all-closed", () => {
-  terminal.disposeAll();
-  fileWatcher.disposeAll();
-  void hosts.dispose();
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+registerRuntimeLifecycle({
+  app,
+  platform: process.platform,
+  quit: () => app.quit(),
+  dispose: () => {
+    terminal.disposeAll();
+    fileWatcher.disposeAll();
+    relay.stop();
+    remoteHandler.dispose();
+    void hosts.dispose();
+  },
 });

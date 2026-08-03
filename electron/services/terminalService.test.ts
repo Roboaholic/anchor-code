@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalHostSession } from "../host/localHost.js";
+import type { HostSession, PtyHandle } from "../host/types.js";
+import { mergePosixPath } from "../host/localPty.js";
 import {
   ensureSpawnHelperExecutable,
   extractFirstAgentUserPrompt,
@@ -31,6 +33,25 @@ describe("ensureSpawnHelperExecutable", () => {
     }
     const mode = fs.statSync(helper).mode;
     expect(mode & 0o111).not.toBe(0);
+  });
+});
+
+describe("mergePosixPath", () => {
+  it("adds existing user package-manager bins used by desktop-launched agents", () => {
+    if (process.platform === "win32") return;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "anchor-path-"));
+    const npmBin = path.join(home, ".npm-global", "bin");
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(npmBin, { recursive: true });
+    fs.mkdirSync(localBin, { recursive: true });
+    try {
+      const merged = mergePosixPath("/usr/bin:/bin", home).split(path.delimiter);
+      expect(merged).toContain(npmBin);
+      expect(merged).toContain(localBin);
+      expect(merged.indexOf(npmBin)).toBeLessThan(merged.indexOf("/usr/bin"));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -177,18 +198,83 @@ describe("TerminalService.create (integration)", () => {
     "spawns a local shell without posix_spawnp error",
     async () => {
       const cwd = os.tmpdir();
+      const lifecycle: string[] = [];
+      const dataSeqs: number[] = [];
+      const offLifecycle = service.subscribe((event) => lifecycle.push(event.type));
+      const offDataSeq = service.subscribe((event) => {
+        if (event.type === "data") dataSeqs.push(event.seq);
+      });
       const tab = await service.create({ cwd, cols: 80, rows: 24 });
       tabs.push(tab.id);
+      expect(lifecycle).toContain("created");
       expect(tab.status).toBe("running");
       expect(tab.cwd).toBeTruthy();
       expect(tab.id).toBeTruthy();
       expect(tab.kind).toBe("shell");
       expect(tab.title).toBe(titleFromCwd("local", cwd));
-      expect(() => service.write(tab.id, "echo anchor-pty-ok\r")).not.toThrow();
+      const observed = new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("PTY output timeout")), 5_000);
+        const off = service.subscribe((event) => {
+          if (event.type === "data" && event.id === tab.id && event.data.includes("anchor-pty-ok")) {
+            clearTimeout(timer);
+            off();
+            resolve(event.data);
+          }
+        });
+      });
+      expect(() => service.write(tab.id, "printf 'anchor-pty-ok\\n'\r")).not.toThrow();
+      await expect(observed).resolves.toContain("anchor-pty-ok");
+      expect(service.snapshot(tab.id)).toContain("anchor-pty-ok");
+      const snapshot = service.snapshotState(tab.id);
+      expect(snapshot?.data).toContain("anchor-pty-ok");
+      expect(snapshot?.seq).toBeGreaterThan(0);
+      expect(dataSeqs.every((seq, index) => index === 0 || seq > dataSeqs[index - 1]!)).toBe(true);
       expect(() => service.resize(tab.id, 100, 30)).not.toThrow();
       const updated = service.applyDynamicTitle(tab.id, "user@host:~/other-dir");
       expect(updated?.title).toBe("other-dir");
+      expect(lifecycle).toContain("updated");
+      service.kill(tab.id);
+      tabs.splice(tabs.indexOf(tab.id), 1);
+      expect(lifecycle).toContain("removed");
+      offLifecycle();
+      offDataSeq();
     },
     15_000,
   );
+});
+
+describe("TerminalService remote replay bounds", () => {
+  it("chunks large PTY events and caps each terminal replay buffer", async () => {
+    const callbacks: { data?: (data: string) => void } = {};
+    const handle: PtyHandle = {
+      id: "bounded-terminal",
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData(callback) { callbacks.data = callback; },
+      onExit: vi.fn(),
+    };
+    const host = {
+      kind: "local",
+      profileId: "local-default",
+      workspaceRoot: os.tmpdir(),
+      openPty: vi.fn(async () => handle),
+    } as unknown as HostSession;
+    const service = new TerminalService(() => null, () => host);
+    const chunks: Array<{ data: string; seq: number }> = [];
+    service.subscribe((event) => {
+      if (event.type === "data") chunks.push({ data: event.data, seq: event.seq });
+    });
+    await service.create({ cwd: os.tmpdir() });
+
+    const output = "x".repeat(700 * 1024);
+    callbacks.data?.(output);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.data.length <= 64 * 1024)).toBe(true);
+    expect(chunks.map((chunk) => chunk.seq)).toEqual(
+      chunks.map((_, index) => index + 1),
+    );
+    expect(service.snapshot("bounded-terminal")?.length).toBe(512 * 1024);
+  });
 });

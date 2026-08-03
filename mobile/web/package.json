@@ -1,0 +1,36 @@
+{
+  "name": "@anchor-code/mobile-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.ts --host 127.0.0.1 --port 4174",
+    "build": "vite build --config vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
+    "e2e": "playwright test --config playwright.config.ts"
+  },
+  "dependencies": {
+    "@anchor-code/remote-contract": "file:../../contracts/remote-api",
+    "@anchor-code/remote-transport": "file:../../contracts/remote-transport",
+    "@fontsource/eb-garamond": "^5.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "diff": "^9.0.0",
+    "jsqr": "^1.4.0",
+    "mermaid": "^11.16.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

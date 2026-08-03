@@ -1,66 +1,27 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
+import type { RelayConnector } from "../remote/relayConnector.js";
+import type { AnchorApplication } from "../application/anchorApplication.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
-  hostBasename,
   hostJoin,
   hostNormalize,
 } from "../host/paths.js";
 import { HostError, type HostSession } from "../host/types.js";
 import {
-  addComment,
-  copyYamlPath,
-  deleteComment,
-  editComment,
-  endSession,
-  ensureActiveSession,
-  exportSession,
-  listSessionSummaries,
-  loadSessions,
-  locateGitRoot,
-  newSession,
-  replyComment,
-  restoreSession,
-  setCommentStatus,
   type AddCommentInput,
   type CommentStatus,
 } from "../services/annotationsService.js";
-import {
-  checkoutBranch,
-  commitChanges,
-  compareCommits,
-  compareToWorktree,
-  discoverRepos,
-  getFileDiff,
-  loadFileBlame,
-  listBranches,
-  loadLog,
-  loadRepoStatus,
-  loadRepoStatusesBulk,
-} from "../services/historyService.js";
+import type { RepoStatus } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import { FileWatcherService } from "../services/fileWatcherService.js";
-import {
-  detectAgentClis,
-  getDefaultAgentId,
-  listAgentProfiles,
-  saveAgentProfiles,
-  setDefaultAgentId,
-  upsertAgentProfile,
-} from "../services/agentCli.js";
-import {
-  buildAgentLaunchArgs,
-  discoverAgentLaunchOptions,
-} from "../services/agentLaunch.js";
 import {
   getSkillInstallStatus,
   installSkill,
   installSkillToWorkspace,
   isWorkspaceSkillInstalled,
 } from "../services/skillInstall.js";
-import { findWorkspaceFiles } from "../services/fileIndex.js";
-import { searchWorkspaceContent } from "../services/contentSearch.js";
 import {
   checkForAppUpdates,
   downloadAppUpdate,
@@ -72,6 +33,7 @@ import {
   getHistoryRecentCompares,
   getFontSize,
   getHostProfile,
+  getWorkspaceFilter,
   getSessionTabLayout,
   getUiTheme,
   loadSettings,
@@ -79,21 +41,21 @@ import {
   normalizeSessionTabLayout,
   normalizeTheme,
   pushHistoryRecentCompare,
-  pushRecentWorkspace,
   removeHistoryRecentCompare,
   setFontSize,
   setSessionTabLayout,
   setUiTheme,
+  setWorkspaceFilter,
+  getRemoteAccessConfig,
+  setRemoteAccessConfig,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
   type RecentWorkspace,
   type SessionTabLayout,
   type UiTheme,
+  type WorkspaceFilter,
 } from "../settings.js";
-
-/** Max bytes for readText (1 MiB). */
-export const MAX_READ_BYTES = 1024 * 1024;
 
 function serializeError(err: unknown): {
   code: string;
@@ -126,8 +88,18 @@ export function registerIpc(opts: {
   appVersion: string;
   terminal: TerminalService;
   fileWatcher: FileWatcherService;
+    application: AnchorApplication;
+    relay: RelayConnector;
 }): void {
-  const { hosts, getMainWindow, appVersion, terminal, fileWatcher } = opts;
+  const {
+    hosts,
+    getMainWindow,
+    appVersion,
+    terminal,
+    fileWatcher,
+    application,
+    relay,
+  } = opts;
 
   const host = () => hosts.session;
   const browseSessions = new Map<string, HostSession>();
@@ -143,6 +115,37 @@ export function registerIpc(opts: {
       hostId: h.id,
       hostKind: h.kind,
     };
+  });
+
+  ipcMain.handle("remote:getInfo", async () => {
+    const config = await getRemoteAccessConfig();
+    return { enabled: config.enabled, relay: relay.info() };
+  });
+
+  ipcMain.handle(
+    "remote:update",
+    async (
+      _evt,
+      value: Partial<{
+        enabled: boolean;
+      }>,
+    ) => {
+      const config = await setRemoteAccessConfig(value ?? {});
+      relay.start(config.relay!);
+      return { enabled: config.enabled, relay: relay.info() };
+    },
+  );
+
+  ipcMain.handle("remote:revokeDevice", async (_evt, peerId: string) => {
+    relay.revokeDevice(peerId);
+    const config = await getRemoteAccessConfig();
+    return { enabled: config.enabled, relay: relay.info() };
+  });
+
+  ipcMain.handle("remote:approveDevice", async (_evt, peerId: string) => {
+    relay.approveDevice(peerId);
+    const config = await getRemoteAccessConfig();
+    return { enabled: config.enabled, relay: relay.info() };
   });
 
   ipcMain.handle("shell:menuAction", async (_evt, action: string) => {
@@ -195,13 +198,7 @@ export function registerIpc(opts: {
   });
 
   ipcMain.handle("host:getInfo", async () => {
-    const h = host();
-    return {
-      id: h.id,
-      kind: h.kind,
-      profileId: h.profileId,
-      workspaceRoot: h.workspaceRoot,
-    };
+    return application.workspace.hostInfo();
   });
 
   ipcMain.handle("host:listProfiles", async (): Promise<HostProfile[]> => {
@@ -448,6 +445,42 @@ export function registerIpc(opts: {
     },
   );
 
+  ipcMain.handle(
+    "settings:getWorkspaceFilter",
+    async (
+      _evt,
+      args: { workspaceRoot: string; hostProfileId?: string | null },
+    ): Promise<WorkspaceFilter> => {
+      try {
+        return await getWorkspaceFilter(args.workspaceRoot, args.hostProfileId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:setWorkspaceFilter",
+    async (
+      _evt,
+      args: {
+        workspaceRoot: string;
+        hostProfileId?: string | null;
+        excludes: string[];
+      },
+    ): Promise<WorkspaceFilter> => {
+      try {
+        return await setWorkspaceFilter(
+          args.workspaceRoot,
+          args.hostProfileId,
+          { excludes: args.excludes ?? [] },
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
   // ── workspace ──────────────────────────────────────
   ipcMain.handle(
     "workspace:getRecent",
@@ -461,7 +494,7 @@ export function registerIpc(opts: {
     "workspace:pickFolder",
     async (): Promise<string | null> => {
       try {
-        const h = host();
+        const h = application.workspace.hostInfo();
         if (h.kind !== "local") {
           // Remote/WSL path selection is handled in the renderer dialog.
           throw new HostError(
@@ -501,55 +534,17 @@ export function registerIpc(opts: {
       try {
         const dirPath = typeof args === "string" ? args : args.path;
         const requestedProfileId =
-          typeof args === "string" ? undefined : args.hostProfileId;
+          typeof args === "string" ? hosts.profileId : args.hostProfileId ?? hosts.profileId;
 
         if (!dirPath || typeof dirPath !== "string") {
           throw new HostError("failed", "Invalid workspace path");
         }
 
-        if (requestedProfileId && requestedProfileId !== hosts.profileId) {
-          const profile = await getHostProfile(requestedProfileId);
-          if (!profile) {
-            throw new HostError(
-              "not_found",
-              `Host profile not found: ${requestedProfileId}`,
-            );
-          }
-          terminal.disposeAll();
-          fileWatcher.stop();
-          await hosts.useProfile(profile);
-        }
-
-        const h = host();
-        const resolved = hostNormalize(h.kind, dirPath);
-        const ok = await h.exists(resolved);
-        if (!ok) {
-          throw new HostError("not_found", `Directory not found: ${resolved}`);
-        }
-        const st = await h.stat(resolved);
-        if (!st.isDir) {
-          throw new HostError("failed", `Not a directory: ${resolved}`);
-        }
-        h.workspaceRoot = resolved;
-
-        try {
-          await pushRecentWorkspace(resolved, h.profileId);
-        } catch (err) {
-          console.warn("[ipc] pushRecentWorkspace failed:", err);
-        }
-        try {
-          terminal.disposeAll();
-        } catch (err) {
-          console.warn("[ipc] terminal.disposeAll failed:", err);
-        }
-        // Renderer restarts the watcher on the new root; stop the old one.
         fileWatcher.stop();
-        return {
-          root: resolved,
-          name: hostBasename(h.kind, resolved) || resolved,
-          hostKind: h.kind,
-          hostProfileId: h.profileId,
-        };
+        return await application.workspace.open({
+          path: dirPath,
+          hostProfileId: requestedProfileId,
+        });
       } catch (err) {
         console.error("[ipc] workspace:open failed:", err);
         rethrowIpc(err);
@@ -559,7 +554,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("workspace:listDir", async (_evt, dirPath: string) => {
     try {
-      return await host().listDir(dirPath);
+      return await application.workspace.listDir(dirPath);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -572,21 +567,8 @@ export function registerIpc(opts: {
       filePath: string,
     ): Promise<{ text: string; size: number; truncated: boolean }> => {
       try {
-        const h = host();
-        const st = await h.stat(filePath);
-        if (!st.isFile) {
-          throw new HostError("failed", `Not a file: ${filePath}`);
-        }
-        if (st.size > MAX_READ_BYTES) {
-          const text = await h.readFile(filePath);
-          return {
-            text: text.slice(0, MAX_READ_BYTES),
-            size: st.size,
-            truncated: true,
-          };
-        }
-        const text = await h.readFile(filePath);
-        return { text, size: st.size, truncated: false };
+        const result = await application.review.readFile(filePath);
+        return { text: result.text, size: result.size, truncated: result.truncated };
       } catch (err) {
         rethrowIpc(err);
       }
@@ -595,7 +577,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("workspace:stat", async (_evt, targetPath: string) => {
     try {
-      return await host().stat(targetPath);
+      return await application.workspace.stat(targetPath);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -701,16 +683,13 @@ export function registerIpc(opts: {
       source: "git" | "walk" | "multi-git";
     }> => {
       try {
-        const h = host();
         const root =
           (args?.root && typeof args.root === "string" && args.root) ||
-          h.workspaceRoot;
+          application.workspace.active()?.path;
         if (!root) {
           throw new HostError("failed", "No workspace open");
         }
-        return await findWorkspaceFiles(h, root, {
-          maxFiles: args?.maxFiles,
-        });
+        return await application.review.fileIndex(args?.maxFiles, root);
       } catch (err) {
         console.error("[ipc] workspace:findFiles failed:", err);
         rethrowIpc(err);
@@ -735,10 +714,9 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        const h = host();
         const root =
           (args?.root && typeof args.root === "string" && args.root) ||
-          h.workspaceRoot;
+          application.workspace.active()?.path;
         if (!root) {
           throw new HostError("failed", "No workspace open");
         }
@@ -747,7 +725,7 @@ export function registerIpc(opts: {
           typeof args?.requestId === "string" && args.requestId
             ? args.requestId
             : `s${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const result = await searchWorkspaceContent(h, root, query, {
+        const result = await application.review.search(query, {
           maxResults: args?.maxResults,
           caseSensitive: args?.caseSensitive,
           useRegex: args?.useRegex,
@@ -773,7 +751,7 @@ export function registerIpc(opts: {
               // ignore
             }
           },
-        });
+        }, root);
         return { ...result, requestId };
       } catch (err) {
         console.error("[ipc] workspace:searchContent failed:", err);
@@ -786,7 +764,7 @@ export function registerIpc(opts: {
     "workspace:pickFile",
     async (): Promise<string | null> => {
       try {
-        const h = host();
+        const h = application.workspace.hostInfo();
         if (h.kind !== "local") {
           // Remote/WSL: renderer open-by-path dialog handles free-form paths.
           throw new HostError(
@@ -820,7 +798,7 @@ export function registerIpc(opts: {
     "history:discover",
     async (_evt, workspaceRoot: string) => {
       try {
-        return await discoverRepos(host(), workspaceRoot);
+        return await application.review.repos(workspaceRoot);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -829,7 +807,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("history:loadLog", async (_evt, repoRoot: string) => {
     try {
-      return await loadLog(host(), repoRoot);
+      return await application.review.log(repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -841,8 +819,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; filePath: string; revision?: string },
     ) => {
       try {
-        return await loadFileBlame(
-          host(),
+        return await application.review.blame(
           args.repoRoot,
           args.filePath,
           args.revision,
@@ -863,15 +840,7 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        if (args.head === "worktree") {
-          return await compareToWorktree(host(), args.repoRoot, args.base);
-        }
-        return await compareCommits(
-          host(),
-          args.repoRoot,
-          args.base,
-          args.head,
-        );
+        return await application.review.compare(args.repoRoot, args.base, args.head);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -891,14 +860,7 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        return await getFileDiff(
-          host(),
-          args.repoRoot,
-          args.base,
-          args.head,
-          args.path,
-          args.status,
-        );
+        return await application.review.fileDiff(args);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -913,7 +875,7 @@ export function registerIpc(opts: {
       opts?: { badgeOnly?: boolean },
     ) => {
       try {
-        return await loadRepoStatus(host(), repoRoot, opts);
+        return await application.review.status(repoRoot, opts);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -928,9 +890,9 @@ export function registerIpc(opts: {
     ) => {
       try {
         const roots = Array.isArray(args?.repoRoots) ? args.repoRoots : [];
-        return await loadRepoStatusesBulk(host(), roots, {
+        return await application.review.statusBulk(roots, {
           badgeOnly: args?.badgeOnly !== false,
-          onStatus: (status) => {
+          onStatus: (status: RepoStatus) => {
             try {
               evt.sender.send("history:statusBulk:one", status);
             } catch {
@@ -948,7 +910,7 @@ export function registerIpc(opts: {
     "history:listBranches",
     async (_evt, repoRoot: string) => {
       try {
-        return await listBranches(host(), repoRoot);
+        return await application.review.branches(repoRoot);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -962,7 +924,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; branch: string },
     ) => {
       try {
-        return await checkoutBranch(host(), args.repoRoot, args.branch);
+        return await application.review.checkout(args.repoRoot, args.branch);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -976,8 +938,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; message: string; paths?: string[] },
     ) => {
       try {
-        return await commitChanges(
-          host(),
+        return await application.review.commit(
           args.repoRoot,
           args.message,
           args.paths,
@@ -1032,7 +993,7 @@ export function registerIpc(opts: {
     "annotations:locateGitRoot",
     async (_evt, filePath: string) => {
       try {
-        return await locateGitRoot(host(), filePath);
+        return await application.comments.locateRoot(filePath);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1041,7 +1002,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("annotations:load", async (_evt, repoRoot: string) => {
     try {
-      return await loadSessions(host(), repoRoot);
+      return await application.comments.list(repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -1049,7 +1010,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("annotations:list", async (_evt, repoRoot: string) => {
     try {
-      return await listSessionSummaries(host(), repoRoot);
+      return await application.comments.summaries(repoRoot);
     } catch (err) {
       rethrowIpc(err);
     }
@@ -1064,7 +1025,7 @@ export function registerIpc(opts: {
       try {
         const repoRoot = typeof args === "string" ? args : args.repoRoot;
         const title = typeof args === "string" ? undefined : args.title;
-        return await ensureActiveSession(host(), repoRoot, "local-user", title);
+        return await application.comments.ensureSession(repoRoot, title, "local-user");
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1075,7 +1036,7 @@ export function registerIpc(opts: {
     "annotations:addComment",
     async (_evt, input: AddCommentInput) => {
       try {
-        return await addComment(host(), input);
+        return await application.comments.add(input);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1093,8 +1054,7 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        return await setCommentStatus(
-          host(),
+        return await application.comments.setStatus(
           args.repoRoot,
           args.commentId,
           args.status,
@@ -1112,8 +1072,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; commentId: string; body: string },
     ) => {
       try {
-        return await replyComment(
-          host(),
+        return await application.comments.reply(
           args.repoRoot,
           args.commentId,
           args.body,
@@ -1136,8 +1095,7 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        return await editComment(
-          host(),
+        return await application.comments.edit(
           args.repoRoot,
           args.commentId,
           args.body,
@@ -1156,7 +1114,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; commentId: string },
     ) => {
       try {
-        return await deleteComment(host(), args.repoRoot, args.commentId);
+        return await application.comments.remove(args.repoRoot, args.commentId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1175,7 +1133,10 @@ export function registerIpc(opts: {
           typeof args === "string"
             ? undefined
             : { export: args.export, sessionId: args.sessionId };
-        return await endSession(host(), repoRoot, options);
+        return await application.comments.end(repoRoot, {
+          export: options?.export !== false,
+          sessionId: options?.sessionId,
+        });
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1191,7 +1152,7 @@ export function registerIpc(opts: {
       try {
         const repoRoot = typeof args === "string" ? args : args.repoRoot;
         const title = typeof args === "string" ? undefined : args.title;
-        return await newSession(host(), repoRoot, "local-user", title);
+        return await application.comments.create(repoRoot, title, "local-user");
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1205,7 +1166,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; sessionId: string },
     ) => {
       try {
-        return await restoreSession(host(), args.repoRoot, args.sessionId);
+        return await application.comments.restore(args.repoRoot, args.sessionId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1219,7 +1180,7 @@ export function registerIpc(opts: {
       args: { repoRoot: string; sessionId?: string },
     ) => {
       try {
-        return await exportSession(host(), args.repoRoot, args.sessionId);
+        return await application.comments.export(args.repoRoot, args.sessionId);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1235,7 +1196,7 @@ export function registerIpc(opts: {
       try {
         const repoRoot = typeof args === "string" ? args : args.repoRoot;
         const sessionId = typeof args === "string" ? undefined : args.sessionId;
-        const abs = await copyYamlPath(host(), repoRoot, sessionId);
+        const abs = await application.comments.yamlPath(repoRoot, sessionId);
         clipboard.writeText(abs);
         return abs;
       } catch (err) {
@@ -1261,14 +1222,14 @@ export function registerIpc(opts: {
       } = {},
     ) => {
       try {
-        const h = host();
+        const h = application.workspace.hostInfo();
         const cwd =
           args.cwd ??
           h.workspaceRoot ??
           (h.kind === "local"
             ? process.env.HOME || process.env.USERPROFILE || process.cwd()
             : "/");
-        return await terminal.create({
+        return await application.terminal.create({
           cwd,
           cols: args.cols ?? 80,
           rows: args.rows ?? 24,
@@ -1284,67 +1245,58 @@ export function registerIpc(opts: {
     },
   );
 
-  ipcMain.handle("terminal:list", async () => terminal.list());
-
+  ipcMain.handle("terminal:list", async () => application.terminal.list());
+  ipcMain.handle("terminal:snapshot", async (_evt, id: string) => {
+    const { data, seq } = application.terminal.snapshot(id);
+    return { data, seq };
+  });
 
   ipcMain.handle(
     "terminal:applyTitle",
     async (_evt, args: { id: string; title: string }) => {
-      const info = terminal.applyDynamicTitle(args.id, args.title);
-      if (!info) {
-        throw new HostError("not_found", `Terminal not found: ${args.id}`);
-      }
-      return info;
+      return application.terminal.applyTitle(args.id, args.title);
     },
   );
 
   ipcMain.handle(
     "terminal:applyAgentTopic",
     async (_evt, args: { id: string; line: string }) => {
-      const info = terminal.applyAgentTopicFromInput(args.id, args.line);
-      if (!info) {
-        throw new HostError("not_found", `Terminal not found: ${args.id}`);
-      }
-      return info;
+      return application.terminal.applyAgentTopic(args.id, args.line);
     },
   );
   ipcMain.handle(
     "terminal:rename",
     async (_evt, args: { id: string; title: string }) => {
-      const info = terminal.rename(args.id, args.title);
-      if (!info) {
-        throw new HostError("not_found", `Terminal not found: ${args.id}`);
-      }
-      return info;
+      return application.terminal.rename(args.id, args.title);
     },
   );
 
   ipcMain.handle(
     "terminal:write",
     async (_evt, args: { id: string; data: string }) => {
-      terminal.write(args.id, args.data);
+      application.terminal.write(args.id, args.data);
     },
   );
 
   ipcMain.handle(
     "terminal:resize",
     async (_evt, args: { id: string; cols: number; rows: number }) => {
-      terminal.resize(args.id, args.cols, args.rows);
+      application.terminal.resize(args.id, args.cols, args.rows);
     },
   );
 
   ipcMain.handle("terminal:kill", async (_evt, id: string) => {
-    terminal.kill(id);
+    application.terminal.remove(id);
   });
 
   ipcMain.handle("terminal:disposeAll", async () => {
-    terminal.disposeAll();
+    application.terminal.disposeAll();
   });
 
   // ── agent CLI profiles ─────────────────────────────
   ipcMain.handle("agent:listProfiles", async () => {
     try {
-      return await listAgentProfiles();
+      return await application.agent.profiles();
     } catch (err) {
       rethrowIpc(err);
     }
@@ -1352,7 +1304,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("agent:detect", async () => {
     try {
-      return await detectAgentClis(host());
+      return await application.agent.detect();
     } catch (err) {
       rethrowIpc(err);
     }
@@ -1362,7 +1314,7 @@ export function registerIpc(opts: {
     "agent:saveProfiles",
     async (_evt, profiles: unknown) => {
       try {
-        return await saveAgentProfiles(
+        return await application.agent.saveProfiles(
           Array.isArray(profiles) ? (profiles as never) : [],
         );
       } catch (err) {
@@ -1378,7 +1330,7 @@ export function registerIpc(opts: {
         if (!profile || typeof profile !== "object") {
           throw new HostError("failed", "Invalid agent profile");
         }
-        return await upsertAgentProfile(profile as never);
+        return await application.agent.upsertProfile(profile as never);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1387,7 +1339,7 @@ export function registerIpc(opts: {
 
   ipcMain.handle("agent:getDefaultId", async () => {
     try {
-      return await getDefaultAgentId();
+      return await application.agent.defaultId();
     } catch (err) {
       rethrowIpc(err);
     }
@@ -1397,7 +1349,7 @@ export function registerIpc(opts: {
     "agent:setDefaultId",
     async (_evt, id: string | null | undefined) => {
       try {
-        await setDefaultAgentId(id ?? undefined);
+        await application.agent.setDefaultId(id ?? undefined);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1419,7 +1371,28 @@ export function registerIpc(opts: {
         }
         // force: discover bypasses memory/disk and rewrites settings.json.
         // Do not call clear() here — its async wipe races the write.
-        return await discoverAgentLaunchOptions(host(), profileId, { force });
+        return await application.agent.launchOptions(profileId, { force });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "agent:createSession",
+    async (
+      _evt,
+      args: {
+        profileId: string;
+        model?: string;
+        effort?: string;
+        prompt?: string;
+        cols?: number;
+        rows?: number;
+      },
+    ) => {
+      try {
+        return await application.agent.createSession(args);
       } catch (err) {
         rethrowIpc(err);
       }
@@ -1438,7 +1411,7 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        return buildAgentLaunchArgs(args.profileId, {
+        return application.agent.buildLaunchArgs(args.profileId, {
           model: args.model,
           effort: args.effort,
           prompt: args.prompt,

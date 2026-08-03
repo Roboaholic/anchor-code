@@ -143,7 +143,27 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   resetForWorkspace: async (cwd) => {
     try {
       disposeAllXtermSessions();
-      await window.anchor.terminal.disposeAll();
+      const existing = (await window.anchor.terminal.list()).filter(
+        (tab) => tab.cwd.replace(/\\/g, "/").replace(/\/+$/, "") === cwd.replace(/\\/g, "/").replace(/\/+$/, ""),
+      );
+      if (existing.length > 0) {
+        const shell = existing.filter((tab) => modeOf(tab) === "terminal").at(-1);
+        const agent = existing.filter((tab) => modeOf(tab) === "agent").at(-1);
+        set({
+          workspaceCwd: cwd,
+          tabs: existing,
+          activeByMode: {
+            terminal: shell?.id ?? null,
+            agent: agent?.id ?? null,
+          },
+          mode: shell ? "terminal" : agent ? "agent" : "terminal",
+          error: null,
+          agentMenuOpen: false,
+        });
+        void get().loadAgentProfiles();
+        void get().detectAgents();
+        return;
+      }
       const tab = await window.anchor.terminal.create({
         cwd,
         cols: 80,
@@ -232,7 +252,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         kind: "shell",
       });
       set((s) => ({
-        tabs: [...s.tabs, tab],
+        tabs: s.tabs.some((item) => item.id === tab.id)
+          ? s.tabs.map((item) => (item.id === tab.id ? tab : item))
+          : [...s.tabs, tab],
         mode: "terminal",
         activeByMode: { ...s.activeByMode, terminal: tab.id },
         error: null,
@@ -253,55 +275,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   createAgentTab: async (profile, launch) => {
-    const cwd =
-      get().workspaceCwd ??
-      (await window.anchor.host.getInfo()).workspaceRoot ??
-      undefined;
     try {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
       const taskTitle = launch?.title?.trim();
-      const launchPrompt = launch?.prompt?.trim() || taskTitle;
-      const baseName = profile.name.trim() || profile.id;
-      const fallbackTitle = [
-        baseName,
-        launch?.model,
-        launch?.effort,
-        `${hh}:${mm}`,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const title = taskTitle || fallbackTitle;
-
-      const extra =
-        (await window.anchor.agent.buildLaunchArgs({
-          profileId: profile.id,
-          model: launch?.model,
-          effort: launch?.effort,
-          prompt: launchPrompt,
-        })) ?? [];
-
-      let tab = await window.anchor.terminal.create({
-        cwd: cwd ?? undefined,
+      const tab = await window.anchor.agent.createSession({
+        profileId: profile.id,
+        model: launch?.model,
+        effort: launch?.effort,
+        prompt: launch?.prompt?.trim() || taskTitle,
         cols: 80,
         rows: 24,
-        kind: "agent",
-        command: profile.command,
-        args: [...(profile.args ?? []), ...extra],
-        title,
-        agentId: profile.id,
       });
-      if (taskTitle) {
-        try {
-          tab = await window.anchor.terminal.rename(tab.id, taskTitle);
-        } catch {
-          tab = { ...tab, title: taskTitle, titleSource: "user" };
-        }
-      }
-
       set((s) => ({
-        tabs: [...s.tabs, tab],
+        tabs: s.tabs.some((item) => item.id === tab.id)
+          ? s.tabs.map((item) => (item.id === tab.id ? tab : item))
+          : [...s.tabs, tab],
         mode: "agent",
         activeByMode: { ...s.activeByMode, agent: tab.id },
         error: null,
@@ -522,6 +509,53 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onTitle) {
     useTerminalStore.setState((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? info : t)),
     }));
+  });
+}
+
+// TerminalService is the source of truth for both the Electron UI and remote
+// mobile clients. Lifecycle pushes keep sessions created or removed by either
+// surface visible on the other without polling or maintaining a second list.
+if (typeof window !== "undefined" && window.anchor?.terminal?.onCreated) {
+  window.anchor.terminal.onCreated(({ info }) => {
+    const mode = modeOf(info);
+    useTerminalStore.setState((state) => ({
+      tabs: state.tabs.some((tab) => tab.id === info.id)
+        ? state.tabs.map((tab) => (tab.id === info.id ? info : tab))
+        : [...state.tabs, info],
+      activeByMode: { ...state.activeByMode, [mode]: info.id },
+      mode,
+      agentMenuOpen: false,
+      error: null,
+    }));
+    if (mode === "agent") {
+      void import("@/features/shell/shellStore").then(({ useShellStore }) => {
+        useShellStore.getState().setAgentVisible(true);
+      });
+    }
+  });
+}
+
+if (typeof window !== "undefined" && window.anchor?.terminal?.onUpdated) {
+  window.anchor.terminal.onUpdated(({ info }) => {
+    useTerminalStore.setState((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === info.id ? info : tab)),
+    }));
+  });
+}
+
+if (typeof window !== "undefined" && window.anchor?.terminal?.onExit) {
+  window.anchor.terminal.onExit(({ id }) => {
+    useTerminalStore.setState((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === id ? { ...tab, status: "exited" } : tab,
+      ),
+    }));
+  });
+}
+
+if (typeof window !== "undefined" && window.anchor?.terminal?.onRemoved) {
+  window.anchor.terminal.onRemoved(({ id }) => {
+    useTerminalStore.getState().removeTabLocal(id);
   });
 }
 

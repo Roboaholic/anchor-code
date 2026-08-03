@@ -44,6 +44,31 @@ export interface HostInfo {
   workspaceRoot: string | null;
 }
 
+export interface RemoteAccessInfo {
+  enabled: boolean;
+  relay: {
+    enabled: boolean;
+    state: "disabled" | "connecting" | "online" | "offline";
+    url: string;
+    roomId: string;
+    hostPeerId: string;
+    connectedGuests: number;
+    devices: Array<{ peerId: string; online: boolean }>;
+    pendingDevices: string[];
+    error?: string;
+    pairing?: {
+      v: 1;
+      type: "anchor-code-relay";
+      relayUrl: string;
+      roomId: string;
+      hostPeerId: string;
+      ticket: string;
+      secret: string;
+      expiresAt: string;
+    };
+  };
+}
+
 export interface HostProfile {
   id: string;
   kind: HostKind;
@@ -342,7 +367,15 @@ export interface AnchorApi {
   shell: {
     getVersion: () => Promise<AppVersionInfo>;
     menuAction: (action: string) => Promise<boolean>;
-    onCommand: (cb: (cmd: { type: string }) => void) => () => void;
+    onCommand: (cb: (cmd: { type: string; path?: string; hostProfileId?: string }) => void) => () => void;
+  };
+  remote: {
+    getInfo: () => Promise<RemoteAccessInfo>;
+    update: (value: Partial<{
+      enabled: boolean;
+    }>) => Promise<RemoteAccessInfo>;
+    revokeDevice: (peerId: string) => Promise<RemoteAccessInfo>;
+    approveDevice: (peerId: string) => Promise<RemoteAccessInfo>;
   };
   host: {
     getInfo: () => Promise<HostInfo>;
@@ -544,6 +577,7 @@ export interface AnchorApi {
       agentId?: string;
     }) => Promise<TerminalTabInfo>;
     list: () => Promise<TerminalTabInfo[]>;
+    snapshot: (id: string) => Promise<{ data: string; seq: number }>;
     rename: (id: string, title: string) => Promise<TerminalTabInfo>;
     applyTitle: (id: string, title: string) => Promise<TerminalTabInfo>;
     applyAgentTopic: (id: string, line: string) => Promise<TerminalTabInfo>;
@@ -552,7 +586,16 @@ export interface AnchorApi {
     kill: (id: string) => Promise<void>;
     disposeAll: () => Promise<void>;
     onData: (
-      cb: (payload: { id: string; data: string }) => void,
+      cb: (payload: { id: string; data: string; seq: number }) => void,
+    ) => () => void;
+    onCreated: (
+      cb: (payload: { info: TerminalTabInfo }) => void,
+    ) => () => void;
+    onUpdated: (
+      cb: (payload: { info: TerminalTabInfo }) => void,
+    ) => () => void;
+    onRemoved: (
+      cb: (payload: { id: string; kind: TerminalSessionKind }) => void,
     ) => () => void;
     onTitle: (
       cb: (payload: { id: string; info: TerminalTabInfo }) => void,
@@ -599,6 +642,14 @@ export interface AnchorApi {
       effort?: string;
       prompt?: string;
     }) => Promise<string[]>;
+    createSession: (args: {
+      profileId: string;
+      model?: string;
+      effort?: string;
+      prompt?: string;
+      cols?: number;
+      rows?: number;
+    }) => Promise<TerminalTabInfo>;
   };
   skill: {
     status: (args?: {

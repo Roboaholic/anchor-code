@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LocalHostSession } from "./localHost.js";
+import { spawnLocalPty } from "./localPty.js";
 import { HostError } from "./types.js";
 
 describe("LocalHostSession (integration)", () => {
@@ -160,10 +161,30 @@ describe("LocalHostSession (integration)", () => {
     },
     15_000,
   );
+
+  it(
+    "replays output and exit emitted before listeners attach",
+    async () => {
+      if (process.platform === "win32") return;
+      const { handle } = await spawnLocalPty(os.tmpdir(), 80, 24, {
+        shell: "/bin/sh",
+        args: ["-c", "printf 'anchor-early-frame'; exit 7"],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      let output = "";
+      let exitCode: number | null = null;
+      handle.onData((data) => { output += data; });
+      handle.onExit((code) => { exitCode = code; });
+
+      expect(output).toContain("anchor-early-frame");
+      expect(exitCode).toBe(7);
+    },
+    15_000,
+  );
   it("exposes profileId from constructor", () => {
     const h = new LocalHostSession("id-1", "local-custom");
     expect(h.profileId).toBe("local-custom");
     expect(h.kind).toBe("local");
   });
 });
-

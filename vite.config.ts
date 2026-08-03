@@ -22,6 +22,7 @@ export default defineConfig({
                 "electron",
                 "electron-updater",
                 "node-pty",
+                "ws",
                 "yaml",
                 "ssh2",
                 "cpu-features",

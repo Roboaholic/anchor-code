@@ -56,7 +56,11 @@ function applyDocumentFontSize(fontSize: number): void {
   );
 }
 
-export type SettingsFocusSection = "appearance" | "agent-skill" | "updates";
+export type SettingsFocusSection =
+  | "appearance"
+  | "remote"
+  | "agent-skill"
+  | "updates";
 
 export interface ThemeState {
   theme: UiTheme;

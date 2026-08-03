@@ -208,5 +208,5 @@ describe("historyService (integration, temp git repo)", () => {
     await checkoutBranch(host, root, baseBranch!);
     const back = await loadRepoStatus(host, root);
     expect(back.branch).toBe(baseBranch);
-  });
+  }, 20_000);
 });

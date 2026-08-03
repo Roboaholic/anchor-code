@@ -39,3 +39,72 @@ jobs:
 
       - name: Production build (renderer + electron bundles)
         run: npm run build
+
+  mobile:
+    name: Mobile baseline & APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/web/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install mobile dependencies
+        run: npm --prefix mobile/web ci
+
+      - name: Install mobile browser baseline runtime
+        run: npm --prefix mobile/web exec -- playwright install --with-deps chromium
+
+      - name: Mobile baseline gate
+        run: npm run mobile:baseline
+
+      - name: Build mobile web bundle
+        run: npm --prefix mobile/web run build
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+        working-directory: mobile/android
+
+      - name: Verify APK payload and checksum
+        run: |
+          test -f mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l mobile/android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/index.html'
+          sha256sum mobile/android/app/build/outputs/apk/debug/app-debug.apk > mobile/android/app/build/outputs/apk/debug/app-debug.apk.sha256
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-baseline-playwright-report
+          path: |
+            mobile/web/playwright-report
+            mobile/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-mobile-debug
+          path: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14

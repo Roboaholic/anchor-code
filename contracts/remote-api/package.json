@@ -1,0 +1,15 @@
+{
+  "name": "@anchor-code/remote-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./v1": "./v1/index.ts"
+  },
+  "files": [
+    "v1/index.ts",
+    "v1/openapi.yaml",
+    "fixtures/v1-baseline.json",
+    "compatibility-policy.md"
+  ]
+}

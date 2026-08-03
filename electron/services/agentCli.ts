@@ -167,10 +167,11 @@ async function commandExistsOnHost(
       ]);
       return r.code === 0 && r.stdout.trim().length > 0;
     }
-    // POSIX / WSL / SSH
+    // POSIX / WSL / SSH. Desktop Electron processes often miss the user's
+    // npm/global bins even when the command works in their interactive shell.
     const r = await host.run(cwd, "sh", [
       "-lc",
-      `command -v ${shellSingleQuote(cmd)} >/dev/null 2>&1`,
+      `PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.volta/bin:$HOME/.local/share/pnpm:$PATH"; export PATH; command -v ${shellSingleQuote(cmd)} >/dev/null 2>&1`,
     ]);
     return r.code === 0;
   } catch {

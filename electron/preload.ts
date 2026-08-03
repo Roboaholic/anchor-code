@@ -39,6 +39,31 @@ export interface HostInfo {
   workspaceRoot: string | null;
 }
 
+export interface RemoteAccessInfo {
+  enabled: boolean;
+  relay: {
+    enabled: boolean;
+    state: "disabled" | "connecting" | "online" | "offline";
+    url: string;
+    roomId: string;
+    hostPeerId: string;
+    connectedGuests: number;
+    devices: Array<{ peerId: string; online: boolean }>;
+    pendingDevices: string[];
+    error?: string;
+    pairing?: {
+      v: 1;
+      type: "anchor-code-relay";
+      relayUrl: string;
+      roomId: string;
+      hostPeerId: string;
+      ticket: string;
+      secret: string;
+      expiresAt: string;
+    };
+  };
+}
+
 export interface HostProfile {
   id: string;
   kind: HostKind;
@@ -152,15 +177,27 @@ const anchor = {
     menuAction: (action: string): Promise<boolean> =>
       ipcRenderer.invoke("shell:menuAction", action),
     onCommand: (
-      cb: (cmd: { type: string }) => void,
+      cb: (cmd: { type: string; path?: string; hostProfileId?: string }) => void,
     ): (() => void) => {
       const listener = (
         _e: IpcRendererEvent,
-        cmd: { type: string },
+        cmd: { type: string; path?: string; hostProfileId?: string },
       ) => cb(cmd);
       ipcRenderer.on("shell:command", listener);
       return () => ipcRenderer.removeListener("shell:command", listener);
     },
+  },
+  remote: {
+    getInfo: (): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:getInfo"),
+    update: (value: Partial<{
+      enabled: boolean;
+    }>): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:update", value),
+    revokeDevice: (peerId: string): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:revokeDevice", peerId),
+    approveDevice: (peerId: string): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:approveDevice", peerId),
   },
   host: {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),
@@ -492,6 +529,8 @@ const anchor = {
     }): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:create", args ?? {}),
     list: (): Promise<TerminalTabInfo[]> => ipcRenderer.invoke("terminal:list"),
+    snapshot: (id: string): Promise<{ data: string; seq: number }> =>
+      ipcRenderer.invoke("terminal:snapshot", id),
     rename: (id: string, title: string): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:rename", { id, title }),
     applyTitle: (id: string, title: string): Promise<TerminalTabInfo> =>
@@ -505,13 +544,39 @@ const anchor = {
     kill: (id: string): Promise<void> =>
       ipcRenderer.invoke("terminal:kill", id),
     disposeAll: (): Promise<void> => ipcRenderer.invoke("terminal:disposeAll"),
-    onData: (cb: (payload: { id: string; data: string }) => void) => {
+    onData: (cb: (payload: { id: string; data: string; seq: number }) => void) => {
       const listener = (
         _e: IpcRendererEvent,
-        payload: { id: string; data: string },
+        payload: { id: string; data: string; seq: number },
       ) => cb(payload);
       ipcRenderer.on("terminal:data", listener);
       return () => ipcRenderer.removeListener("terminal:data", listener);
+    },
+    onCreated: (cb: (payload: { info: TerminalTabInfo }) => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { info: TerminalTabInfo },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:created", listener);
+      return () => ipcRenderer.removeListener("terminal:created", listener);
+    },
+    onUpdated: (cb: (payload: { info: TerminalTabInfo }) => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { info: TerminalTabInfo },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:updated", listener);
+      return () => ipcRenderer.removeListener("terminal:updated", listener);
+    },
+    onRemoved: (
+      cb: (payload: { id: string; kind: TerminalSessionKind }) => void,
+    ) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { id: string; kind: TerminalSessionKind },
+      ) => cb(payload);
+      ipcRenderer.on("terminal:removed", listener);
+      return () => ipcRenderer.removeListener("terminal:removed", listener);
     },
     onTitle: (
       cb: (payload: { id: string; info: TerminalTabInfo }) => void,
@@ -606,6 +671,15 @@ const anchor = {
       effort?: string;
       prompt?: string;
     }) => ipcRenderer.invoke("agent:buildLaunchArgs", args),
+    createSession: (args: {
+      profileId: string;
+      model?: string;
+      effort?: string;
+      prompt?: string;
+      cols?: number;
+      rows?: number;
+    }): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("agent:createSession", args),
   },
   skill: {
     status: (args?: { workspaceRoot?: string | null }) =>

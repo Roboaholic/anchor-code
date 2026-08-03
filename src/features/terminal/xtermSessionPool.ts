@@ -166,8 +166,42 @@ export function acquireXtermSession(
   term.open(hostEl);
   const fileLinks = registerFileLinkProvider(term);
 
+  // @xterm/xterm 6.0.0 is miscompiled by the current production minifier in
+  // its built-in DECRQM handler (requestMode references an undefined enum
+  // variable). Shells and agent TUIs probe these modes during startup; once
+  // the handler throws, the parser stops rendering all later input. Public
+  // parser handlers run before the built-in handler, so safely consume the
+  // probes until the upstream bundle no longer contains the broken code.
+  const ansiModeQueryDisposable = term.parser.registerCsiHandler(
+    { intermediates: "$", final: "p" },
+    () => true,
+  );
+  const decModeQueryDisposable = term.parser.registerCsiHandler(
+    { prefix: "?", intermediates: "$", final: "p" },
+    () => true,
+  );
+
+  let hydrating = true;
+  const pendingData: Array<{ data: string; seq: number }> = [];
   const offData = window.anchor.terminal.onData((payload) => {
-    if (payload.id === id) term.write(payload.data);
+    if (payload.id !== id) return;
+    if (hydrating) {
+      pendingData.push({ data: payload.data, seq: payload.seq });
+      return;
+    }
+    term.write(payload.data);
+  });
+  void window.anchor.terminal.snapshot(id).then((snapshot) => {
+    if (snapshot.data) term.write(snapshot.data);
+    for (const item of pendingData) {
+      if (item.seq > snapshot.seq) term.write(item.data);
+    }
+    pendingData.length = 0;
+    hydrating = false;
+  }).catch(() => {
+    for (const item of pendingData) term.write(item.data);
+    pendingData.length = 0;
+    hydrating = false;
   });
   const offExit = window.anchor.terminal.onExit((payload) => {
     if (payload.id !== id) return;
@@ -255,6 +289,8 @@ export function acquireXtermSession(
       offData();
       offExit();
       fileLinks.dispose();
+      ansiModeQueryDisposable.dispose();
+      decModeQueryDisposable.dispose();
     };
 
   const session: PooledXterm = { id, kind, term, fit, hostEl };

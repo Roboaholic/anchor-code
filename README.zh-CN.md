@@ -74,6 +74,14 @@ Anchor Code 专注于 Agent 编码流程中的人工 Review 阶段，与负责�
 
 Anchor Code 不试图替代这些工具。你可以继续使用熟悉的编辑器或 Agent；当改动需要认真检查、明确反馈和可追踪闭环时，把仓库打开到 Anchor Code 中完成 Review。
 
+## Android Companion（开发预览）
+
+仓库包含 `mobile/` Android Companion，可连接 Anchor Code 桌面端。它支持在移动端 Review 代码和 Markdown、查看 Worktree Diff、提交结构化 Comment、更新 Comment 状态与回复，以及远程使用 Agent CLI。构建、安全、加密 Relay、模拟器和平板验证说明见 [mobile/README.md](mobile/README.md)。
+
+PC 端和 Companion 通过带版本的 Remote API 与共享的 PC application-facade 层解耦。模块边界、依赖规则和兼容策略见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+移动端仅通过端到端加密的 Cloudflare Relay 连接。PC 主动建立出站 WSS 连接，无需对外开放端口，也无需在 App 中输入 IP 地址或 Token。安全模型、部署状态和验收标准见 [REMOTE_CONNECTIVITY_PLAN.md](REMOTE_CONNECTIVITY_PLAN.md)。
+
 ## 安装与运行
 
 从 [Releases](https://github.com/Roboaholic/anchor-code/releases) 下载：

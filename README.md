@@ -73,7 +73,6 @@ Anchor Code is deliberately focused on the human review stage of agent coding. I
 
 Anchor Code does not try to replace these tools. Use your preferred editor or agent, then bring the result into Anchor Code when the change needs careful human review and an auditable feedback loop.
 
-Repeat until you are satisfied.
 
 ## Android companion (development preview)
 
@@ -93,13 +92,6 @@ an IP address/token in the App. See
 [REMOTE_CONNECTIVITY_PLAN.md](REMOTE_CONNECTIVITY_PLAN.md) for the security
 model, deployment status, and acceptance criteria.
 
-## Requirements
-
-- Desktop: Windows, macOS, or Linux
-- Host for the workspace:
-  - **Local** — native paths on Windows / macOS / Linux
-  - **WSL** — on Windows, open a distro path via the Open Workspace host picker
-- System `git` on PATH on the chosen host
 
 ## Install and run
 

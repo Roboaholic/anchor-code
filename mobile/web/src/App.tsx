@@ -300,8 +300,8 @@ function ConnectionScreen({
   onConnected,
   onWorkspaceRequired,
 }: {
-  onConnected: (connection: Connection, bootstrap: Bootstrap) => void;
-  onWorkspaceRequired: (connection: Connection, catalog: WorkspaceCatalog) => void;
+  onConnected: (connection: Connection, bootstrap: Bootstrap, repositories: AnchorRepositories) => void;
+  onWorkspaceRequired: (connection: Connection, catalog: WorkspaceCatalog, repositories: AnchorRepositories) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -323,12 +323,12 @@ function ConnectionScreen({
       const catalog = await repositories.workspace.list({ signal: controller.signal });
       if (!catalog.active) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(connection));
-        onWorkspaceRequired(connection, catalog);
+        onWorkspaceRequired(connection, catalog, repositories);
         return;
       }
       const bootstrap = await repositories.system.bootstrap({ signal: controller.signal });
       localStorage.setItem(STORAGE_KEY, JSON.stringify(connection));
-      onConnected(connection, bootstrap);
+      onConnected(connection, bootstrap, repositories);
     } catch (err) {
       setError(controller.signal.aborted ? "已取消连接，可以重新扫码后重试" : err instanceof Error ? err.message : String(err));
     } finally {
@@ -964,6 +964,11 @@ export default function App({ initialConnection, initialBootstrap, repositories:
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(initialBootstrap ?? null);
   const [tab, setTab] = useState<Tab>("review");
   const [connecting, setConnecting] = useState(!initialBootstrap && !!connection);
+  const [repositoryInstance, setRepositoryInstance] = useState<AnchorRepositories | null>(() => {
+    if (repositoriesOverride) return repositoriesOverride;
+    const storedConnection = initialConnection ?? readConnection();
+    return storedConnection ? new AnchorRepositories(storedConnection) : null;
+  });
   const [workspaceCatalog, setWorkspaceCatalog] = useState<WorkspaceCatalog | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<TerminalInfo[]>(initialBootstrap?.terminals ?? []);
@@ -974,7 +979,10 @@ export default function App({ initialConnection, initialBootstrap, repositories:
   const outputSeqRef = useRef<Record<string, number>>({});
   const serverInstanceRef = useRef<string | null>(initialBootstrap?.serverInstanceId ?? null);
   const tabScrollRef = useRef<Record<Tab, number>>({ review: 0, files: 0, agent: 0, comments: 0 });
-  const repositories = useMemo(() => connection ? repositoriesOverride ?? new AnchorRepositories(connection) : null, [connection, repositoriesOverride]);
+  const repositories = useMemo(
+    () => repositoriesOverride ?? (connection ? repositoryInstance : null),
+    [connection, repositoryInstance, repositoriesOverride],
+  );
 
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(null), 2400); }, []);
   const handleTerminalCreated = useCallback((terminal: TerminalInfo) => {
@@ -998,8 +1006,9 @@ export default function App({ initialConnection, initialBootstrap, repositories:
     outputSeqRef.current[id] = seq;
     setOutputs((value) => value[id] === data ? value : { ...value, [id]: data });
   }, []);
-  const connected = useCallback((nextConnection: Connection, nextBootstrap: Bootstrap) => {
+  const connected = useCallback((nextConnection: Connection, nextBootstrap: Bootstrap, nextRepositories?: AnchorRepositories) => {
     setConnection(nextConnection);
+    if (nextRepositories) setRepositoryInstance(nextRepositories);
     setBootstrap(nextBootstrap);
     setWorkspaceCatalog(null);
     setTerminals(nextBootstrap.terminals);
@@ -1008,6 +1017,17 @@ export default function App({ initialConnection, initialBootstrap, repositories:
     cursorRef.current = nextBootstrap.terminalCursor;
     serverInstanceRef.current = nextBootstrap.serverInstanceId;
     setRemoteState("online");
+    setConnecting(false);
+  }, []);
+
+  const workspaceRequired = useCallback((
+    nextConnection: Connection,
+    catalog: WorkspaceCatalog,
+    nextRepositories: AnchorRepositories,
+  ) => {
+    setConnection(nextConnection);
+    setRepositoryInstance(nextRepositories);
+    setWorkspaceCatalog(catalog);
     setConnecting(false);
   }, []);
 
@@ -1029,6 +1049,7 @@ export default function App({ initialConnection, initialBootstrap, repositories:
   const disconnect = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     setConnection(null);
+    setRepositoryInstance(null);
     setBootstrap(null);
     setWorkspaceCatalog(null);
     setTerminals([]);
@@ -1130,9 +1151,9 @@ export default function App({ initialConnection, initialBootstrap, repositories:
     return () => { stopped = true; };
   }, [repositories, bootstrap, connection, connected, handleTerminalCreated, handleTerminalDeleted, handleOutputSnapshot]);
 
-  if (!connection) return <ConnectionScreen onConnected={connected} onWorkspaceRequired={(nextConnection, catalog) => { setConnection(nextConnection); setWorkspaceCatalog(catalog); setConnecting(false); }} />;
+  if (!connection) return <ConnectionScreen onConnected={connected} onWorkspaceRequired={workspaceRequired} />;
   if (workspaceCatalog && !bootstrap) return <WorkspacePicker catalog={workspaceCatalog} currentRoot={null} onSelect={selectWorkspace} onRefresh={refreshWorkspaces} onDisconnect={disconnect} />;
-  if (!bootstrap && !connecting) return <ConnectionScreen onConnected={connected} onWorkspaceRequired={(nextConnection, catalog) => { setConnection(nextConnection); setWorkspaceCatalog(catalog); setConnecting(false); }} />;
+  if (!bootstrap && !connecting) return <ConnectionScreen onConnected={connected} onWorkspaceRequired={workspaceRequired} />;
   if (!repositories || !bootstrap) return <main className="splash"><div className="brand brand--large"><span className="brand__anchor">A</span><span><b>Anchor</b><small>正在连接 PC</small></span></div><Loading label="同步工作区" /></main>;
 
   const supports = (capability: RemoteCapability) => repositories.supports(capability);

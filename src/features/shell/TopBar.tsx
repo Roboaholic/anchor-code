@@ -100,19 +100,29 @@ export function TopBar() {
    * - No sessions yet → open create dialog only (side rail stays closed until confirm).
    * - Has sessions → toggle the side rail.
    */
-  const toggleAgentPanel = () => {
+  const toggleAgentPanel = async () => {
     if (!workspaceRoot) {
       showRightRailTip();
       return;
     }
     setRightRailTip(false);
 
-    const tabs = useTerminalStore.getState().tabs;
-    const hasAgent = tabs.some((t) => (t.kind ?? "shell") === "agent");
+    let tabs = useTerminalStore.getState().tabs;
+    if (tabs.length === 0) {
+      const restored = (await window.anchor.terminal.list()).filter(
+        (tab) =>
+          tab.cwd.replace(/\\/g, "/").replace(/\/+$/, "") ===
+          workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, ""),
+      );
+      if (restored.length > 0) {
+        useTerminalStore.setState({ tabs: restored });
+        tabs = restored;
+      }
+    }
+    const hasAgent = tabs.some((tab) => (tab.kind ?? "shell") === "agent");
     const { agentVisible } = useShellStore.getState();
 
     if (!hasAgent) {
-      // Dialog only — rail opens after the user confirms a new session.
       if (useTerminalStore.getState().agentMenuOpen) {
         useTerminalStore.getState().closeAgentMenu();
       } else {

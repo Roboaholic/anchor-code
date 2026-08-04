@@ -2734,8 +2734,10 @@ body.files-split-resizing .monaco-editor {
 }
 
 .terminal-session-rail-slot--side {
+  position: relative;
   display: flex;
   flex-direction: column;
+  width: var(--terminal-session-rail-width, 148px);
   height: 100%;
 }
 
@@ -2758,7 +2760,7 @@ body.files-split-resizing .monaco-editor {
 }
 
 .terminal-session-rail {
-  width: 148px;
+  width: 100%;
   flex-shrink: 0;
   border-right: 1px solid var(--terminal-border);
   background: var(--bg);
@@ -2766,6 +2768,37 @@ body.files-split-resizing .monaco-editor {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.terminal-session-rail__resize-handle {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.terminal-session-rail__resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+}
+
+.terminal-session-rail__resize-handle:hover::after,
+body.terminal-session-rail-resizing .terminal-session-rail__resize-handle::after {
+  background: #3794ff;
+}
+
+body.terminal-session-rail-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* Horizontal session strip (settings → Appearance → Layout: Top) */
@@ -2881,12 +2914,32 @@ body.files-split-resizing .monaco-editor {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--ok-dot);
   flex-shrink: 0;
 }
 
-.terminal-session-rail__dot.is-exited {
-  background: var(--text-muted);
+.terminal-session-rail__dot.is-working {
+  background: #3794ff;
+  box-shadow: 0 0 0 0 color-mix(in srgb, #3794ff 55%, transparent);
+  animation: terminal-agent-working 1.15s ease-out infinite;
+}
+
+.terminal-session-rail__dot.is-completed-unread {
+  background: var(--ok-dot);
+}
+
+@keyframes terminal-agent-working {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #3794ff 55%, transparent);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+    opacity: 0.72;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 1;
+  }
 }
 
 .terminal-session-rail__title {

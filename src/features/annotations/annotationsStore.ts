@@ -568,7 +568,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       const abs = await window.anchor.annotations.copyYamlPath(
         sessionId ? { repoRoot, sessionId } : repoRoot,
       );
-      set({ toast: "YAML path copied" });
+      set({ toast: `YAML path copied: ${abs}` });
       return abs;
     } catch (err) {
       set({ toast: err instanceof Error ? err.message : String(err) });

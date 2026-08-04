@@ -170,6 +170,8 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [indexMs, setIndexMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queryFiles, setQueryFiles] = useState<string[] | null>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
   const [active, setActive] = useState(0);
 
   useEffect(() => {
@@ -211,9 +213,40 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
     };
   }, [workspaceRoot]);
 
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (!workspaceRoot || !truncated || !normalizedQuery) {
+      setQueryFiles(null);
+      setQueryLoading(false);
+      return;
+    }
+
+    setQueryFiles(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setQueryLoading(true);
+      void window.anchor.workspace
+        .findFiles({ root: workspaceRoot, query: normalizedQuery })
+        .then((result) => {
+          if (!cancelled) setQueryFiles(result.files);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setQueryLoading(false);
+        });
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, truncated, workspaceRoot]);
+
   const matches: FuzzyMatch[] = useMemo(
-    () => rankFuzzyPaths(files, query, 80),
-    [files, query],
+    () => rankFuzzyPaths(queryFiles ?? files, query, 80),
+    [files, query, queryFiles],
   );
 
   useEffect(() => {
@@ -298,7 +331,8 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
           {query.trim() ? "" : ` · ${files.length.toLocaleString()} files`}
           {source ? ` · via ${source}` : ""}
           {indexMs != null ? ` · ${indexMs}ms` : ""}
-          {truncated ? " · index truncated" : ""}
+          {truncated && !query.trim() ? " · index truncated" : ""}
+          {queryLoading ? " · searching full index" : ""}
         </p>
       ) : null}
 

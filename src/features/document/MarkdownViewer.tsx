@@ -288,6 +288,7 @@ function RenderedMarkdownPane({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const bubbleRef = useRef<BubbleState | null>(null);
   const pendingSelectionTextRef = useRef<string | null>(null);
   const fontSize = useThemeStore((s) => s.fontSize);
@@ -499,6 +500,17 @@ function RenderedMarkdownPane({
   );
 
   useEffect(() => {
+    if (!composer) return;
+    const input = composerInputRef.current;
+    const container = scrollRef.current;
+    if (!input || !container) return;
+    const scrollTop = container.scrollTop;
+    const scrollLeft = container.scrollLeft;
+    input.focus({ preventScroll: true });
+    container.scrollTo({ top: scrollTop, left: scrollLeft });
+  }, [composer]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "m") return;
       // Only when focus is inside rendered pane.
@@ -679,12 +691,12 @@ function RenderedMarkdownPane({
             ) : null}
           </div>
           <textarea
+            ref={composerInputRef}
             className="composer__input"
             rows={3}
             placeholder="Write feedback for the AI CLI…"
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            autoFocus
           />
           <div className="composer__actions">
             <button

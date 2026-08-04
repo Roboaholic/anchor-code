@@ -53,6 +53,26 @@ describe("findWorkspaceFiles", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("searches all files when the unfiltered index would truncate", async () => {
+    await fs.mkdir(path.join(tmp, "a"), { recursive: true });
+    await fs.mkdir(path.join(tmp, "z"), { recursive: true });
+    await fs.writeFile(path.join(tmp, "a", "first.txt"), "first\n");
+    await fs.writeFile(path.join(tmp, "a", "second.txt"), "second\n");
+    await fs.writeFile(path.join(tmp, "z", "OV50_driver.c"), "driver\n");
+    await fs.writeFile(path.join(tmp, "z", "OV50_driver.h"), "driver\n");
+
+    const result = await findWorkspaceFiles(host, tmp, {
+      maxFiles: 2,
+      query: "OV50",
+    });
+
+    expect(result.files).toEqual([
+      "z/OV50_driver.c",
+      "z/OV50_driver.h",
+    ]);
+    expect(result.truncated).toBe(true);
+  });
+
   it("prefers git ls-files when repo is available", async () => {
     execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
     // Avoid noisy identity prompts on CI sandboxes that require commit — ls-files works without commit.

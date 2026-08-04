@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findTerminalFileLinks,
   resolveTerminalFilePath,
+  terminalFileLinkRange,
 } from "./terminalFileLinks";
 
 describe("findTerminalFileLinks", () => {
@@ -30,6 +31,28 @@ describe("findTerminalFileLinks", () => {
     expect(findTerminalFileLinks("(src/a.ts:3), https://host/src/a.ts:4")).toEqual([
       expect.objectContaining({ text: "src/a.ts:3", path: "src/a.ts", line: 3 }),
     ]);
+  });
+});
+
+describe("terminalFileLinkRange", () => {
+  it("maps a file link across soft-wrapped terminal rows", () => {
+    const [link] = findTerminalFileLinks(
+      "prefix hardware/ambarella/cv5/peripherals/imu/AmbaIMU_MPU6509_Virt.c:347",
+    );
+
+    expect(terminalFileLinkRange(link!, 12, 32)).toEqual({
+      start: { x: 8, y: 12 },
+      end: { x: 8, y: 14 },
+    });
+  });
+
+  it("keeps a short file link on one terminal row", () => {
+    const [link] = findTerminalFileLinks("see src/main.ts:42");
+
+    expect(terminalFileLinkRange(link!, 5, 80)).toEqual({
+      start: { x: 5, y: 5 },
+      end: { x: 18, y: 5 },
+    });
   });
 });
 

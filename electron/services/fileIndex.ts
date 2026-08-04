@@ -66,42 +66,43 @@ export interface FindFilesResult {
 export async function findWorkspaceFiles(
   host: HostSession,
   root: string,
-  opts?: { maxFiles?: number; maxDepth?: number },
+  opts?: { maxFiles?: number; maxDepth?: number; query?: string },
 ): Promise<FindFilesResult> {
   const maxFiles = opts?.maxFiles ?? DEFAULT_MAX_FILES;
   const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const query = opts?.query?.trim().toLowerCase() || undefined;
   const workspace = hostNormalize(host.kind, root);
 
-  const cached = await readDiskCache(host.kind, workspace, maxFiles);
+  const cached = query ? null : await readDiskCache(host.kind, workspace, maxFiles);
   if (cached) return cached;
 
   if (await isUsableGitRoot(host, workspace)) {
-    const viaGit = await tryGitLsFiles(host, workspace, maxFiles, "", true);
+    const viaGit = await tryGitLsFiles(host, workspace, maxFiles, "", true, query);
     if (viaGit) {
-      await writeDiskCache(host.kind, workspace, maxFiles, viaGit);
+      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, viaGit);
       return { ...viaGit, source: "git" };
     }
   }
 
   if (host.kind === "wsl" || host.kind === "ssh") {
-    const oneShot = await multiRepoIndexOneShot(host, workspace, maxFiles);
+    const oneShot = await multiRepoIndexOneShot(host, workspace, maxFiles, query);
     if (oneShot && oneShot.files.length > 0) {
-      await writeDiskCache(host.kind, workspace, maxFiles, oneShot);
+      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, oneShot);
       return oneShot;
     }
   }
 
   const nested = await discoverNestedGitRoots(host, workspace);
   if (nested.length > 0) {
-    const multi = await mergeGitRepos(host, workspace, nested, maxFiles);
+    const multi = await mergeGitRepos(host, workspace, nested, maxFiles, query);
     if (multi.files.length > 0) {
-      await writeDiskCache(host.kind, workspace, maxFiles, multi);
+      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, multi);
       return multi;
     }
   }
 
-  const walked = await walkFiles(host, workspace, maxFiles, maxDepth);
-  await writeDiskCache(host.kind, workspace, maxFiles, walked);
+  const walked = await walkFiles(host, workspace, maxFiles, maxDepth, query);
+  if (!query) await writeDiskCache(host.kind, workspace, maxFiles, walked);
   return walked;
 }
 
@@ -192,6 +193,18 @@ async function isUsableGitRoot(
   }
 }
 
+function basenameMatchesQuery(filePath: string, query?: string): boolean {
+  if (!query) return true;
+  const normalized = filePath.replace(/\\/g, "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1).toLowerCase();
+  let queryIndex = 0;
+  for (const char of basename) {
+    if (char === query[queryIndex]) queryIndex++;
+    if (queryIndex === query.length) return true;
+  }
+  return false;
+}
+
 /**
  * One WSL/SSH process: find nested .git roots + git ls-files --cached.
  * Skips untracked (big win) and prunes external/.
@@ -200,6 +213,7 @@ async function multiRepoIndexOneShot(
   host: HostSession,
   workspaceRoot: string,
   maxFiles: number,
+  query?: string,
 ): Promise<FindFilesResult | null> {
   const maxdepth = String(GIT_SCAN_DEPTH + 1);
   const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
@@ -230,7 +244,7 @@ async function multiRepoIndexOneShot(
       timeoutMs: 90_000,
     });
     if (!result.stdout && result.code !== 0) return null;
-    const parsed = parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles);
+    const parsed = parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles, query);
     console.log(
       `[fileIndex] one-shot multi-git ${parsed.files.length} files in ${Date.now() - t0}ms`,
     );
@@ -245,6 +259,7 @@ function parsePrefixedLsFiles(
   stdout: string,
   workspaceRoot: string,
   maxFiles: number,
+  query?: string,
 ): FindFilesResult {
   const files: string[] = [];
   const seen = new Set<string>();
@@ -262,6 +277,7 @@ function parsePrefixedLsFiles(
     if (/\.(o|a|so|dylib|dll|bin|elf|obj|pyc|pyo|class)$/i.test(line)) continue;
     if (/(^|\/)(output|output\.\d+|out|build|dist)(\/|$)/i.test(line)) continue;
     const rel = `${prefix}${line}`.replace(/\\/g, "/");
+    if (!basenameMatchesQuery(rel, query)) continue;
     if (seen.has(rel)) continue;
     seen.add(rel);
     files.push(rel);
@@ -386,6 +402,7 @@ async function tryGitLsFiles(
   maxFiles: number,
   pathPrefix: string,
   includeUntracked: boolean,
+  query?: string,
 ): Promise<FindFilesResult | null> {
   try {
     const args = includeUntracked
@@ -406,6 +423,7 @@ async function tryGitLsFiles(
       if (/\.(o|a|so|dylib|dll|bin|elf|obj|pyc|pyo|class)$/i.test(rel)) continue;
       if (/(^|\/)(output|output\.\d+|out|build|dist)\//i.test(rel)) continue;
       const full = pathPrefix ? `${pathPrefix}/${rel}` : rel;
+      if (!basenameMatchesQuery(full, query)) continue;
       files.push(full);
       if (files.length >= maxFiles) {
         truncated = true;
@@ -424,13 +442,14 @@ async function mergeGitRepos(
   workspaceRoot: string,
   repoRoots: string[],
   maxFiles: number,
+  query?: string,
 ): Promise<FindFilesResult> {
   const ordered = [...repoRoots].sort(
     (a, b) => a.length - b.length || a.localeCompare(b),
   );
 
   if ((host.kind === "wsl" || host.kind === "ssh") && ordered.length > 1) {
-    const bulk = await bulkGitLsFiles(host, workspaceRoot, ordered, maxFiles);
+    const bulk = await bulkGitLsFiles(host, workspaceRoot, ordered, maxFiles, query);
     if (bulk) return bulk;
   }
 
@@ -446,7 +465,7 @@ async function mergeGitRepos(
         perRepo[idx] = [];
         continue;
       }
-      const one = await tryGitLsFiles(host, absRoot, maxFiles, prefix, false);
+      const one = await tryGitLsFiles(host, absRoot, maxFiles, prefix, false, query);
       perRepo[idx] = one?.files ?? [];
     }
   }
@@ -488,6 +507,7 @@ async function bulkGitLsFiles(
   workspaceRoot: string,
   orderedRoots: string[],
   maxFiles: number,
+  query?: string,
 ): Promise<FindFilesResult | null> {
   const rootsLit = orderedRoots
     .map((r) => `'${r.replace(/'/g, `'\\''`)}'`)
@@ -508,7 +528,7 @@ async function bulkGitLsFiles(
       timeoutMs: Math.max(60_000, orderedRoots.length * 400),
     });
     if (!result.stdout && result.code !== 0) return null;
-    return parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles);
+    return parsePrefixedLsFiles(result.stdout, workspaceRoot, maxFiles, query);
   } catch {
     return null;
   }
@@ -519,6 +539,7 @@ async function walkFiles(
   root: string,
   maxFiles: number,
   maxDepth: number,
+  query?: string,
 ): Promise<FindFilesResult> {
   const files: string[] = [];
   let truncated = false;
@@ -556,7 +577,9 @@ async function walkFiles(
         if (SKIP_DIR_NAMES.has(ent.name)) continue;
         dirs.push({ abs, rel, depth: job.depth + 1 });
       } else if (ent.type === "file") {
-        files.push(rel.replace(/\\/g, "/"));
+        const normalizedRel = rel.replace(/\\/g, "/");
+        if (!basenameMatchesQuery(normalizedRel, query)) continue;
+        files.push(normalizedRel);
         if (files.length >= maxFiles) {
           truncated = true;
           return;

@@ -6,10 +6,7 @@ import {
   shortRev,
 } from "@/core/history/diffComment";
 import { joinPath, languageFromPath } from "@/core/workspace/paths";
-import {
-  addCommentFromSelection,
-  openWorktreeFileFromDiff,
-} from "@/features/shell/orchestrate";
+import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
   overlapRegionsForModel,
@@ -1101,17 +1098,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
               ))}
             </ul>
           )}
-          {activePath && item.head === "worktree" ? (
-            <button
-              type="button"
-              className="btn btn--ghost btn--small diff-open-wt"
-              onClick={() =>
-                void openWorktreeFileFromDiff(item.repoRoot, activePath)
-              }
-            >
-              Open worktree file
-            </button>
-          ) : null}
           <div
             className="diff-viewer__files-resize-handle"
             role="separator"

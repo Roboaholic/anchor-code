@@ -7,6 +7,30 @@ export interface TerminalFileLink {
   endIndex: number;
 }
 
+export interface TerminalFileLinkRange {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}
+
+/** Map a link in a joined soft-wrapped line back to xterm buffer coordinates. */
+export function terminalFileLinkRange(
+  link: TerminalFileLink,
+  firstRow: number,
+  columns: number,
+): TerminalFileLinkRange {
+  const endIndex = Math.max(link.startIndex, link.endIndex - 1);
+  return {
+    start: {
+      x: (link.startIndex % columns) + 1,
+      y: firstRow + Math.floor(link.startIndex / columns),
+    },
+    end: {
+      x: (endIndex % columns) + 1,
+      y: firstRow + Math.floor(endIndex / columns),
+    },
+  };
+}
+
 const TOKEN_RE = /[^\s`"'<>]+/g;
 const TRAILING_PUNCTUATION = /[),;!?}\]]+$/;
 const LEADING_PUNCTUATION = /^[([{]+/;

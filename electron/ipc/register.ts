@@ -675,7 +675,7 @@ export function registerIpc(opts: {
     "workspace:findFiles",
     async (
       _evt,
-      args?: { root?: string; maxFiles?: number },
+      args?: { root?: string; maxFiles?: number; query?: string },
     ): Promise<{
       root: string;
       files: string[];
@@ -689,7 +689,7 @@ export function registerIpc(opts: {
         if (!root) {
           throw new HostError("failed", "No workspace open");
         }
-        return await application.review.fileIndex(args?.maxFiles, root);
+        return await application.review.fileIndex(args?.maxFiles, root, args?.query);
       } catch (err) {
         console.error("[ipc] workspace:findFiles failed:", err);
         rethrowIpc(err);

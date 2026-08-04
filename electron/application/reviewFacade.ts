@@ -44,8 +44,8 @@ export class ReviewFacade {
     };
   }
 
-  fileIndex(maxFiles = 5000, root = this.workspace.root()) {
-    return findWorkspaceFiles(this.hosts.session, root, { maxFiles });
+  fileIndex(maxFiles = 5000, root = this.workspace.root(), query?: string) {
+    return findWorkspaceFiles(this.hosts.session, root, { maxFiles, query });
   }
 
   search(

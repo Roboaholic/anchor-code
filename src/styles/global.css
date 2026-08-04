@@ -2187,6 +2187,11 @@ body.files-split-resizing .monaco-editor {
   overflow: auto;
 }
 
+.md-viewer__rendered > .composer {
+  position: sticky;
+  bottom: 0;
+}
+
 .md-body {
   max-width: 720px;
   margin: 0 auto;

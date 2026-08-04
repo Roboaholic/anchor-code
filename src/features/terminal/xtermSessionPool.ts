@@ -14,6 +14,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
   findTerminalFileLinks,
   resolveTerminalFilePath,
+  terminalFileLinkRange,
 } from "./terminalFileLinks";
 
 export type PooledXterm = {
@@ -49,17 +50,30 @@ export function terminalKeySequence(event: {
 function registerFileLinkProvider(term: Terminal): IDisposable {
   return term.registerLinkProvider({
     provideLinks(bufferLineNumber, callback) {
-      const line = term.buffer.active.getLine(bufferLineNumber - 1);
-      if (!line) {
-        callback(undefined);
-        return;
+      const buffer = term.buffer.active;
+      const requestedRow = bufferLineNumber - 1;
+      let firstRow = requestedRow;
+      while (firstRow > 0 && buffer.getLine(firstRow)?.isWrapped) firstRow--;
+
+      let lastRow = requestedRow;
+      while (buffer.getLine(lastRow + 1)?.isWrapped) lastRow++;
+
+      let text = "";
+      for (let row = firstRow; row <= lastRow; row++) {
+        const wrappedLine = buffer.getLine(row);
+        if (!wrappedLine) break;
+        text += wrappedLine.translateToString(row === lastRow);
       }
+
       const workspaceRoot = useWorkspaceStore.getState().workspaceRoot;
       if (!workspaceRoot) {
         callback(undefined);
         return;
       }
-      const links = findTerminalFileLinks(line.translateToString(true));
+      const links = findTerminalFileLinks(text).filter((link) => {
+        const range = terminalFileLinkRange(link, firstRow + 1, term.cols);
+        return range.start.y <= bufferLineNumber && range.end.y >= bufferLineNumber;
+      });
       if (links.length === 0) {
         callback(undefined);
         return;
@@ -78,10 +92,7 @@ function registerFileLinkProvider(term: Terminal): IDisposable {
 
           return {
             text: link.text,
-            range: {
-              start: { x: link.startIndex + 1, y: bufferLineNumber },
-              end: { x: link.endIndex, y: bufferLineNumber },
-            },
+            range: terminalFileLinkRange(link, firstRow + 1, term.cols),
             activate: () => {
               useWorkspaceStore.getState().setSelectedPath(path);
               void useDocumentStore.getState().openFile({
@@ -146,7 +157,9 @@ export function acquireXtermSession(
   hostEl.dataset.sessionId = id;
 
   const term = new Terminal({
-    cursorBlink: true,
+    // Agent TUIs draw their own activity indicators; a blinking terminal caret
+    // beside those updates looks like positional jitter while the agent works.
+    cursorBlink: kind !== "agent",
     fontSize,
     fontFamily:
       "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",

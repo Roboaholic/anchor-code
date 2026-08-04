@@ -115,7 +115,7 @@ function createWindow(theme: UiTheme) {
     // Keep accelerators (Ctrl+P etc.) via application menu, but never paint
     // a second File/View/Window row under the title bar.
     autoHideMenuBar: true,
-    show: false,
+    show: true,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -133,9 +133,6 @@ function createWindow(theme: UiTheme) {
     console.error("[main] preload-error:", failedPath, error);
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
 
   if (process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);

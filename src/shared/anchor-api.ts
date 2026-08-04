@@ -416,6 +416,7 @@ export interface AnchorApi {
     findFiles: (args?: {
       root?: string;
       maxFiles?: number;
+      query?: string;
     }) => Promise<{
       root: string;
       files: string[];

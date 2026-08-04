@@ -10,6 +10,38 @@ import {
 } from "./xtermSessionPool";
 
 export type RightTermMode = "terminal" | "agent";
+export type AgentActivityState = "idle" | "working" | "completed-unread";
+
+export function nextAgentActivity(
+  current: AgentActivityState,
+  event: "started" | "completed" | "viewed",
+): AgentActivityState {
+  if (event === "started") return "working";
+  if (event === "completed") return current === "working" ? "completed-unread" : current;
+  return current === "completed-unread" ? "idle" : current;
+}
+
+export function completeAgentActivity(
+  current: AgentActivityState,
+  viewed: boolean,
+): AgentActivityState {
+  const completed = nextAgentActivity(current, "completed");
+  return viewed ? nextAgentActivity(completed, "viewed") : completed;
+}
+
+const agentCompletionTimers = new Map<string, number>();
+const workspaceResetPromises = new Map<string, Promise<void>>();
+
+function normalizedCwd(cwd: string): string {
+  return cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function clearAgentCompletionTimer(id: string) {
+  const timer = agentCompletionTimers.get(id);
+  if (timer != null) window.clearTimeout(timer);
+  agentCompletionTimers.delete(id);
+}
+
 
 const SESSION_LIST_KEY = "anchor.terminal.sessionListOpenByMode";
 /** Legacy single-flag key (migrated once). */
@@ -71,6 +103,7 @@ export interface TerminalState {
   tabs: TerminalTabInfo[];
   /** Active tab per mode so switching modes keeps both sides alive. */
   activeByMode: Record<RightTermMode, string | null>;
+  agentActivity: Record<string, AgentActivityState>;
   mode: RightTermMode;
   /** Session rail open state — independent for Terminal vs Agent. */
   sessionListOpenByMode: Record<RightTermMode, boolean>;
@@ -98,6 +131,8 @@ export interface TerminalState {
   renameTab: (id: string, title: string) => Promise<void>;
   applyTitleFromTerm: (id: string, title: string) => void;
   applyAgentTopicFromLine: (id: string, line: string) => void;
+  markAgentWorking: (id: string) => void;
+  noteAgentOutput: (id: string) => void;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   loadAgentProfiles: () => Promise<void>;
@@ -131,6 +166,7 @@ function pickActive(
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
   activeByMode: { terminal: null, agent: null },
+  agentActivity: {},
   mode: "agent",
   sessionListOpenByMode: readSessionListOpenByMode(),
   error: null,
@@ -140,60 +176,85 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   agentMenuOpen: false,
   agentMenuIntent: { kind: "new" },
 
-  resetForWorkspace: async (cwd) => {
-    try {
-      disposeAllXtermSessions();
-      const existing = (await window.anchor.terminal.list()).filter(
-        (tab) => tab.cwd.replace(/\\/g, "/").replace(/\/+$/, "") === cwd.replace(/\\/g, "/").replace(/\/+$/, ""),
-      );
-      if (existing.length > 0) {
-        const shell = existing.filter((tab) => modeOf(tab) === "terminal").at(-1);
-        const agent = existing.filter((tab) => modeOf(tab) === "agent").at(-1);
-        set({
-          workspaceCwd: cwd,
-          tabs: existing,
-          activeByMode: {
-            terminal: shell?.id ?? null,
-            agent: agent?.id ?? null,
-          },
-          mode: shell ? "terminal" : agent ? "agent" : "terminal",
-          error: null,
-          agentMenuOpen: false,
-        });
+  resetForWorkspace: (cwd) => {
+    const key = normalizedCwd(cwd);
+    const current = get();
+    if (
+      current.workspaceCwd &&
+      normalizedCwd(current.workspaceCwd) === key &&
+      current.tabs.some((tab) => normalizedCwd(tab.cwd) === key)
+    ) {
+      return Promise.resolve();
+    }
+    const inflight = workspaceResetPromises.get(key);
+    if (inflight) return inflight;
+
+    const reset = (async () => {
+      try {
+        disposeAllXtermSessions();
+        const existing = (await window.anchor.terminal.list()).filter(
+          (tab) => normalizedCwd(tab.cwd) === key,
+        );
+        for (const id of [...agentCompletionTimers.keys()]) {
+          clearAgentCompletionTimer(id);
+        }
+        if (existing.length > 0) {
+          const shell = existing
+            .filter((tab) => modeOf(tab) === "terminal")
+            .at(-1);
+          const agent = existing
+            .filter((tab) => modeOf(tab) === "agent")
+            .at(-1);
+          set((s) => ({
+            workspaceCwd: cwd,
+            tabs: existing,
+            activeByMode: {
+              terminal: shell?.id ?? null,
+              agent: agent?.id ?? null,
+            },
+            agentActivity: {},
+            mode: shell ? "terminal" : agent ? "agent" : "terminal",
+            error: null,
+            agentMenuOpen: s.agentMenuOpen,
+            agentMenuIntent: s.agentMenuIntent,
+          }));
+        } else {
+          const tab = await window.anchor.terminal.create({
+            cwd,
+            cols: 80,
+            rows: 24,
+            kind: "shell",
+          });
+          set((s) => ({
+            workspaceCwd: cwd,
+            tabs: [tab],
+            activeByMode: { terminal: tab.id, agent: null },
+            agentActivity: {},
+            mode: "terminal",
+            error: null,
+            agentMenuOpen: s.agentMenuOpen,
+            agentMenuIntent: s.agentMenuIntent,
+          }));
+        }
         void get().loadAgentProfiles();
         void get().detectAgents();
-        return;
+      } catch (err) {
+        disposeAllXtermSessions();
+        set((s) => ({
+          workspaceCwd: cwd,
+          tabs: [],
+          activeByMode: { terminal: null, agent: null },
+          mode: "terminal",
+          error: err instanceof Error ? err.message : String(err),
+          agentMenuOpen: s.agentMenuOpen,
+          agentMenuIntent: s.agentMenuIntent,
+        }));
+      } finally {
+        workspaceResetPromises.delete(key);
       }
-      const tab = await window.anchor.terminal.create({
-        cwd,
-        cols: 80,
-        rows: 24,
-        kind: "shell",
-      });
-      set({
-        workspaceCwd: cwd,
-        tabs: [tab],
-        activeByMode: { terminal: tab.id, agent: null },
-        // Terminal is home; Agent is entered only after a session is created.
-        mode: "terminal",
-        error: null,
-        agentMenuOpen: false,
-        agentMenuIntent: { kind: "new" },
-      });
-      void get().loadAgentProfiles();
-      void get().detectAgents();
-    } catch (err) {
-      disposeAllXtermSessions();
-      set({
-        workspaceCwd: cwd,
-        tabs: [],
-        activeByMode: { terminal: null, agent: null },
-        mode: "terminal",
-        error: err instanceof Error ? err.message : String(err),
-        agentMenuOpen: false,
-        agentMenuIntent: { kind: "new" },
-      });
-    }
+    })();
+    workspaceResetPromises.set(key, reset);
+    return reset;
   },
 
   setMode: (mode) =>
@@ -350,6 +411,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   removeTabLocal: (id) => {
     disposeXtermSession(id);
+    clearAgentCompletionTimer(id);
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const closed = s.tabs.find((t) => t.id === id);
@@ -359,12 +421,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeByMode[closedMode] = pickActive(tabs, closedMode, null);
       }
       const hasAgent = tabs.some((t) => modeOf(t) === "agent");
-      // Closing last agent → back to Terminal home.
       const mode =
         closedMode === "agent" && !hasAgent ? "terminal" : s.mode;
       return {
         tabs,
         activeByMode,
+        agentActivity: Object.fromEntries(
+          Object.entries(s.agentActivity).filter(([tabId]) => tabId !== id),
+        ),
         mode,
         agentMenuOpen: mode === "terminal" ? false : s.agentMenuOpen,
       };
@@ -379,6 +443,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return {
         mode: m,
         activeByMode: { ...s.activeByMode, [m]: id },
+        agentActivity:
+          m === "agent"
+            ? {
+                ...s.agentActivity,
+                [id]: nextAgentActivity(s.agentActivity[id] ?? "idle", "viewed"),
+              }
+            : s.agentActivity,
       };
     }),
 
@@ -410,6 +481,36 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         tabs: s.tabs.map((t) => (t.id === id ? info : t)),
       }));
     });
+  },
+  markAgentWorking: (id) => {
+    clearAgentCompletionTimer(id);
+    set((s) => ({
+      agentActivity: {
+        ...s.agentActivity,
+        [id]: nextAgentActivity(s.agentActivity[id] ?? "idle", "started"),
+      },
+    }));
+  },
+
+  noteAgentOutput: (id) => {
+    const state = get();
+    if (state.agentActivity[id] !== "working") return;
+    clearAgentCompletionTimer(id);
+    agentCompletionTimers.set(
+      id,
+      window.setTimeout(() => {
+        agentCompletionTimers.delete(id);
+        set((s) => ({
+          agentActivity: {
+            ...s.agentActivity,
+            [id]: completeAgentActivity(
+              s.agentActivity[id] ?? "idle",
+              s.activeByMode.agent === id,
+            ),
+          },
+        }));
+      }, 2_500),
+    );
   },
 
   write: (id, data) => {
@@ -523,8 +624,8 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onCreated) {
         ? state.tabs.map((tab) => (tab.id === info.id ? info : tab))
         : [...state.tabs, info],
       activeByMode: { ...state.activeByMode, [mode]: info.id },
-      mode,
-      agentMenuOpen: false,
+      mode: mode === "agent" ? "agent" : state.mode,
+      agentMenuOpen: mode === "agent" ? false : state.agentMenuOpen,
       error: null,
     }));
     if (mode === "agent") {
@@ -545,11 +646,25 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onUpdated) {
 
 if (typeof window !== "undefined" && window.anchor?.terminal?.onExit) {
   window.anchor.terminal.onExit(({ id }) => {
-    useTerminalStore.setState((state) => ({
-      tabs: state.tabs.map((tab) =>
-        tab.id === id ? { ...tab, status: "exited" } : tab,
-      ),
-    }));
+    clearAgentCompletionTimer(id);
+    useTerminalStore.setState((state) => {
+      const tab = state.tabs.find((item) => item.id === id);
+      return {
+        tabs: state.tabs.map((item) =>
+          item.id === id ? { ...item, status: "exited" } : item,
+        ),
+        agentActivity:
+          tab?.kind === "agent"
+            ? {
+                ...state.agentActivity,
+                [id]: nextAgentActivity(
+                  state.agentActivity[id] ?? "idle",
+                  state.activeByMode.agent === id ? "viewed" : "completed",
+                ),
+              }
+            : state.agentActivity,
+      };
+    });
   });
 }
 
@@ -564,5 +679,5 @@ export function sessionsForMode(
   mode: RightTermMode,
 ): TerminalTabInfo[] {
   const kind: TerminalSessionKind = mode === "agent" ? "agent" : "shell";
-  return tabs.filter((t) => (t.kind ?? "shell") === kind);
+  return tabs.filter((tab) => (tab.kind ?? "shell") === kind);
 }

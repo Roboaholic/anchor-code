@@ -18,6 +18,10 @@ import {
 } from "./QuickOpen";
 import { NewAgentDialogHost } from "@/features/terminal/NewAgentDialogHost";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
+import {
+  fitXtermSession,
+  scheduleFitXtermSession,
+} from "@/features/terminal/xtermSessionPool";
 import { TerminalPanel } from "./TerminalPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { TopBar } from "./TopBar";
@@ -75,6 +79,8 @@ export function Shell() {
   const leftVisible = useShellStore((s) => s.leftVisible);
   const agentVisible = useShellStore((s) => s.agentVisible);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
+  const terminalActiveId = useTerminalStore((s) => s.activeByMode.terminal);
+  const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
   const openWorkspaceDialog = useShellStore((s) => s.openWorkspaceDialog);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
@@ -408,13 +414,17 @@ export function Shell() {
   }, [terminalMaximized]);
 
   useEffect(() => {
-    if (agentMaximized || !showTerminal) return;
-    let frame = requestAnimationFrame(() => {
-      terminalPanelRef.current?.resize(28);
-      frame = requestAnimationFrame(() => terminalPanelRef.current?.resize(28));
-    });
+    if (agentMaximized || !showTerminal || agentMenuOpen || !terminalActiveId) return;
+    let frame = 0;
+    let attempts = 0;
+    const refit = () => {
+      fitXtermSession(terminalActiveId, true);
+      if (attempts++ < 12) frame = requestAnimationFrame(refit);
+    };
+    frame = requestAnimationFrame(refit);
+    scheduleFitXtermSession(terminalActiveId, 220);
     return () => cancelAnimationFrame(frame);
-  }, [agentMaximized, showTerminal]);
+  }, [agentMaximized, agentMenuOpen, showAgent, showTerminal, terminalActiveId]);
 
   // Never remount PanelGroup for these toggles — only collapse/expand.
   useCollapsiblePanel(leftPanelRef, leftVisible, 22);

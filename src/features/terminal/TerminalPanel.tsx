@@ -4,6 +4,7 @@ import { Icon } from "@/shared/Icon";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -12,6 +13,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   sessionsForMode,
   useTerminalStore,
+  type AgentActivityState,
   type RightTermMode,
 } from "./terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
@@ -40,6 +42,7 @@ export function TerminalPanel({
   const tabs = useTerminalStore((s) => s.tabs);
   const activeByMode = useTerminalStore((s) => s.activeByMode);
   const sessionListOpenByMode = useTerminalStore((s) => s.sessionListOpenByMode);
+  const agentActivity = useTerminalStore((s) => s.agentActivity);
   const error = useTerminalStore((s) => s.error);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const closeTab = useTerminalStore((s) => s.closeTab);
@@ -59,8 +62,44 @@ export function TerminalPanel({
   const sessionListOpen = sessionListOpenByMode[panelMode];
   // Both layouts use the expand button; top layout just defaults open (see effect).
   const showSessionList = sessionListOpen;
+  const [sessionRailWidth, setSessionRailWidth] = useState(() => {
+    const stored = Number(localStorage.getItem("anchor.terminal.sessionRailWidth"));
+    return Number.isFinite(stored) ? Math.min(320, Math.max(96, stored)) : 148;
+  });
 
-  // Ensure at least one shell when workspace open (owned by terminal panel).
+  const beginSessionRailResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (tabsPlacement !== "side") return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = sessionRailWidth;
+      const onMove = (moveEvent: PointerEvent) => {
+        setSessionRailWidth(Math.min(320, Math.max(96, startWidth + moveEvent.clientX - startX)));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        document.body.classList.remove("terminal-session-rail-resizing");
+      };
+      document.body.classList.add("terminal-session-rail-resizing");
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp, { once: true });
+    },
+    [sessionRailWidth, tabsPlacement],
+  );
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--terminal-session-rail-width",
+      `${Math.round(sessionRailWidth)}px`,
+    );
+    localStorage.setItem(
+      "anchor.terminal.sessionRailWidth",
+      String(Math.round(sessionRailWidth)),
+    );
+  }, [sessionRailWidth]);
+
+  // Startup workspace restoration does not pass through shell orchestration.
+  // The store coalesces this with any concurrent explicit workspace reset.
   useEffect(() => {
     if (panelMode !== "terminal") return;
     if (workspaceRoot && tabs.length === 0 && !error) {
@@ -190,10 +229,20 @@ export function TerminalPanel({
             layout={tabsPlacement}
             tabs={modeTabs}
             activeTabId={activeTabId}
+            agentActivity={agentActivity}
             onSelect={setActive}
             onClose={(id) => void closeTab(id)}
             onRename={(id, title) => void renameTab(id, title)}
           />
+          {tabsPlacement === "side" ? (
+            <div
+              className="terminal-session-rail__resize-handle"
+              role="separator"
+              aria-label="Resize session list"
+              aria-orientation="vertical"
+              onPointerDown={beginSessionRailResize}
+            />
+          ) : null}
         </div>
 
         <div className="terminal-panel__body">
@@ -231,6 +280,7 @@ function SessionRail({
   layout,
   tabs,
   activeTabId,
+  agentActivity,
   onSelect,
   onClose,
   onRename,
@@ -240,6 +290,7 @@ function SessionRail({
   tabs: { id: string; title: string; status: string; kind: string }[];
   activeTabId: string | null;
   onSelect: (id: string) => void;
+  agentActivity: Record<string, AgentActivityState>;
   onClose: (id: string) => void;
   onRename: (id: string, title: string) => void;
 }) {
@@ -304,9 +355,16 @@ function SessionRail({
                       : t.title
                   }
                 >
-                  <span
-                    className={`terminal-session-rail__dot${t.status === "exited" ? " is-exited" : ""}`}
-                  />
+                  {mode === "agent" && agentActivity[t.id] !== "idle" ? (
+                    <span
+                      className={`terminal-session-rail__dot is-${agentActivity[t.id]}`}
+                      aria-label={
+                        agentActivity[t.id] === "working"
+                          ? "Agent working"
+                          : "Agent completed, unread"
+                      }
+                    />
+                  ) : null}
                   <span className="terminal-session-rail__title">{t.title}</span>
                 </button>
               )}
@@ -388,7 +446,7 @@ function XtermHost({
   // Acquire/attach pooled session — detaching does NOT dispose (scrollback kept).
   // With stable Shell panels, this effect should only run when the session is
   // created/destroyed — not when folding left/agent/terminal rails.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const slot = slotRef.current;
     if (!slot) return;
     const session = acquireXtermSession(
@@ -397,7 +455,21 @@ function XtermHost({
       theme,
       terminalFontSize(fontSize),
     );
-    attachXtermSession(id, slot);
+
+    // Poll until the panel has real size, then attach once.
+    let attached = false;
+    const poll = window.setInterval(() => {
+      if (attachXtermSession(id, slot)) {
+        attached = true;
+        window.clearInterval(poll);
+        if (activeRef.current) requestAnimationFrame(() => fitXtermSession(id));
+      }
+    }, 50);
+    // First attempt might succeed immediately.
+    if (attachXtermSession(id, slot)) {
+      attached = true;
+      window.clearInterval(poll);
+    }
 
     const onContextMenu = (ev: MouseEvent) => {
       ev.preventDefault();
@@ -412,24 +484,24 @@ function XtermHost({
     session.hostEl.addEventListener("contextmenu", onContextMenu);
 
     const ro = new ResizeObserver(() => {
-      if (!activeRef.current) return;
-      // Debounce: left-rail fold / top session-strip toggle fire many ROs.
-      // Skipping same cols×rows inside fit avoids canvas wipe flash.
-      scheduleFitXtermSession(id, 100);
+      if (!attached) {
+        if (attachXtermSession(id, slot)) {
+          attached = true;
+          window.clearInterval(poll);
+        }
+        return;
+      }
+      if (activeRef.current) scheduleFitXtermSession(id, 100);
     });
     ro.observe(session.hostEl);
     ro.observe(slot);
 
-    if (activeRef.current) {
-      requestAnimationFrame(() => fitXtermSession(id));
-    }
-
     return () => {
+      window.clearInterval(poll);
       session.hostEl.removeEventListener("contextmenu", onContextMenu);
       ro.disconnect();
-      detachXtermSession(id);
+      detachXtermSession(id, slot);
     };
-    // theme/font applied separately; only identity remounts attach
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, kind]);
 
@@ -446,7 +518,6 @@ function XtermHost({
       setCtxMenu(null);
       return;
     }
-    // Panel may expand from 0 after agentVisible flips — retry fit until sized.
     let n = 0;
     let raf = 0;
     const tryFit = () => {

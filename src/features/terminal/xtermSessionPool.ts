@@ -24,6 +24,7 @@ export type PooledXterm = {
   fit: FitAddon;
   /** Element passed to term.open() — reparented into React hosts. */
   hostEl: HTMLDivElement;
+  opened: boolean;
 };
 
 const pool = new Map<string, PooledXterm>();
@@ -45,6 +46,22 @@ export function terminalKeySequence(event: {
     return "\x1b\r";
   }
   return null;
+}
+
+export function isAgentTaskSubmitKey(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  return (
+    event.key === "Enter" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey
+  );
 }
 
 function registerFileLinkProvider(term: Terminal): IDisposable {
@@ -124,14 +141,10 @@ function fitAndResize(session: PooledXterm, force = false) {
     // otherwise leave xterm's final row half-clipped until the next input.
     if (d && navigator.platform.startsWith("Win") && d.rows > 1) d.rows -= 1;
     if (!d || d.cols < 2 || d.rows < 1) return;
-    if (
-      !force &&
-      session.term.cols === d.cols &&
-      session.term.rows === d.rows
-    ) {
+    if (session.term.cols === d.cols && session.term.rows === d.rows) {
+      if (force) session.term.refresh(0, Math.max(0, session.term.rows - 1));
       return;
     }
-    // Prefer term.resize over fit() — same outcome, clearer skip path above.
     session.term.resize(d.cols, d.rows);
     useTerminalStore.getState().resize(session.id, d.cols, d.rows);
   } catch {
@@ -176,7 +189,6 @@ export function acquireXtermSession(
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(hostEl);
   const fileLinks = registerFileLinkProvider(term);
 
   // @xterm/xterm 6.0.0 is miscompiled by the current production minifier in
@@ -196,12 +208,14 @@ export function acquireXtermSession(
 
   let hydrating = true;
   const pendingData: Array<{ data: string; seq: number }> = [];
+  let agentHasUserInput = false;
   const offData = window.anchor.terminal.onData((payload) => {
     if (payload.id !== id) return;
     if (hydrating) {
       pendingData.push({ data: payload.data, seq: payload.seq });
       return;
     }
+    if (kind === "agent") useTerminalStore.getState().noteAgentOutput(id);
     term.write(payload.data);
   });
   void window.anchor.terminal.snapshot(id).then((snapshot) => {
@@ -226,10 +240,19 @@ export function acquireXtermSession(
     }));
   });
 
-  term.onData((data) => useTerminalStore.getState().write(id, data));
+  term.onData((data) => {
+    if (kind === "agent" && data !== "\r" && data !== "\n") {
+      agentHasUserInput = true;
+    }
+    useTerminalStore.getState().write(id, data);
+  });
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
+    if (kind === "agent" && agentHasUserInput && isAgentTaskSubmitKey(e)) {
+      agentHasUserInput = false;
+      useTerminalStore.getState().markAgentWorking(id);
+    }
     const sequence = terminalKeySequence(e);
     if (sequence !== null) {
       e.preventDefault();
@@ -306,28 +329,34 @@ export function acquireXtermSession(
       decModeQueryDisposable.dispose();
     };
 
-  const session: PooledXterm = { id, kind, term, fit, hostEl };
+  const session: PooledXterm = { id, kind, term, fit, hostEl, opened: false };
   pool.set(id, session);
   return session;
 }
 
-/** Move the pooled host into a React container (or no-op if already there). */
-export function attachXtermSession(id: string, parent: HTMLElement): void {
+/**
+ * Attach the pooled host into a React container.
+ * Opens xterm on first successful attach (hostEl must be in the DOM with size).
+ * Returns false if the container is too small — caller should retry.
+ */
+export function attachXtermSession(id: string, parent: HTMLElement): boolean {
   const session = pool.get(id);
-  if (!session) return;
-  // Avoid re-append when already attached — reparenting flashes the canvas.
-  if (session.hostEl.parentElement !== parent) {
-    parent.appendChild(session.hostEl);
+  if (!session) return false;
+  if (parent.clientWidth < 24 || parent.clientHeight < 24) return false;
+  if (session.hostEl.parentElement !== parent) parent.appendChild(session.hostEl);
+  if (!session.opened) {
+    session.term.open(session.hostEl);
+    session.opened = true;
   }
   requestAnimationFrame(() => fitAndResize(session));
   window.setTimeout(() => fitAndResize(session, true), 180);
+  return true;
 }
 
-/** Detach from React DOM without disposing (keeps scrollback). */
-export function detachXtermSession(id: string): void {
+/** Detach only when this React host currently owns the pooled element. */
+export function detachXtermSession(id: string, parent: HTMLElement): void {
   const session = pool.get(id);
-  if (!session) return;
-  session.hostEl.remove();
+  if (session?.hostEl.parentElement === parent) session.hostEl.remove();
 }
 
 export function fitXtermSession(id: string, force = false): void {

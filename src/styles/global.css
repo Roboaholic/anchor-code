@@ -7263,9 +7263,13 @@ select.field__input {
 }
 
 .monaco-editor .git-blame-inline {
-  color: var(--text-muted);
+  color: color-mix(
+    in srgb,
+    var(--text-muted) 72%,
+    var(--vscode-editor-background)
+  );
   font-style: normal;
-  opacity: 0.72;
+  background: var(--vscode-editor-background);
   padding-left: 16px;
   white-space: pre;
 }

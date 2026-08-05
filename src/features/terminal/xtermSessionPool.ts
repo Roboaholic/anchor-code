@@ -266,20 +266,13 @@ export function acquireXtermSession(
       if (e.shiftKey || term.hasSelection()) {
         if (term.hasSelection()) {
           e.preventDefault();
-          void (async () => {
-            const text = term.getSelection();
-            if (!text) return;
-            try {
-              await window.anchor.clipboard.writeText(text);
-            } catch {
-              try {
-                await navigator.clipboard.writeText(text);
-              } catch {
-                // ignore
-              }
-            }
-            term.clearSelection();
-          })();
+          const text = term.getSelection();
+          term.clearSelection();
+          if (text) {
+            void window.anchor.clipboard.writeText(text).catch(() =>
+              navigator.clipboard.writeText(text).catch(() => undefined),
+            );
+          }
           return false;
         }
         if (e.shiftKey) return false;

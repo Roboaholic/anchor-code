@@ -412,6 +412,8 @@ function XtermHost({
     if (!term?.hasSelection()) return;
     const text = term.getSelection();
     if (!text) return;
+    term.clearSelection();
+    setCtxMenu(null);
     try {
       await window.anchor.clipboard.writeText(text);
     } catch {
@@ -421,8 +423,6 @@ function XtermHost({
         // ignore
       }
     }
-    term.clearSelection();
-    setCtxMenu(null);
   }, [id]);
 
   const pasteClipboard = useCallback(async () => {

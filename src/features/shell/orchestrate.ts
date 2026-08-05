@@ -4,9 +4,17 @@
 import { resolveAnchor } from "@/core/annotations/anchor";
 import { joinPath } from "@/core/workspace/paths";
 import { useAnnotationsStore } from "@/features/annotations/annotationsStore";
-import { useDocumentStore } from "@/features/document/documentStore";
+import {
+  restoreWorkspaceDocuments,
+  saveWorkspaceDocuments,
+  useDocumentStore,
+} from "@/features/document/documentStore";
 import { useHistoryStore } from "@/features/history/historyStore";
-import { useTerminalStore } from "@/features/terminal/terminalStore";
+import {
+  resumeWorkspaceAgents,
+  saveWorkspaceAgents,
+  useTerminalStore,
+} from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { CommentRecord, HostKind } from "@/shared/anchor-api";
 import { useShellStore } from "./shellStore";
@@ -21,17 +29,7 @@ export async function openWorkspaceWithHost(args: {
   hostProfileId: string;
   hostKind?: HostKind;
 }): Promise<void> {
-  try {
-    await useWorkspaceStore.getState().openPath(args.path, {
-      hostProfileId: args.hostProfileId,
-    });
-    const root = useWorkspaceStore.getState().workspaceRoot;
-    if (root) await afterWorkspaceOpened(root);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[shell] openWorkspaceWithHost failed:", err);
-    useWorkspaceStore.setState({ status: "error", error: message });
-  }
+  await openWorkspacePath(args.path, args.hostProfileId);
 }
 
 export async function openWorkspacePath(
@@ -39,9 +37,16 @@ export async function openWorkspacePath(
   hostProfileId?: string,
 ): Promise<void> {
   try {
+    const previous = useWorkspaceStore.getState();
+    if (previous.workspaceRoot) {
+      saveWorkspaceDocuments(previous.workspaceRoot, previous.hostProfileId);
+      saveWorkspaceAgents(previous.workspaceRoot, previous.hostProfileId);
+    }
     await useWorkspaceStore.getState().openPath(path, { hostProfileId });
-    const root = useWorkspaceStore.getState().workspaceRoot;
-    if (root) await afterWorkspaceOpened(root);
+    const workspace = useWorkspaceStore.getState();
+    if (workspace.workspaceRoot) {
+      await afterWorkspaceOpened(workspace.workspaceRoot, workspace.hostProfileId);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[shell] openWorkspacePath failed:", err);
@@ -49,14 +54,16 @@ export async function openWorkspacePath(
   }
 }
 
-async function afterWorkspaceOpened(root: string): Promise<void> {
-  useDocumentStore.getState().closeAllFiles();
+async function afterWorkspaceOpened(
+  root: string,
+  hostProfileId: string | null,
+): Promise<void> {
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
-  // Agent / terminal panels stay closed until the user toggles them.
   useShellStore.getState().setAgentVisible(false);
   useShellStore.getState().setTerminalVisible(false);
   useShellStore.getState().setSkillInstallPromptRoot(null);
+  await restoreWorkspaceDocuments(root, hostProfileId);
   // History / terminal must not block a successful workspace open.
   try {
     await useHistoryStore.getState().discover(root);
@@ -65,8 +72,13 @@ async function afterWorkspaceOpened(root: string): Promise<void> {
   }
   try {
     await useTerminalStore.getState().resetForWorkspace(root);
+    await resumeWorkspaceAgents(root, hostProfileId);
+    const hasAgents = useTerminalStore
+      .getState()
+      .tabs.some((tab) => tab.kind === "agent");
+    useShellStore.getState().setAgentVisible(hasAgents);
   } catch (err) {
-    console.warn("[shell] terminal.resetForWorkspace failed:", err);
+    console.warn("[shell] terminal workspace restore failed:", err);
   }
   try {
     const installed =

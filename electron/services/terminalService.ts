@@ -14,6 +14,7 @@ export interface TerminalTabInfo {
   status: "running" | "exited";
   kind: TerminalSessionKind;
   agentId?: string;
+  agentSessionId?: string;
   /** How the title was set — user renames win over auto-inferred topics. */
   titleSource?: TerminalTitleSource;
 }
@@ -27,6 +28,7 @@ export interface TerminalCreateOptions {
   args?: string[];
   title?: string;
   agentId?: string;
+  agentSessionId?: string;
 }
 
 export type TerminalServiceEvent =
@@ -178,6 +180,7 @@ export class TerminalService {
       status: "running",
       kind,
       agentId: opts.agentId,
+      agentSessionId: opts.agentSessionId,
       titleSource: "default",
     };
     this.tabs.set(handle.id, {
@@ -220,6 +223,24 @@ export class TerminalService {
 
     this.publishInfo("created", info);
     return info;
+  }
+
+  setAgentSessionId(id: string, agentSessionId: string): TerminalTabInfo | null {
+    const tab = this.tabs.get(id);
+    const next = agentSessionId.trim();
+    if (!tab || !next) return tab?.info ?? null;
+    tab.info = { ...tab.info, agentSessionId: next };
+    this.publishInfo("updated", tab.info);
+    return tab.info;
+  }
+
+  setAgentTitle(id: string, title: string): TerminalTabInfo | null {
+    const tab = this.tabs.get(id);
+    const next = title.trim();
+    if (!tab || !next || tab.info.titleSource === "user") return tab?.info ?? null;
+    tab.info = { ...tab.info, title: next, titleSource: "inferred" };
+    this.publishInfo("updated", tab.info);
+    return tab.info;
   }
 
   rename(id: string, title: string): TerminalTabInfo | null {

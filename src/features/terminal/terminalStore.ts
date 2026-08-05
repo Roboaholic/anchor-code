@@ -47,6 +47,110 @@ const SESSION_LIST_KEY = "anchor.terminal.sessionListOpenByMode";
 /** Legacy single-flag key (migrated once). */
 const SESSION_LIST_KEY_LEGACY = "anchor.terminal.sessionListOpen";
 
+const WORKSPACE_AGENTS_KEY = "anchor.workspace.agents.v1";
+
+type PersistedAgent = { profileId: string; sessionId: string; title: string };
+
+function workspaceAgentKey(cwd: string, hostProfileId: string | null): string {
+  return `${hostProfileId ?? "local-default"}::${normalizedCwd(cwd)}`;
+}
+
+function readPersistedAgents(): Record<string, PersistedAgent[]> {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_AGENTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, PersistedAgent[]>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveWorkspaceAgents(
+  cwd: string,
+  hostProfileId: string | null,
+): void {
+  try {
+    const saved = readPersistedAgents();
+    saved[workspaceAgentKey(cwd, hostProfileId)] = useTerminalStore
+      .getState()
+      .tabs.filter(
+        (tab): tab is TerminalTabInfo & { agentId: string; agentSessionId: string } =>
+          tab.kind === "agent" &&
+          tab.status === "running" &&
+          typeof tab.agentId === "string" &&
+          typeof tab.agentSessionId === "string" &&
+          tab.agentSessionId.trim().length > 0,
+      )
+      .map((tab) => ({
+        profileId: tab.agentId,
+        sessionId: tab.agentSessionId,
+        title: tab.title,
+      }));
+    localStorage.setItem(WORKSPACE_AGENTS_KEY, JSON.stringify(saved));
+  } catch {
+    // Persistence must not interrupt workspace switching.
+  }
+}
+
+export async function resumeWorkspaceAgents(
+  cwd: string,
+  hostProfileId: string | null,
+): Promise<void> {
+  const agents = readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId)];
+  if (!Array.isArray(agents) || agents.length === 0) return;
+
+  const profiles = await window.anchor.agent.listProfiles();
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+  const results = await Promise.allSettled(
+    agents.map(async (saved) => {
+      const profile = byId.get(saved.profileId);
+      if (!profile || profile.enabled === false) {
+        throw new Error(`Agent profile unavailable: ${saved.profileId}`);
+      }
+      const tab = await window.anchor.agent.createSession({
+        profileId: profile.id,
+        resume: true,
+        sessionId: saved.sessionId,
+        cols: 80,
+        rows: 24,
+      });
+      return saved.title.trim()
+        ? await window.anchor.terminal.rename(tab.id, saved.title)
+        : tab;
+    }),
+  );
+  const restored = results.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  if (restored.length === 0) {
+    const reason = results.find((result) => result.status === "rejected");
+    if (reason?.status === "rejected") {
+      setTimeout(() => {
+        useTerminalStore.setState({
+          error: reason.reason instanceof Error
+            ? reason.reason.message
+            : String(reason.reason),
+        });
+      }, 0);
+    }
+    return;
+  }
+  useTerminalStore.setState((state) => ({
+    tabs: [
+      ...state.tabs.filter((tab) => !restored.some((item) => item.id === tab.id)),
+      ...restored,
+    ],
+    activeByMode: {
+      ...state.activeByMode,
+      agent: restored.at(-1)?.id ?? state.activeByMode.agent,
+    },
+    mode: "agent",
+    error: null,
+  }));
+}
 function readSessionListOpenByMode(): Record<RightTermMode, boolean> {
   try {
     const raw = localStorage.getItem(SESSION_LIST_KEY);

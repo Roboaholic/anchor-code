@@ -166,13 +166,13 @@ export function registerIpc(opts: {
         win?.webContents.toggleDevTools();
         return true;
       case "resetZoom":
-        if (win) win.webContents.setZoomLevel(0);
+        win?.webContents.send("shell:command", { type: "resetFontSize" });
         return true;
       case "zoomIn":
-        if (win) win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+        win?.webContents.send("shell:command", { type: "increaseFontSize" });
         return true;
       case "zoomOut":
-        if (win) win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+        win?.webContents.send("shell:command", { type: "decreaseFontSize" });
         return true;
       case "toggleFullscreen":
         if (win) win.setFullScreen(!win.isFullScreen());
@@ -1222,6 +1222,7 @@ export function registerIpc(opts: {
         args?: string[];
         title?: string;
         agentId?: string;
+        agentSessionId?: string;
       } = {},
     ) => {
       try {
@@ -1241,6 +1242,7 @@ export function registerIpc(opts: {
           args: args.args,
           title: args.title,
           agentId: args.agentId,
+          agentSessionId: args.agentSessionId,
         });
       } catch (err) {
         rethrowIpc(err);
@@ -1272,6 +1274,11 @@ export function registerIpc(opts: {
     async (_evt, args: { id: string; title: string }) => {
       return application.terminal.rename(args.id, args.title);
     },
+  );
+  ipcMain.handle(
+    "terminal:applyAgentTitle",
+    async (_evt, args: { id: string; title: string }) =>
+      application.terminal.applyAgentTitle(args.id, args.title),
   );
 
   ipcMain.handle(
@@ -1390,6 +1397,8 @@ export function registerIpc(opts: {
         model?: string;
         effort?: string;
         prompt?: string;
+        resume?: boolean;
+        sessionId?: string;
         cols?: number;
         rows?: number;
       },

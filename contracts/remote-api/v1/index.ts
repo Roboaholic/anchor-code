@@ -93,6 +93,7 @@ export interface RemoteTerminalInfo {
   status: "running" | "exited";
   kind: "shell" | "agent";
   agentId?: string;
+  agentSessionId?: string;
   titleSource?: "default" | "user" | "inferred";
 }
 
@@ -185,6 +186,8 @@ export interface CreateAgentSessionInput {
   model?: string;
   effort?: string;
   prompt?: string;
+  resume?: boolean;
+  sessionId?: string;
   cols?: number;
   rows?: number;
 }

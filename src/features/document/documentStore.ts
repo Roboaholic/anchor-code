@@ -19,6 +19,126 @@ export type SearchHighlight = {
   nonce: number;
 };
 
+export type PersistedOpenItem =
+  | { kind: "welcome" }
+  | { kind: "file"; path: string; mdViewMode: MdViewMode }
+  | {
+      kind: "diff";
+      title: string;
+      repoRoot: string;
+      base: string;
+      head: string | "worktree";
+      files: DiffFile[];
+      activeFilePath: string | null;
+      branch?: string | null;
+      hideFileList?: boolean;
+    };
+
+export interface PersistedDocumentState {
+  openItems: PersistedOpenItem[];
+  activeIndex: number;
+}
+
+const WORKSPACE_DOCUMENTS_KEY = "anchor.workspace.documents.v1";
+
+function workspaceKey(workspaceRoot: string, hostProfileId: string | null): string {
+  return `${hostProfileId ?? "local-default"}::${normalizePathKey(workspaceRoot)}`;
+}
+
+function readPersistedDocuments(): Record<string, PersistedDocumentState> {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_DOCUMENTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, PersistedDocumentState>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistedItem(item: OpenItem): PersistedOpenItem {
+  if (item.kind === "welcome") return { kind: "welcome" };
+  if (item.kind === "file") {
+    return { kind: "file", path: item.path, mdViewMode: item.mdViewMode };
+  }
+  return {
+    kind: "diff",
+    title: item.title,
+    repoRoot: item.repoRoot,
+    base: item.base,
+    head: item.head,
+    files: item.files,
+    activeFilePath: item.activeFilePath,
+    branch: item.branch,
+    hideFileList: item.hideFileList,
+  };
+}
+
+export function saveWorkspaceDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): void {
+  try {
+    const state = useDocumentStore.getState();
+    const activeIndex = Math.max(
+      0,
+      state.openItems.findIndex((item) => item.id === state.activeId),
+    );
+    const saved = readPersistedDocuments();
+    saved[workspaceKey(workspaceRoot, hostProfileId)] = {
+      openItems: state.openItems.map(persistedItem),
+      activeIndex,
+    };
+    localStorage.setItem(WORKSPACE_DOCUMENTS_KEY, JSON.stringify(saved));
+  } catch {
+    // Persistence must not interrupt navigation.
+  }
+}
+
+export async function restoreWorkspaceDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): Promise<void> {
+  const saved = readPersistedDocuments()[workspaceKey(workspaceRoot, hostProfileId)];
+  useDocumentStore.getState().closeAllFiles();
+  if (!saved || !Array.isArray(saved.openItems)) return;
+
+  const restoredIds: string[] = [];
+  for (const item of saved.openItems) {
+    if (item?.kind === "welcome") {
+      useDocumentStore.getState().openWelcome();
+      restoredIds.push("welcome");
+    } else if (item?.kind === "file" && typeof item.path === "string") {
+      await useDocumentStore.getState().openFile({
+        path: item.path,
+        workspaceRoot,
+      });
+      const restored = findOpenFile(useDocumentStore.getState().openItems, item.path);
+      if (restored) {
+        if (item.mdViewMode === "raw") {
+          useDocumentStore.getState().setMdViewMode(restored.id, "raw");
+        }
+        restoredIds.push(restored.id);
+      }
+    } else if (
+      item?.kind === "diff" &&
+      typeof item.repoRoot === "string" &&
+      typeof item.base === "string" &&
+      (typeof item.head === "string") &&
+      Array.isArray(item.files)
+    ) {
+      useDocumentStore.getState().openDiff(item);
+      const activeId = useDocumentStore.getState().activeId;
+      if (activeId) restoredIds.push(activeId);
+    }
+  }
+
+  const activeId = restoredIds[saved.activeIndex] ?? restoredIds.at(-1);
+  if (activeId) useDocumentStore.getState().setActive(activeId);
+}
+
 export type OpenItem =
   | {
       id: string;

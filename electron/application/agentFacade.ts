@@ -8,12 +8,19 @@ import {
   setDefaultAgentId,
   upsertAgentProfile,
 } from "../services/agentCli.js";
-import { buildAgentLaunchArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
+import { buildAgentLaunchArgs, buildAgentResumeArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
+import {
+  listAgentSessionIds,
+  readAgentSessionTitle,
+  waitForCreatedAgentSession,
+} from "../services/agentSessionIdentity.js";
 import type { TerminalService } from "../services/terminalService.js";
 import type { CreateAgentSessionInput } from "../../contracts/remote-api/v1/index.js";
 import type { WorkspaceFacade } from "./workspaceFacade.js";
 
 export class AgentFacade {
+  private readonly titleWatchers = new Set<string>();
+
   constructor(
     private readonly hosts: HostManager,
     private readonly terminal: TerminalService,
@@ -44,6 +51,29 @@ export class AgentFacade {
     return discoverAgentLaunchOptions(this.hosts.session, profileId, options);
   }
 
+  private watchSessionTitle(tabId: string, profileId: string, sessionId: string): void {
+    const key = `${tabId}:${sessionId}`;
+    if (this.titleWatchers.has(key)) return;
+    this.titleWatchers.add(key);
+    void (async () => {
+      try {
+        for (;;) {
+          const title = await readAgentSessionTitle(this.hosts.session, profileId, sessionId);
+          if (title) {
+            this.terminal.setAgentTitle(tabId, title);
+            return;
+          }
+          const current = this.terminal.list().find((tab) => tab.id === tabId);
+          if (!current || current.status !== "running") return;
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+      } finally {
+        this.titleWatchers.delete(key);
+      }
+    })().catch(() => undefined);
+  }
+
+
   async createSession(input: CreateAgentSessionInput) {
     const profiles = await listAgentProfiles();
     const profile = profiles.find((item) => item.id === input.profileId && item.enabled !== false);
@@ -54,11 +84,24 @@ export class AgentFacade {
     const fallbackTitle = [profile.name.trim() || profile.id, input.model, input.effort, time]
       .filter(Boolean)
       .join(" · ");
-    const extra = buildAgentLaunchArgs(profile.id, {
-      model: input.model,
-      effort: input.effort,
-      prompt: prompt || undefined,
-    });
+    const extra = input.resume && input.sessionId
+      ? buildAgentResumeArgs(profile.id, input.sessionId)
+      : buildAgentLaunchArgs(profile.id, {
+          model: input.model,
+          effort: input.effort,
+          prompt: prompt || undefined,
+        });
+    if (!extra) {
+      throw new HostError(
+        "failed",
+        input.resume
+          ? `Exact session id required to resume ${profile.name}`
+          : `Agent launch failed: ${profile.name}`,
+      );
+    }
+    const previousSessionIds = input.resume
+      ? new Set<string>()
+      : await listAgentSessionIds(this.hosts.session, profile.id);
     const session = await this.terminal.create({
       cwd: this.workspace.root(),
       cols: input.cols ?? 80,
@@ -68,7 +111,22 @@ export class AgentFacade {
       args: [...(profile.args ?? []), ...extra],
       title: prompt || fallbackTitle,
       agentId: profile.id,
+      agentSessionId: input.sessionId,
     });
+    if (!input.resume) {
+      void waitForCreatedAgentSession(
+        this.hosts.session,
+        profile.id,
+        previousSessionIds,
+      ).then((sessionId) => {
+        if (sessionId) {
+          this.terminal.setAgentSessionId(session.id, sessionId);
+          this.watchSessionTitle(session.id, profile.id, sessionId);
+        }
+      }).catch(() => undefined);
+    } else if (input.sessionId) {
+      this.watchSessionTitle(session.id, profile.id, input.sessionId);
+    }
     return prompt ? this.terminal.rename(session.id, prompt) ?? session : session;
   }
 }

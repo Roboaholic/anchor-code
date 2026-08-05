@@ -24,6 +24,18 @@ export function normalizeFontSize(value: unknown): number {
   return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(n)));
 }
 
+export function fontSizeShortcutDelta(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}): -1 | 0 | 1 {
+  if ((!event.ctrlKey && !event.metaKey) || event.altKey) return 0;
+  if (event.key === "+" || event.key === "=" || event.key === "Add") return 1;
+  if (event.key === "-" || event.key === "_" || event.key === "Subtract") return -1;
+  return 0;
+}
+
 /** Monaco line height scaled from font size (13px → 20). */
 export function editorLineHeight(fontSize: number): number {
   return Math.max(16, Math.round(normalizeFontSize(fontSize) * (20 / 13)));

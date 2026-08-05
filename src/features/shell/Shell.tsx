@@ -6,9 +6,11 @@ import {
   PanelResizeHandle,
   type ImperativePanelHandle,
 } from "react-resizable-panels";
+import { DEFAULT_FONT_SIZE, fontSizeShortcutDelta } from "@/core/theme/theme";
 import { DocumentArea } from "@/features/document/DocumentArea";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { saveWorkspaceDocuments } from "@/features/document/documentStore";
 import { Icon } from "@/shared/Icon";
 import { LeftNav } from "./LeftNav";
 import {
@@ -28,6 +30,7 @@ import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
 import { openWorkspaceWithHost } from "./orchestrate";
+import { saveWorkspaceAgents } from "@/features/terminal/terminalStore";
 
 /**
  * Drive collapsible panel open/closed without remounting siblings.
@@ -286,8 +289,17 @@ export function Shell() {
     void loadVersion();
     void loadRecent();
 
+    const applyFontSizeCommand = (type: string): boolean => {
+      const { fontSize, setFontSize } = useThemeStore.getState();
+      if (type === "increaseFontSize") void setFontSize(fontSize + 1);
+      else if (type === "decreaseFontSize") void setFontSize(fontSize - 1);
+      else if (type === "resetFontSize") void setFontSize(DEFAULT_FONT_SIZE);
+      else return false;
+      return true;
+    };
     const off =
       window.anchor?.shell?.onCommand?.((cmd) => {
+        if (applyFontSizeCommand(cmd.type)) return;
         if (cmd.type === "openWorkspace") {
           void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
         } else if (cmd.type === "quickOpen") {
@@ -304,6 +316,7 @@ export function Shell() {
     const onLocalMenu = (e: Event) => {
       const detail = (e as CustomEvent<{ type?: string }>).detail;
       const type = detail?.type;
+      if (type && applyFontSizeCommand(type)) return;
       if (type === "openWorkspace") {
         void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
       } else if (type === "quickOpen") {
@@ -321,9 +334,27 @@ export function Shell() {
     };
   }, [setVersionLabel, loadRecent, openPalette]);
 
+  useEffect(() => {
+    const saveCurrentWorkspace = () => {
+      const workspace = useWorkspaceStore.getState();
+      if (!workspace.workspaceRoot) return;
+      saveWorkspaceDocuments(workspace.workspaceRoot, workspace.hostProfileId);
+      saveWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
+    };
+    window.addEventListener("beforeunload", saveCurrentWorkspace);
+    return () => window.removeEventListener("beforeunload", saveCurrentWorkspace);
+  }, []);
+
   // Renderer fallback shortcuts (menu accelerators also send shell:command).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const delta = fontSizeShortcutDelta(e);
+      if (delta !== 0) {
+        e.preventDefault();
+        const { fontSize, setFontSize } = useThemeStore.getState();
+        void setFontSize(fontSize + delta);
+        return;
+      }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod || e.altKey) return;
       const key = e.key.toLowerCase();
@@ -342,9 +373,10 @@ export function Shell() {
         openPalette("quickOpen");
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [openPalette]);
+
 
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const setAgentVisible = useShellStore((s) => s.setAgentVisible);

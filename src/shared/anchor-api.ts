@@ -221,6 +221,7 @@ export interface TerminalTabInfo {
   status: "running" | "exited";
   kind: TerminalSessionKind;
   agentId?: string;
+  agentSessionId?: string;
   titleSource?: TerminalTitleSource;
 }
 
@@ -576,9 +577,11 @@ export interface AnchorApi {
       args?: string[];
       title?: string;
       agentId?: string;
+      agentSessionId?: string;
     }) => Promise<TerminalTabInfo>;
     list: () => Promise<TerminalTabInfo[]>;
     snapshot: (id: string) => Promise<{ data: string; seq: number }>;
+    applyAgentTitle: (id: string, title: string) => Promise<TerminalTabInfo>;
     rename: (id: string, title: string) => Promise<TerminalTabInfo>;
     applyTitle: (id: string, title: string) => Promise<TerminalTabInfo>;
     applyAgentTopic: (id: string, line: string) => Promise<TerminalTabInfo>;
@@ -648,6 +651,8 @@ export interface AnchorApi {
       model?: string;
       effort?: string;
       prompt?: string;
+      resume?: boolean;
+      sessionId?: string;
       cols?: number;
       rows?: number;
     }) => Promise<TerminalTabInfo>;

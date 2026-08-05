@@ -38,6 +38,7 @@ export function toRemoteTerminalInfo(value: unknown): RemoteTerminalInfo {
     status: item.status === "exited" ? "exited" : "running",
     kind: item.kind === "agent" ? "agent" : "shell",
     ...(optionalText(item.agentId) ? { agentId: optionalText(item.agentId) } : {}),
+    ...(optionalText(item.agentSessionId) ? { agentSessionId: optionalText(item.agentSessionId) } : {}),
     ...(item.titleSource === "default" || item.titleSource === "user" || item.titleSource === "inferred"
       ? { titleSource: item.titleSource }
       : {}),

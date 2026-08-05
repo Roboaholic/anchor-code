@@ -59,19 +59,19 @@ const MENUS: Array<{ id: MenuId; label: string; items: MenuItem[] }> = [
       { kind: "separator" },
       {
         kind: "action",
-        label: "Actual Size",
+        label: "Actual Font Size",
         accelerator: "Ctrl+0",
         action: "resetZoom",
       },
       {
         kind: "action",
-        label: "Zoom In",
+        label: "Increase Font Size",
         accelerator: "Ctrl+=",
         action: "zoomIn",
       },
       {
         kind: "action",
-        label: "Zoom Out",
+        label: "Decrease Font Size",
         accelerator: "Ctrl+-",
         action: "zoomOut",
       },

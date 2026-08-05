@@ -158,6 +158,7 @@ export interface TerminalTabInfo {
   status: "running" | "exited";
   kind: TerminalSessionKind;
   agentId?: string;
+  agentSessionId?: string;
   titleSource?: TerminalTitleSource;
 }
 
@@ -527,6 +528,7 @@ const anchor = {
       args?: string[];
       title?: string;
       agentId?: string;
+      agentSessionId?: string;
     }): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:create", args ?? {}),
     list: (): Promise<TerminalTabInfo[]> => ipcRenderer.invoke("terminal:list"),
@@ -536,6 +538,8 @@ const anchor = {
       ipcRenderer.invoke("terminal:rename", { id, title }),
     applyTitle: (id: string, title: string): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:applyTitle", { id, title }),
+    applyAgentTitle: (id: string, title: string): Promise<TerminalTabInfo> =>
+      ipcRenderer.invoke("terminal:applyAgentTitle", { id, title }),
     applyAgentTopic: (id: string, line: string): Promise<TerminalTabInfo> =>
       ipcRenderer.invoke("terminal:applyAgentTopic", { id, line }),
     write: (id: string, data: string): Promise<void> =>
@@ -677,6 +681,8 @@ const anchor = {
       model?: string;
       effort?: string;
       prompt?: string;
+      resume?: boolean;
+      sessionId?: string;
       cols?: number;
       rows?: number;
     }): Promise<TerminalTabInfo> =>

@@ -123,6 +123,23 @@ function createWindow(theme: UiTheme) {
       sandbox: false,
     },
   });
+  const createdWindow = mainWindow;
+  createdWindow.webContents.on("before-input-event", (event, input) => {
+    const modifier = input.control || input.meta;
+    if (!modifier || input.alt) return;
+    const key = input.key;
+    const command =
+      key === "+" || key === "=" || key === "Add"
+        ? "increaseFontSize"
+        : key === "-" || key === "_" || key === "Subtract"
+          ? "decreaseFontSize"
+          : key === "0"
+            ? "resetFontSize"
+            : null;
+    if (!command) return;
+    event.preventDefault();
+    createdWindow.webContents.send("shell:command", { type: command });
+  });
 
   // Windows still attaches a native menu for roles/accelerators; hide the bar.
   if (!isMac) {
@@ -132,7 +149,6 @@ function createWindow(theme: UiTheme) {
   mainWindow.webContents.on("preload-error", (_event, failedPath, error) => {
     console.error("[main] preload-error:", failedPath, error);
   });
-
 
   if (process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -219,9 +235,21 @@ function buildMenu() {
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
+        {
+          label: "Actual Font Size",
+          accelerator: "CmdOrCtrl+0",
+          click: () => mainWindow?.webContents.send("shell:command", { type: "resetFontSize" }),
+        },
+        {
+          label: "Increase Font Size",
+          accelerator: "CmdOrCtrl+=",
+          click: () => mainWindow?.webContents.send("shell:command", { type: "increaseFontSize" }),
+        },
+        {
+          label: "Decrease Font Size",
+          accelerator: "CmdOrCtrl+-",
+          click: () => mainWindow?.webContents.send("shell:command", { type: "decreaseFontSize" }),
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],

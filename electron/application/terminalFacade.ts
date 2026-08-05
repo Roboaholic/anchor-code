@@ -25,6 +25,12 @@ export class TerminalFacade {
     if (!info) throw new HostError("not_found", `Terminal not found: ${id}`);
     return info;
   }
+  applyAgentTitle(id: string, title: string) {
+    const info = this.terminal.setAgentTitle(id, title);
+    if (!info) throw new HostError("not_found", `Terminal not found: ${id}`);
+    return info;
+  }
+
   applyTitle(id: string, title: string) {
     const info = this.terminal.applyDynamicTitle(id, title);
     if (!info) throw new HostError("not_found", `Terminal not found: ${id}`);

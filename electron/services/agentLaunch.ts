@@ -201,6 +201,23 @@ export function buildAgentLaunchArgs(
   return args;
 }
 
+/** CLI-specific non-interactive selector for the latest session in this cwd. */
+/** CLI-specific selector for an exact provider-owned session. */
+export function buildAgentResumeArgs(
+  profileId: string,
+  sessionId: string,
+): string[] | null {
+  const id = profileId.trim().toLowerCase();
+  const target = sessionId.trim();
+  if (!target) return null;
+  if (id === "codex") return ["resume", target];
+  if (id === "claude") return ["--resume", target];
+  if (id === "grok") return ["--session", target];
+  if (id === "omp") return [`--resume=${target}`];
+  if (id === "cursor-agent") return ["--resume", target];
+  if (id === "gemini") return ["--resume", target];
+  return null;
+}
 
 // ── host helpers ─────────────────────────────────────────────
 

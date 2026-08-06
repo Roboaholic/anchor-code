@@ -260,7 +260,7 @@ export class TerminalService {
     const tab = this.tabs.get(id);
     if (!tab) return null;
     if (tab.info.titleSource === "user") return tab.info;
-    // Never use window/OSC title for agents (often "miles@host:~/…").
+    // Never use window/OSC titles for agents because they often expose shell identity.
     if (tab.info.kind === "agent") return tab.info;
 
     const next = normalizeDynamicTitle(rawTitle, tab.info.title);
@@ -369,7 +369,6 @@ const AGENT_TITLE_NOISE =
 /** Known short usernames / host labels we never want as topics. */
 const JUNK_SINGLE_TOKENS = new Set(
   [
-    "miles",
     "root",
     "admin",
     "user",
@@ -570,7 +569,7 @@ export function normalizeAgentTopic(
   if (!s) return null;
   // Strip prompt decorations
   s = s.replace(/^[›❯>$#%•·]\s*/, "");
-  // user@host:…  / miles@pc:…
+  // Strip common user@host shell prefixes.
   s = s.replace(/^[\w.-]+@[\w.-]+:\s*/, "");
   s = s.replace(/^[\w.-]+@[\w.-]+\s+/, "");
   if (s.length < 1) return null;

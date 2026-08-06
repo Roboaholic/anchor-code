@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_SESSION_CAPTURE_TIMEOUT_MS, parseAgentSessionTitle, sessionIdPattern } from "./agentSessionIdentity.js";
+import {
+  AGENT_SESSION_CAPTURE_TIMEOUT_MS,
+  claimCreatedAgentSession,
+  parseAgentSessionTitle,
+  sessionIdPattern,
+} from "./agentSessionIdentity.js";
 
 const id = "019fcfcf-7cc7-7000-b2c7-4f6a227815f3";
 
@@ -21,6 +26,21 @@ describe("agent session identity", () => {
     expect(parseAgentSessionTitle("codex", `{"type":"session_meta","payload":{"session_id":"${id}"}}\n{"type":"message","payload":{"type":"message","role":"user","content":[{"type":"text","text":"Fix the login flow"}]}}`)).toBe("Fix the login flow");
   });
 
+
+  it("claims each newly discovered session at most once", () => {
+    const before = new Set([id]);
+    const claimed = new Set<string>();
+    const claim = (value: string) => {
+      if (claimed.has(value)) return false;
+      claimed.add(value);
+      return true;
+    };
+    const current = new Set([id, "019fcfcf-7cc7-7000-b2c7-4f6a227816f4"]);
+    expect(claimCreatedAgentSession(current, before, claim)).toBe(
+      "019fcfcf-7cc7-7000-b2c7-4f6a227816f4",
+    );
+    expect(claimCreatedAgentSession(current, before, claim)).toBeNull();
+  });
   it("uses a five-minute default capture window", () => {
     expect(AGENT_SESSION_CAPTURE_TIMEOUT_MS).toBe(5 * 60_000);
   });

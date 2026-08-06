@@ -31,33 +31,16 @@ describe("listWslDistros", () => {
 });
 
 describe("buildWslAgentShellArgs", () => {
-  it("loads interactive login setup before launching agent CLIs", () => {
-    expect(
-      buildWslAgentShellArgs("claude", ["--model", "sonnet"], {
-        ANTHROPIC_API_KEY: "secret value",
-      }),
-    ).toEqual([
-      "--",
-      "bash",
-      "-lic",
-      "export ANTHROPIC_API_KEY='secret value'; exec \"$@\"",
-      "anchor-agent",
-      "claude",
-      "--model",
-      "sonnet",
-    ]);
-  });
-
-  it("passes multiline prompts as literal argv data", () => {
-    expect(buildWslAgentShellArgs("codex", ["修复\n$(touch pwned)"])).toEqual([
-      "--",
-      "bash",
-      "-lic",
-      "exec \"$@\"",
-      "anchor-agent",
-      "codex",
-      "修复\n$(touch pwned)",
-    ]);
+  it("encodes the final Agent command outside the WSL shell parser", () => {
+    const args = buildWslAgentShellArgs("claude", ["--model", "sonnet", "修复\n$(touch pwned)"], {
+      ANTHROPIC_API_KEY: "secret value",
+    });
+    expect(args.slice(0, 3)).toEqual(["--", "bash", "-lic"]);
+    expect(args[3]).toContain("base64 -d");
+    expect(args[3]).toMatch(/exec bash '\/tmp\/anchor-agent-[0-9a-f-]+\.sh'/);
+    expect(args[3]).not.toContain("ANTHROPIC_API_KEY");
+    expect(args[3]).not.toContain("$(touch pwned)");
+    expect(args).toHaveLength(4);
   });
 });
 

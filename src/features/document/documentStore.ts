@@ -6,6 +6,7 @@ import {
   relativeToRoot,
 } from "@/core/workspace/paths";
 import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
+import { invalidateWorktreeDiffCache } from "./fileDiffCache";
 
 export type MdViewMode = "rendered" | "raw";
 
@@ -359,6 +360,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   openDiff: (payload) => {
+    if (payload.head === "worktree") {
+      invalidateWorktreeDiffCache(payload.repoRoot, payload.base);
+    }
     const id = diffItemId(payload);
     const preferred =
       payload.activeFilePath &&

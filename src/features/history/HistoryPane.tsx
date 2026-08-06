@@ -549,9 +549,13 @@ function RepoCard({
                     className="btn btn--accent btn--small"
                     disabled={!canCompare}
                     onClick={() => void openHistoryCompare(card.root)}
-                    title="Compare selection (older on left, newer on right)"
+                    title={
+                      card.comparing
+                        ? "Comparing selection…"
+                        : "Compare selection (older on left, newer on right)"
+                    }
                   >
-                    {card.comparing ? "…" : "Compare"}
+                    {card.comparing ? "Comparing…" : "Compare"}
                   </button>
                   <button
                     type="button"

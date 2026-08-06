@@ -4,6 +4,7 @@ type DiffKey = string;
 
 const cache = new Map<DiffKey, FileDiffContent>();
 const inflight = new Map<DiffKey, Promise<FileDiffContent>>();
+const generations = new Map<DiffKey, number>();
 
 /** Soft cap — drop oldest entries when exceeded. */
 const MAX_ENTRIES = 80;
@@ -17,6 +18,7 @@ function makeKey(args: {
 }): DiffKey {
   return `${args.repoRoot}\0${args.base}\0${args.head}\0${args.path}\0${args.status}`;
 }
+
 
 function touch(key: DiffKey, value: FileDiffContent): void {
   // Refresh insertion order for a simple LRU-ish Map.
@@ -56,17 +58,19 @@ export function loadFileDiff(args: {
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const p = window.anchor.history
+  const generation = generations.get(key) ?? 0;
+  let request: Promise<FileDiffContent>;
+  request = window.anchor.history
     .getFileDiff(args)
     .then((res) => {
-      touch(key, res);
+      if ((generations.get(key) ?? 0) === generation) touch(key, res);
       return res;
     })
     .finally(() => {
-      inflight.delete(key);
+      if (inflight.get(key) === request) inflight.delete(key);
     });
-  inflight.set(key, p);
-  return p;
+  inflight.set(key, request);
+  return request;
 }
 
 /** Prefetch without blocking UI; ignores errors. */
@@ -84,7 +88,20 @@ export function prefetchFileDiff(args: {
   });
 }
 
+/** Drop mutable worktree snapshots before opening a newly-computed compare. */
+export function invalidateWorktreeDiffCache(repoRoot: string, base: string): void {
+  const prefix = `${repoRoot}\0${base}\0worktree\0`;
+  const keys = new Set([...cache.keys(), ...inflight.keys()]);
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    cache.delete(key);
+    inflight.delete(key);
+    generations.set(key, (generations.get(key) ?? 0) + 1);
+  }
+}
+
 export function clearFileDiffCache(): void {
   cache.clear();
   inflight.clear();
+  generations.clear();
 }

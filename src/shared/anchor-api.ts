@@ -621,6 +621,8 @@ export interface AnchorApi {
     ) => Promise<SessionTabLayout>;
     getFontSize: () => Promise<number>;
     setFontSize: (fontSize: number) => Promise<number>;
+    getUiScale: () => Promise<number>;
+    setUiScale: (uiScale: number) => Promise<number>;
   };
   updates: {
     getState: () => Promise<AppUpdateState>;

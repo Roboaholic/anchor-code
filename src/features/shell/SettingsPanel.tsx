@@ -2,8 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
 import {
   DEFAULT_FONT_SIZE,
+  DEFAULT_UI_SCALE,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  MAX_UI_SCALE,
+  MIN_UI_SCALE,
 } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
 import type {
@@ -83,6 +86,8 @@ export function SettingsPanel() {
   const setSessionTabLayout = useThemeStore((s) => s.setSessionTabLayout);
   const fontSize = useThemeStore((s) => s.fontSize);
   const setFontSize = useThemeStore((s) => s.setFontSize);
+  const uiScale = useThemeStore((s) => s.uiScale);
+  const setUiScale = useThemeStore((s) => s.setUiScale);
   const versionLabel = useShellStore((s) => s.versionLabel);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const [section, setSection] = useState<SettingsSection>("appearance");
@@ -450,6 +455,66 @@ export function SettingsPanel() {
                       type="button"
                       className="btn btn--ghost btn--small"
                       onClick={() => void setFontSize(DEFAULT_FONT_SIZE)}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </div>
+
+                <h3 className="settings-section__title settings-section__title--spaced">
+                  UI scale
+                </h3>
+                <p className="settings-section__desc muted">
+                  Scale the whole workbench. Default {DEFAULT_UI_SCALE}%.
+                </p>
+                <div
+                  className="settings-font-size"
+                  role="group"
+                  aria-label="UI scale"
+                >
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Smaller"
+                    aria-label="Decrease UI scale"
+                    disabled={uiScale <= MIN_UI_SCALE}
+                    onClick={() => void setUiScale(uiScale - 5)}
+                  >
+                    <Icon name="remove" />
+                  </button>
+                  <input
+                    className="settings-font-size__range"
+                    type="range"
+                    min={MIN_UI_SCALE}
+                    max={MAX_UI_SCALE}
+                    step={5}
+                    value={uiScale}
+                    onChange={(e) =>
+                      void setUiScale(Number.parseInt(e.target.value, 10))
+                    }
+                    aria-valuemin={MIN_UI_SCALE}
+                    aria-valuemax={MAX_UI_SCALE}
+                    aria-valuenow={uiScale}
+                    aria-label="UI scale percentage"
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Larger"
+                    aria-label="Increase UI scale"
+                    disabled={uiScale >= MAX_UI_SCALE}
+                    onClick={() => void setUiScale(uiScale + 5)}
+                  >
+                    <Icon name="add" />
+                  </button>
+                  <span className="settings-font-size__value" aria-live="polite">
+                    {uiScale}%
+                  </span>
+                  {uiScale !== DEFAULT_UI_SCALE ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => void setUiScale(DEFAULT_UI_SCALE)}
                     >
                       Reset
                     </button>

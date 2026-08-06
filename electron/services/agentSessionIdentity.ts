@@ -141,11 +141,29 @@ export async function listAgentSessionIds(host: HostSession, profileId: string):
   return ids;
 }
 
-export async function waitForCreatedAgentSession(host: HostSession, profileId: string, before: ReadonlySet<string>, timeoutMs = AGENT_SESSION_CAPTURE_TIMEOUT_MS): Promise<string | null> {
+export function claimCreatedAgentSession(
+  current: ReadonlySet<string>,
+  before: ReadonlySet<string>,
+  claim?: (sessionId: string) => boolean,
+): string | null {
+  for (const id of current) {
+    if (before.has(id)) continue;
+    if (!claim || claim(id)) return id;
+  }
+  return null;
+}
+
+export async function waitForCreatedAgentSession(
+  host: HostSession,
+  profileId: string,
+  before: ReadonlySet<string>,
+  timeoutMs = AGENT_SESSION_CAPTURE_TIMEOUT_MS,
+  claim?: (sessionId: string) => boolean,
+): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   do {
     const current = await listAgentSessionIds(host, profileId);
-    const created = [...current].find((id) => !before.has(id));
+    const created = claimCreatedAgentSession(current, before, claim);
     if (created) return created;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   } while (Date.now() < deadline);

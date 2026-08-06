@@ -3,6 +3,7 @@ import {
   clearFileDiffCache,
   invalidateWorktreeDiffCache,
   loadFileDiff,
+  prefetchFileDiff,
 } from "./fileDiffCache";
 
 const worktreeRequest = {
@@ -104,5 +105,30 @@ describe("fileDiffCache", () => {
     await loadFileDiff(commitRequest);
 
     expect(getFileDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes a clicked file ahead of queued background work", async () => {
+    const first = deferred<{ path: string; oldText: string; newText: string; status: string }>();
+    const clicked = deferred<{ path: string; oldText: string; newText: string; status: string }>();
+    const getFileDiff = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(clicked.promise);
+    (globalThis as { window?: unknown }).window = {
+      anchor: { history: { getFileDiff } },
+    };
+    const secondRequest = { ...worktreeRequest, path: "src/b.ts" };
+
+    prefetchFileDiff(worktreeRequest);
+    prefetchFileDiff(secondRequest);
+    expect(getFileDiff).toHaveBeenCalledTimes(1);
+
+    const selected = loadFileDiff(secondRequest);
+    expect(getFileDiff).toHaveBeenCalledTimes(2);
+    expect(getFileDiff.mock.calls[1]?.[0]).toMatchObject({ path: "src/b.ts" });
+
+    clicked.resolve({ path: "src/b.ts", oldText: "old", newText: "clicked", status: "M" });
+    await expect(selected).resolves.toMatchObject({ newText: "clicked" });
+    first.resolve({ path: "src/a.ts", oldText: "old", newText: "warm", status: "M" });
   });
 });

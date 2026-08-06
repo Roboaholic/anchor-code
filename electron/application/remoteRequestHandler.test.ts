@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -61,6 +62,21 @@ describe("RemoteRequestHandler security boundaries", () => {
       path: "/api/v1/history/status",
       query: { repoRoot: path.join(fixture.workspace, "not-a-repo") },
     }));
+  });
+
+  it("accepts an exact Git root deeper than workspace discovery depth", async () => {
+    const fixture = await applicationFixture();
+    const deepRepo = path.join(fixture.workspace, "a", "b", "c", "d", "e", "f", "g", "repo");
+    await fs.mkdir(deepRepo, { recursive: true });
+    execFileSync("git", ["init"], { cwd: deepRepo, stdio: "ignore" });
+
+    const response = await fixture.handler.handle({
+      method: "GET",
+      path: "/api/v1/history/status",
+      query: { repoRoot: deepRepo },
+    });
+
+    expect(response.status).toBe(200);
   });
 
   it("rejects a diff path that escapes an approved repository", async () => {

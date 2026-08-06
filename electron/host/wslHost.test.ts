@@ -40,7 +40,23 @@ describe("buildWslAgentShellArgs", () => {
       "--",
       "bash",
       "-lic",
-      "export ANTHROPIC_API_KEY='secret value'; exec claude --model sonnet",
+      "export ANTHROPIC_API_KEY='secret value'; exec \"$@\"",
+      "anchor-agent",
+      "claude",
+      "--model",
+      "sonnet",
+    ]);
+  });
+
+  it("passes multiline prompts as literal argv data", () => {
+    expect(buildWslAgentShellArgs("codex", ["修复\n$(touch pwned)"])).toEqual([
+      "--",
+      "bash",
+      "-lic",
+      "exec \"$@\"",
+      "anchor-agent",
+      "codex",
+      "修复\n$(touch pwned)",
     ]);
   });
 });

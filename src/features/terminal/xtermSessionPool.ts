@@ -63,6 +63,23 @@ export function isAgentTaskSubmitKey(event: {
     !event.shiftKey
   );
 }
+export type TerminalClipboardAction = "copy" | "paste";
+
+export function terminalClipboardAction(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}, hasSelection: boolean): TerminalClipboardAction | null {
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === "c" && (event.shiftKey || hasSelection)) {
+    return "copy";
+  }
+  if ((event.ctrlKey || event.metaKey) && key === "v") return "paste";
+  if (event.shiftKey && event.key === "Insert") return "paste";
+  if (event.ctrlKey && event.key === "Insert" && hasSelection) return "copy";
+  return null;
+}
 
 function registerFileLinkProvider(term: Terminal): IDisposable {
   return term.registerLinkProvider({
@@ -259,30 +276,23 @@ export function acquireXtermSession(
       useTerminalStore.getState().write(id, sequence);
       return false;
     }
-    const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return true;
-    const key = e.key.toLowerCase();
-    if (key === "c") {
-      if (e.shiftKey || term.hasSelection()) {
-        if (term.hasSelection()) {
-          e.preventDefault();
-          const text = term.getSelection();
-          term.clearSelection();
-          if (text) {
-            void window.anchor.clipboard.writeText(text).catch(() =>
-              navigator.clipboard.writeText(text).catch(() => undefined),
-            );
-          }
-          return false;
-        }
-        if (e.shiftKey) return false;
+    const clipboardAction = terminalClipboardAction(e, term.hasSelection());
+    if (clipboardAction === "copy") {
+      e.preventDefault();
+      const text = term.getSelection();
+      if (text) {
+        void window.anchor.clipboard.writeText(text).catch(() =>
+          navigator.clipboard.writeText(text).catch(() => undefined),
+        );
       }
-      return true;
+      return false;
     }
-    if (key === "v") {
-      // Let xterm handle the native paste event. This keeps clipboard data in
-      // the renderer's paste path instead of adding an async clipboard IPC hop.
-      return true;
+    if (clipboardAction === "paste") {
+      e.preventDefault();
+      void window.anchor.clipboard.readText().then((text) => {
+        if (text) term.paste(text);
+      }).catch(() => undefined);
+      return false;
     }
     return true;
   });

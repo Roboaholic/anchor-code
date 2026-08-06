@@ -20,6 +20,7 @@ import type { WorkspaceFacade } from "./workspaceFacade.js";
 
 export class AgentFacade {
   private readonly titleWatchers = new Set<string>();
+  private readonly claimedSessions = new Set<string>();
 
   constructor(
     private readonly hosts: HostManager,
@@ -51,20 +52,35 @@ export class AgentFacade {
     return discoverAgentLaunchOptions(this.hosts.session, profileId, options);
   }
 
-  private watchSessionTitle(tabId: string, profileId: string, sessionId: string): void {
-    const key = `${tabId}:${sessionId}`;
+  private watchSessionTitle(
+    host: HostManager["session"],
+    tabId: string,
+    profileId: string,
+    sessionId: string,
+  ): void {
+    const key = `${host.id}:${tabId}:${sessionId}`;
     if (this.titleWatchers.has(key)) return;
     this.titleWatchers.add(key);
     void (async () => {
       try {
         for (;;) {
-          const title = await readAgentSessionTitle(this.hosts.session, profileId, sessionId);
-          if (title) {
+          const current = this.terminal.list().find((tab) => tab.id === tabId);
+          if (
+            !current ||
+            current.status !== "running" ||
+            current.agentId !== profileId ||
+            current.agentSessionId !== sessionId
+          ) return;
+          const title = await readAgentSessionTitle(host, profileId, sessionId);
+          const latest = this.terminal.list().find((tab) => tab.id === tabId);
+          if (
+            title &&
+            latest?.agentId === profileId &&
+            latest.agentSessionId === sessionId
+          ) {
             this.terminal.setAgentTitle(tabId, title);
             return;
           }
-          const current = this.terminal.list().find((tab) => tab.id === tabId);
-          if (!current || current.status !== "running") return;
           await new Promise((resolve) => setTimeout(resolve, 2_000));
         }
       } finally {
@@ -99,9 +115,10 @@ export class AgentFacade {
           : `Agent launch failed: ${profile.name}`,
       );
     }
+    const host = this.hosts.session;
     const previousSessionIds = input.resume
       ? new Set<string>()
-      : await listAgentSessionIds(this.hosts.session, profile.id);
+      : await listAgentSessionIds(host, profile.id);
     const session = await this.terminal.create({
       cwd: this.workspace.root(),
       cols: input.cols ?? 80,
@@ -115,17 +132,24 @@ export class AgentFacade {
     });
     if (!input.resume) {
       void waitForCreatedAgentSession(
-        this.hosts.session,
+        host,
         profile.id,
         previousSessionIds,
+        undefined,
+        (sessionId) => {
+          const key = `${host.id}:${profile.id}:${sessionId}`;
+          if (this.claimedSessions.has(key)) return false;
+          this.claimedSessions.add(key);
+          return true;
+        },
       ).then((sessionId) => {
         if (sessionId) {
           this.terminal.setAgentSessionId(session.id, sessionId);
-          this.watchSessionTitle(session.id, profile.id, sessionId);
+          this.watchSessionTitle(host, session.id, profile.id, sessionId);
         }
       }).catch(() => undefined);
     } else if (input.sessionId) {
-      this.watchSessionTitle(session.id, profile.id, input.sessionId);
+      this.watchSessionTitle(host, session.id, profile.id, input.sessionId);
     }
     return prompt ? this.terminal.rename(session.id, prompt) ?? session : session;
   }

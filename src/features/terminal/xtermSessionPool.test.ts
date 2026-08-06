@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isAgentTaskSubmitKey, terminalKeySequence } from "./xtermSessionPool";
+import {
+  isAgentTaskSubmitKey,
+  terminalClipboardAction,
+  terminalKeySequence,
+} from "./xtermSessionPool";
 
 describe("terminalKeySequence", () => {
   it("forwards plain Tab to the shell", () => {
@@ -24,6 +28,30 @@ describe("terminalKeySequence", () => {
         shiftKey: true,
       }),
     ).toBe("\x1b\r");
+  });
+});
+
+describe("terminalClipboardAction", () => {
+  const event = (key: string, overrides: Partial<{
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  }> = {}) => ({
+    key,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...overrides,
+  });
+
+  it("copies a selected terminal range with Ctrl+C", () => {
+    expect(terminalClipboardAction(event("c", { ctrlKey: true }), true)).toBe("copy");
+    expect(terminalClipboardAction(event("c", { ctrlKey: true }), false)).toBeNull();
+  });
+
+  it("handles explicit paste shortcuts", () => {
+    expect(terminalClipboardAction(event("v", { ctrlKey: true }), false)).toBe("paste");
+    expect(terminalClipboardAction(event("Insert", { shiftKey: true }), false)).toBe("paste");
   });
 });
 

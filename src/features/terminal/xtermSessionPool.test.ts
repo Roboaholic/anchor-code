@@ -54,7 +54,6 @@ describe("terminalClipboardAction", () => {
     expect(terminalClipboardAction(event("Insert", { shiftKey: true }), false)).toBe("paste");
   });
 });
-
 describe("isAgentTaskSubmitKey", () => {
   it("starts work only for an unmodified Enter keydown", () => {
     expect(

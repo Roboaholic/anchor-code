@@ -103,6 +103,8 @@ export interface AppSettings {
      * Default 13. Clamped 11–20.
      */
     fontSize?: number;
+    /** Whole-workbench zoom percentage. Default 100. Clamped 80–150. */
+    uiScale?: number;
   };
 }
 
@@ -142,6 +144,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     theme: "dark-modern",
     sessionTabLayout: "side",
     fontSize: 13,
+    uiScale: 100,
   },
 };
 
@@ -481,6 +484,34 @@ export async function setFontSize(fontSize: number): Promise<number> {
   const settings = await loadSettings();
   const next = normalizeFontSize(fontSize);
   settings.ui = { ...settings.ui, fontSize: next };
+  await saveSettings(settings);
+  return next;
+}
+
+export const DEFAULT_UI_SCALE = 100;
+export const MIN_UI_SCALE = 80;
+export const MAX_UI_SCALE = 150;
+
+export function normalizeUiScale(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_UI_SCALE;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, Math.round(n / 5) * 5));
+}
+
+export async function getUiScale(): Promise<number> {
+  const settings = await loadSettings();
+  return normalizeUiScale(settings.ui?.uiScale);
+}
+
+export async function setUiScale(uiScale: number): Promise<number> {
+  const settings = await loadSettings();
+  const next = normalizeUiScale(uiScale);
+  settings.ui = { ...settings.ui, uiScale: next };
   await saveSettings(settings);
   return next;
 }

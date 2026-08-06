@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from "electron";
 
 export type HostKind = "local" | "wsl" | "ssh";
 
@@ -629,6 +629,17 @@ const anchor = {
       ipcRenderer.invoke("settings:getFontSize"),
     setFontSize: (fontSize: number): Promise<number> =>
       ipcRenderer.invoke("settings:setFontSize", fontSize),
+    getUiScale: async (): Promise<number> => {
+      const uiScale = await ipcRenderer.invoke("settings:getUiScale") as number;
+      webFrame.setZoomFactor(uiScale / 100);
+      return uiScale;
+    },
+    setUiScale: async (uiScale: number): Promise<number> => {
+      webFrame.setZoomFactor(uiScale / 100);
+      const saved = await ipcRenderer.invoke("settings:setUiScale", uiScale) as number;
+      if (saved !== uiScale) webFrame.setZoomFactor(saved / 100);
+      return saved;
+    }
   },
   updates: {
     getState: (): Promise<AppUpdateState> =>

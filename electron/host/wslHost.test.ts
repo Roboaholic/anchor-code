@@ -8,6 +8,14 @@ import { HostError } from "./types.js";
 
 const isWin = process.platform === "win32";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("listWslDistros", () => {
   it("returns empty list off Windows", async () => {
     if (isWin) return;
@@ -42,6 +50,33 @@ describe("buildWslAgentShellArgs", () => {
     expect(args[3]).not.toContain("$(touch pwned)");
     expect(args).toHaveLength(4);
   });
+});
+
+describe.runIf(isWin && process.env.ANCHOR_WSL_SMOKE_ROOT)("WSL Agent argv smoke", () => {
+  let host: WslHostSession | null = null;
+
+  afterEach(async () => {
+    await host?.dispose();
+    host = null;
+  });
+
+  it("delivers multiline prompt argv literally to the Agent process", async () => {
+    const done = deferred<void>();
+    host = new WslHostSession({ profileId: "wsl-agent-argv-smoke" });
+    const prompt = "修复\n$(printf PWNED) 'quoted'";
+    const pty = await host.openPty(process.env.ANCHOR_WSL_SMOKE_ROOT!, 80, 24, {
+      command: "printf",
+      args: ["%s", prompt],
+    });
+    let output = "";
+    pty.onData((chunk) => {
+      output += chunk;
+      if (output.includes(prompt)) done.resolve();
+    });
+    await done.promise;
+    expect(output).toContain(prompt);
+    pty.kill();
+  }, 30_000);
 });
 
 describe("WslHostSession", () => {

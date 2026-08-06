@@ -13,6 +13,22 @@ export const DEFAULT_FONT_SIZE = 13;
 export const MIN_FONT_SIZE = 11;
 export const MAX_FONT_SIZE = 20;
 
+/** Whole-workbench zoom percentage. */
+export const DEFAULT_UI_SCALE = 100;
+export const MIN_UI_SCALE = 80;
+export const MAX_UI_SCALE = 150;
+
+export function normalizeUiScale(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_UI_SCALE;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, Math.round(n / 5) * 5));
+}
+
 export function normalizeFontSize(value: unknown): number {
   const n =
     typeof value === "number"

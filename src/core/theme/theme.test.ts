@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   accentHex,
   editorLineHeight,
+  fontSizeShortcutDelta,
   isDarkTheme,
   monacoThemeId,
   normalizeFontSize,
+  normalizeUiScale,
   normalizeTheme,
   xtermThemeFromCss,
 } from "./theme";
@@ -36,6 +38,32 @@ describe("normalizeFontSize", () => {
   it("scales monaco line height with font size", () => {
     expect(editorLineHeight(13)).toBe(20);
     expect(editorLineHeight(16)).toBe(25);
+  });
+});
+
+describe("normalizeUiScale", () => {
+  it("clamps and rounds UI scale to five-percent steps", () => {
+    expect(normalizeUiScale(100)).toBe(100);
+    expect(normalizeUiScale("112")).toBe(110);
+    expect(normalizeUiScale(70)).toBe(80);
+    expect(normalizeUiScale(180)).toBe(150);
+    expect(normalizeUiScale(undefined)).toBe(100);
+  });
+});
+
+describe("fontSizeShortcutDelta", () => {
+  it("maps Ctrl/Cmd plus and minus without browser zoom", () => {
+    expect(fontSizeShortcutDelta({ key: "+", ctrlKey: true, metaKey: false, altKey: false })).toBe(1);
+    expect(fontSizeShortcutDelta({ key: "=", ctrlKey: false, metaKey: true, altKey: false })).toBe(1);
+    expect(fontSizeShortcutDelta({ key: "-", ctrlKey: true, metaKey: false, altKey: false })).toBe(-1);
+    expect(fontSizeShortcutDelta({ key: "_", ctrlKey: true, metaKey: false, altKey: false })).toBe(-1);
+  });
+    expect(fontSizeShortcutDelta({ key: "Add", ctrlKey: true, metaKey: false, altKey: false })).toBe(1);
+    expect(fontSizeShortcutDelta({ key: "Subtract", ctrlKey: true, metaKey: false, altKey: false })).toBe(-1);
+
+  it("ignores unmodified and Alt-modified keys", () => {
+    expect(fontSizeShortcutDelta({ key: "+", ctrlKey: false, metaKey: false, altKey: false })).toBe(0);
+    expect(fontSizeShortcutDelta({ key: "-", ctrlKey: true, metaKey: false, altKey: true })).toBe(0);
   });
 });
 

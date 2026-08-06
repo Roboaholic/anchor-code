@@ -8,12 +8,12 @@ import {
 
 describe("basenameOf", () => {
   it("returns the last segment on posix paths", () => {
-    expect(basenameOf("/home/miles/repo/a.txt")).toBe("a.txt");
-    expect(basenameOf("/home/miles")).toBe("miles");
+    expect(basenameOf("/home/tester/repo/a.txt")).toBe("a.txt");
+    expect(basenameOf("/home/tester")).toBe("tester");
   });
 
   it("handles backslash paths", () => {
-    expect(basenameOf("C:\\Users\\miles\\a.txt")).toBe("a.txt");
+    expect(basenameOf("C:\\Users\\tester\\a.txt")).toBe("a.txt");
   });
 
   it("returns the whole string when there is no separator", () => {
@@ -23,8 +23,8 @@ describe("basenameOf", () => {
 
 describe("parentDirOf", () => {
   it("returns the parent posix directory", () => {
-    expect(parentDirOf("/home/miles/repo/a.txt")).toBe("/home/miles/repo");
-    expect(parentDirOf("/home/miles/repo")).toBe("/home/miles");
+    expect(parentDirOf("/home/tester/repo/a.txt")).toBe("/home/tester/repo");
+    expect(parentDirOf("/home/tester/repo")).toBe("/home/tester");
   });
 
   it("returns root for a top-level entry", () => {
@@ -32,7 +32,7 @@ describe("parentDirOf", () => {
   });
 
   it("preserves backslash separators for windows-style paths", () => {
-    expect(parentDirOf("C:\\Users\\miles\\a.txt")).toBe("C:\\Users\\miles");
+    expect(parentDirOf("C:\\Users\\tester\\a.txt")).toBe("C:\\Users\\tester");
   });
 
   it("returns the path unchanged when there is no separator", () => {

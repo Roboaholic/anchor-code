@@ -36,8 +36,10 @@ import {
   getWorkspaceFilter,
   getSessionTabLayout,
   getUiTheme,
+  getUiScale,
   loadSettings,
   normalizeFontSize,
+  normalizeUiScale,
   normalizeSessionTabLayout,
   normalizeTheme,
   pushHistoryRecentCompare,
@@ -45,6 +47,7 @@ import {
   setFontSize,
   setSessionTabLayout,
   setUiTheme,
+  setUiScale,
   setWorkspaceFilter,
   getRemoteAccessConfig,
   setRemoteAccessConfig,
@@ -439,6 +442,25 @@ export function registerIpc(opts: {
     async (_evt, fontSize: unknown): Promise<number> => {
       try {
         return await setFontSize(normalizeFontSize(fontSize));
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("settings:getUiScale", async (): Promise<number> => {
+    try {
+      return await getUiScale();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "settings:setUiScale",
+    async (_evt, uiScale: unknown): Promise<number> => {
+      try {
+        return await setUiScale(normalizeUiScale(uiScale));
       } catch (err) {
         rethrowIpc(err);
       }

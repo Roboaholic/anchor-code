@@ -30,9 +30,9 @@ function installAnchor(pickFolder?: ReturnType<typeof vi.fn>): AnchorMock {
         { id: "wsl-default", kind: "wsl" as const, label: "WSL" },
       ]),
       listWslDistros: vi.fn(async () => ["Ubuntu-24.04"]),
-      wslHome: vi.fn(async () => "/home/miles"),
+      wslHome: vi.fn(async () => "/home/tester"),
       browseListDir: vi.fn(async (args: { path: string }) => {
-        if (args.path === "/home/miles") {
+        if (args.path === "/home/tester") {
           return [
             { name: "repo-a", type: "dir" as const },
             { name: "repo-b", type: "dir" as const },
@@ -40,11 +40,11 @@ function installAnchor(pickFolder?: ReturnType<typeof vi.fn>): AnchorMock {
             { name: ".config", type: "dir" as const },
           ];
         }
-        if (args.path === "/home/miles/repo-a") {
+        if (args.path === "/home/tester/repo-a") {
           return [{ name: "src", type: "dir" as const }];
         }
         if (args.path === "/home") {
-          return [{ name: "miles", type: "dir" as const }];
+          return [{ name: "tester", type: "dir" as const }];
         }
         return [];
       }),
@@ -119,7 +119,7 @@ describe("OpenWorkspaceDialog", () => {
       expect(screen.queryByText(".config")).toBeNull();
       expect(
         document.querySelector(".wsl-browser__path")?.textContent,
-      ).toBe("/home/miles");
+      ).toBe("/home/tester");
     });
 
     it("enters a folder on click and can go up", async () => {
@@ -132,7 +132,7 @@ describe("OpenWorkspaceDialog", () => {
       await user.click(screen.getByText("repo-a"));
       await waitFor(() => {
         expect(anchor.host.browseListDir).toHaveBeenCalledWith(
-          expect.objectContaining({ path: "/home/miles/repo-a" }),
+          expect.objectContaining({ path: "/home/tester/repo-a" }),
         );
       });
       await waitFor(() => expect(screen.getByText("src")).toBeTruthy());
@@ -140,7 +140,7 @@ describe("OpenWorkspaceDialog", () => {
       await user.click(screen.getByRole("button", { name: /up/i }));
       await waitFor(() => {
         expect(anchor.host.browseListDir).toHaveBeenCalledWith(
-          expect.objectContaining({ path: "/home/miles" }),
+          expect.objectContaining({ path: "/home/tester" }),
         );
       });
     });
@@ -161,7 +161,7 @@ describe("OpenWorkspaceDialog", () => {
       await waitFor(() => {
         expect(anchor.host.useProfile).toHaveBeenCalledWith("wsl-default");
         expect(onOpen).toHaveBeenCalledWith({
-          path: "/home/miles",
+          path: "/home/tester",
           hostProfileId: "wsl-default",
           hostKind: "wsl",
         });
@@ -173,7 +173,7 @@ describe("OpenWorkspaceDialog", () => {
       const user = userEvent.setup();
       const onOpen = vi.fn();
       const onClose = vi.fn();
-      anchor.workspace.pickFolder = vi.fn(async () => "C:\\Users\\miles\\proj");
+      anchor.workspace.pickFolder = vi.fn(async () => "C:\\Users\\tester\\proj");
       render(
         <OpenWorkspaceDialog open onClose={onClose} onOpen={onOpen} />,
       );
@@ -194,7 +194,7 @@ describe("OpenWorkspaceDialog", () => {
         expect(anchor.host.useProfile).toHaveBeenCalledWith("local-default");
         expect(anchor.workspace.pickFolder).toHaveBeenCalled();
         expect(onOpen).toHaveBeenCalledWith({
-          path: "C:\\Users\\miles\\proj",
+          path: "C:\\Users\\tester\\proj",
           hostProfileId: "local-default",
           hostKind: "local",
         });

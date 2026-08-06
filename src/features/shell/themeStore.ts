@@ -3,14 +3,17 @@ import {
   applyDocumentTheme,
   cacheThemeLocally,
   DEFAULT_FONT_SIZE,
+  DEFAULT_UI_SCALE,
   normalizeFontSize,
   normalizeTheme,
+  normalizeUiScale,
   resolveInitialTheme,
   type UiTheme,
 } from "@/core/theme/theme";
 import type { SessionTabLayout } from "@/shared/anchor-api";
 
 const FONT_SIZE_STORAGE_KEY = "anchor.fontSize";
+const UI_SCALE_STORAGE_KEY = "anchor.uiScale";
 
 function normalizeLayout(value: unknown): SessionTabLayout {
   return value === "top" ? "top" : "side";
@@ -56,6 +59,22 @@ function applyDocumentFontSize(fontSize: number): void {
   );
 }
 
+function readCachedUiScale(): number {
+  try {
+    return normalizeUiScale(localStorage.getItem(UI_SCALE_STORAGE_KEY));
+  } catch {
+    return DEFAULT_UI_SCALE;
+  }
+}
+
+function cacheUiScaleLocally(uiScale: number): void {
+  try {
+    localStorage.setItem(UI_SCALE_STORAGE_KEY, String(normalizeUiScale(uiScale)));
+  } catch {
+    // ignore
+  }
+}
+
 export type SettingsFocusSection =
   | "appearance"
   | "remote"
@@ -68,6 +87,8 @@ export interface ThemeState {
   sessionTabLayout: SessionTabLayout;
   /** Editor / Markdown / terminal reading font size in px. */
   fontSize: number;
+  /** Whole-workbench zoom percentage. */
+  uiScale: number;
   ready: boolean;
   settingsOpen: boolean;
   /** When set, SettingsPanel selects this section on open. */
@@ -78,6 +99,8 @@ export interface ThemeState {
   applyTheme: (theme: UiTheme) => void;
   /** Apply font size locally (DOM + store). Does not persist. */
   applyFontSize: (fontSize: number) => void;
+  /** Apply UI scale to store/cache. Electron applies the zoom in preload. */
+  applyUiScale: (uiScale: number) => void;
   /** Load from main process settings (falls back to local cache). */
   hydrate: () => Promise<void>;
   /** Persist theme via settings IPC and apply. */
@@ -86,12 +109,15 @@ export interface ThemeState {
   setSessionTabLayout: (layout: SessionTabLayout) => Promise<void>;
   /** Persist font size via settings IPC and apply. */
   setFontSize: (fontSize: number) => Promise<void>;
+  /** Persist whole-workbench zoom and apply. */
+  setUiScale: (uiScale: number) => Promise<void>;
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: resolveInitialTheme(),
   sessionTabLayout: readCachedLayout(),
   fontSize: readCachedFontSize(),
+  uiScale: readCachedUiScale(),
   ready: false,
   settingsOpen: false,
   settingsFocusSection: null,
@@ -117,6 +143,11 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     applyDocumentFontSize(next);
     cacheFontSizeLocally(next);
     set({ fontSize: next });
+  },
+  applyUiScale: (uiScale) => {
+    const next = normalizeUiScale(uiScale);
+    cacheUiScaleLocally(next);
+    set({ uiScale: next });
   },
   hydrate: async () => {
     // Paint cached theme/font immediately to avoid flash.
@@ -151,6 +182,15 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       }
     } catch {
       // keep local
+    }
+    try {
+      const scale = await window.anchor?.settings?.getUiScale?.();
+      if (typeof scale === "number") {
+        get().applyUiScale(scale);
+      }
+    } catch {
+      // Apply the cached value when the persisted setting is unavailable.
+      void window.anchor?.settings?.setUiScale?.(get().uiScale);
     } finally {
       set({ ready: true });
     }
@@ -193,6 +233,18 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       const saved = await window.anchor?.settings?.setFontSize?.(next);
       if (typeof saved === "number") {
         get().applyFontSize(saved);
+      }
+    } catch {
+      // local already applied
+    }
+  },
+  setUiScale: async (uiScale) => {
+    const next = normalizeUiScale(uiScale);
+    get().applyUiScale(next);
+    try {
+      const saved = await window.anchor?.settings?.setUiScale?.(next);
+      if (typeof saved === "number") {
+        get().applyUiScale(saved);
       }
     } catch {
       // local already applied

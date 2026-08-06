@@ -148,8 +148,8 @@ describe("rgPath", () => {
   });
 
   it("maps Windows paths to WSL /mnt form", () => {
-    expect(windowsPathToWsl("C:\\Users\\miles\\rg")).toBe(
-      "/mnt/c/Users/miles/rg",
+    expect(windowsPathToWsl("C:\\Users\\tester\\rg")).toBe(
+      "/mnt/c/Users/tester/rg",
     );
     expect(windowsPathToWsl("D:/foo/bar")).toBe("/mnt/d/foo/bar");
   });

@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   bareModelId,
   buildAgentLaunchArgs,
-  enrichModelsWithOmpThinking,
+  buildAgentResumeArgs,
   dedupeOmpModelsByLabel,
+  enrichModelsWithOmpThinking,
   parseCodexConfigToml,
   parseCodexModelsCache,
   parseGrokConfigModels,
@@ -274,6 +275,20 @@ describe("buildAgentLaunchArgs", () => {
       "--thinking=high",
       "refactor auth",
     ]);
+  });
+});
+
+describe("buildAgentResumeArgs", () => {
+  it("uses each supported CLI's exact session selector", () => {
+    const id = "session-123";
+    expect(buildAgentResumeArgs("codex", id)).toEqual(["resume", id]);
+    expect(buildAgentResumeArgs("claude", id)).toEqual(["--resume", id]);
+    expect(buildAgentResumeArgs("grok", id)).toEqual(["--session", id]);
+    expect(buildAgentResumeArgs("omp", id)).toEqual([`--resume=${id}`]);
+    expect(buildAgentResumeArgs("cursor-agent", id)).toEqual(["--resume", id]);
+    expect(buildAgentResumeArgs("gemini", id)).toEqual(["--resume", id]);
+    expect(buildAgentResumeArgs("custom", id)).toBeNull();
+    expect(buildAgentResumeArgs("codex", "")).toBeNull();
   });
 });
 

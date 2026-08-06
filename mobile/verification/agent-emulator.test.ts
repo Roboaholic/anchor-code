@@ -10,13 +10,13 @@ import { LocalHostSession } from "../../electron/host/localHost.js";
 import type { AnchorApplication } from "../../electron/application/anchorApplication.js";
 import type { PtyHandle } from "../../electron/host/types.js";
 
-const adb = process.env.ANDROID_ADB || "/home/zhenyu/env/android-sdk/platform-tools/adb";
+const adb = process.env.ANDROID_ADB || "adb";
 const serial = process.env.ANDROID_EMULATOR_SERIAL || "emulator-5554";
 const apk = process.env.ANCHOR_APK || "mobile/android/app/build/outputs/apk/debug/app-debug.apk";
 const relayUrl = process.env.ANCHOR_RELAY_URL || "https://anchor-code-relay.anchor-code-mobile.workers.dev";
 const packageName = "com.roboaholic.anchormobile";
 const screenshot = process.env.ANCHOR_AGENT_SCREENSHOT || "/tmp/anchor-mobile-agent-emulator.png";
-const workspaceRoot = "/home/zhenyu/workspace/anchor-code";
+const workspaceRoot = process.env.ANCHOR_WORKSPACE_ROOT || "/home/tester/example-workspace";
 const realAgentCommand = process.env.ANCHOR_REAL_AGENT_COMMAND?.trim() || "";
 const disableTerminalEvents = process.env.ANCHOR_DISABLE_TERMINAL_EVENTS === "1";
 

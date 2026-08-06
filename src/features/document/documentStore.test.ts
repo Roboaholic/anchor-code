@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useDocumentStore } from "./documentStore";
+import {
+  restoreWorkspaceDocuments,
+  saveWorkspaceDocuments,
+  useDocumentStore,
+} from "./documentStore";
 
 function mockReadText(pathToText: Record<string, string>) {
   const anchor = {
@@ -137,3 +141,35 @@ describe("documentStore tab close helpers", () => {
   });
 });
 
+describe("workspace document persistence", () => {
+  it("restores tab order, markdown mode, and active tab", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    mockReadText({ "/proj/a.md": "# A", "/proj/b.ts": "b" });
+    useDocumentStore.setState({
+      openItems: [{ id: "welcome", kind: "welcome", title: "Welcome" }],
+      activeId: "welcome",
+    });
+    await useDocumentStore.getState().openFile({ path: "/proj/a.md", workspaceRoot: "/proj" });
+    useDocumentStore.getState().setMdViewMode("file:/proj/a.md", "raw");
+    await useDocumentStore.getState().openFile({ path: "/proj/b.ts", workspaceRoot: "/proj" });
+    useDocumentStore.getState().setActive("file:/proj/a.md");
+    saveWorkspaceDocuments("/proj", "local-default");
+
+    useDocumentStore.getState().closeAllItems();
+    await restoreWorkspaceDocuments("/proj", "local-default");
+
+    const restored = useDocumentStore.getState();
+    expect(restored.openItems.map((item) => item.id)).toEqual([
+      "welcome",
+      "file:/proj/a.md",
+      "file:/proj/b.ts",
+    ]);
+    expect(restored.activeId).toBe("file:/proj/a.md");
+    expect(restored.openItems[1]).toMatchObject({ mdViewMode: "raw" });
+    vi.unstubAllGlobals();
+  });
+});

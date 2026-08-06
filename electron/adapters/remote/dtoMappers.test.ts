@@ -14,6 +14,7 @@ describe("remote DTO mappers", () => {
       status: "running",
       kind: "agent",
       agentId: "codex",
+      agentSessionId: "session-1",
       internalHandle: "must-not-leak",
     })).toEqual({
       id: "t1",
@@ -22,6 +23,7 @@ describe("remote DTO mappers", () => {
       status: "running",
       kind: "agent",
       agentId: "codex",
+      agentSessionId: "session-1",
     });
   });
 

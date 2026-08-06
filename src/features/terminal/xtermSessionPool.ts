@@ -280,26 +280,9 @@ export function acquireXtermSession(
       return true;
     }
     if (key === "v") {
-      // Agent CLIs (omp, Claude Code, …) read the system clipboard themselves
-      // — including images — when they receive the raw Ctrl+V keystroke.
-      // Intercepting it here to paste text as we do for shells breaks image
-      // paste and fights the agent's own clipboard handling. Let it through.
-      if (kind === "agent") return true;
-      e.preventDefault();
-      void (async () => {
-        let text = "";
-        try {
-          text = await window.anchor.clipboard.readText();
-        } catch {
-          try {
-            text = await navigator.clipboard.readText();
-          } catch {
-            text = "";
-          }
-        }
-        if (text) useTerminalStore.getState().write(id, text);
-      })();
-      return false;
+      // Let xterm handle the native paste event. This keeps clipboard data in
+      // the renderer's paste path instead of adding an async clipboard IPC hop.
+      return true;
     }
     return true;
   });

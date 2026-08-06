@@ -36,11 +36,19 @@ export function buildWslAgentShellArgs(
   args: string[],
   env?: Record<string, string>,
 ): string[] {
+  const scriptPath = `/tmp/anchor-agent-${randomUUID()}.sh`;
   const exports = posixExportEnv(env);
-  const body = exports ? `${exports}; exec "$@"` : `exec "$@"`;
-  // Keep user prompts out of the shell program. bash receives every command
-  // argument positionally, so newlines and shell syntax remain literal data.
-  return ["--", "bash", "-lic", body, "anchor-agent", command, ...args];
+  const commandLine = posixShellCommand(command, args);
+  const script = [
+    exports,
+    `rm -f ${shellSingleQuote(scriptPath)}`,
+    `exec ${commandLine}`,
+  ].filter(Boolean).join("; ");
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  const bootstrap = `printf '%s' '${encoded}' | base64 -d > ${shellSingleQuote(scriptPath)}; exec bash ${shellSingleQuote(scriptPath)}`;
+  // wsl.exe applies an extra parse to bash -c text and consumes `$...` syntax.
+  // Decode the final argv script into WSL first, then execute it with the PTY.
+  return ["--", "bash", "-lic", bootstrap];
 }
 
 export class WslHostSession implements HostSession {

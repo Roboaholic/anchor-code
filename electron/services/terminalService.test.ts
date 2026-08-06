@@ -67,17 +67,17 @@ describe("formatAgentSessionTitle", () => {
 
 describe("titleFromCwd / normalizeDynamicTitle", () => {
   it("uses directory basename for shell titles", () => {
-    expect(titleFromCwd("wsl", "/home/miles/pyoneer04")).toBe("pyoneer04");
-    expect(titleFromCwd("wsl", "/home/miles/pyoneer04/")).toBe("pyoneer04");
-    expect(titleFromCwd("local", "C:\\\\Users\\\\miles\\\\repo")).toBe("repo");
+    expect(titleFromCwd("wsl", "/home/tester/sample-project")).toBe("sample-project");
+    expect(titleFromCwd("wsl", "/home/tester/sample-project/")).toBe("sample-project");
+    expect(titleFromCwd("local", "C:\\\\Users\\\\tester\\\\repo")).toBe("repo");
     expect(titleFromCwd("wsl", "/")).toBe("/");
   });
 
   it("normalizes OSC-style titles to basename", () => {
-    expect(normalizeDynamicTitle("miles@host:~/pyoneer04", "x")).toBe(
-      "pyoneer04",
+    expect(normalizeDynamicTitle("tester@host:~/sample-project", "x")).toBe(
+      "sample-project",
     );
-    expect(normalizeDynamicTitle("/home/miles/proj/src", "x")).toBe("src");
+    expect(normalizeDynamicTitle("/home/tester/proj/src", "x")).toBe("src");
     expect(normalizeDynamicTitle("user@host: /tmp/foo", "x")).toBe("foo");
     expect(normalizeDynamicTitle("", "keep")).toBe("keep");
   });
@@ -100,7 +100,7 @@ describe("normalizeAgentTopic / extractFirstAgentUserPrompt", () => {
 
   it("rejects usernames paths numbers and host chrome as topics", () => {
     expect(
-      normalizeAgentTopic("miles", { title: "Codex", agentId: "codex" }),
+      normalizeAgentTopic("user", { title: "Codex", agentId: "codex" }),
     ).toBeNull();
     expect(
       normalizeAgentTopic("1", { title: "Codex", agentId: "codex" }),
@@ -109,7 +109,7 @@ describe("normalizeAgentTopic / extractFirstAgentUserPrompt", () => {
       normalizeAgentTopic("4;0m>7u", { title: "Codex", agentId: "codex" }),
     ).toBeNull();
     expect(
-      normalizeAgentTopic("miles@host:~/pyoneer04", {
+      normalizeAgentTopic("tester@host:~/sample-project", {
         title: "Codex",
         agentId: "codex",
       }),
@@ -129,9 +129,9 @@ describe("normalizeAgentTopic / extractFirstAgentUserPrompt", () => {
     const sample = [
       "OpenAI Codex (v0.145.0)",
       "model:    gpt-5.6",
-      "directory: ~/pyoneer04",
+      "directory: ~/sample-project",
       "Tip: New Build faster with Codex.",
-      "miles@host:/home/miles/pyoneer04",
+      "tester@host:/home/tester/sample-project",
       "1",
       "› 你好",
       "• 你好。你现在想处理代码开发…",
@@ -149,7 +149,7 @@ describe("normalizeAgentTopic / extractFirstAgentUserPrompt", () => {
 
   it("prefers 你好 over earlier junk lines in mixed output", () => {
     const sample =
-      "directory: ~/pyoneer04\n› 1\n• spinner\n› 你好\n• 你好！很高兴见到你。";
+      "directory: ~/sample-project\n› 1\n• spinner\n› 你好\n• 你好！很高兴见到你。";
     expect(extractFirstAgentUserPrompt(sample)).toBe("你好");
   });
 });
@@ -175,11 +175,11 @@ describe("summarizeTopicLocal", () => {
 
   it("compresses @paths and long blobs", () => {
     const t = summarizeTopicLocal(
-      "请帮我根据 @/home/miles/pyoneer06/operator/service.ts 修复删除光标的问题，并补充单测和回归用例，注意边界条件。",
+      "请帮我根据 @/home/tester/example-monorepo/services/example.ts 修复删除光标的问题，并补充单测和回归用例，注意边界条件。",
     );
     expect(t).toBeTruthy();
     expect(t!.length).toBeLessThanOrEqual(24);
-    expect(t).toContain("@service.ts");
+    expect(t).toContain("@example.ts");
   });
 });
 

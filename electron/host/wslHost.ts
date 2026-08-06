@@ -36,10 +36,11 @@ export function buildWslAgentShellArgs(
   args: string[],
   env?: Record<string, string>,
 ): string[] {
-  const cmdline = posixShellCommand(command, args);
   const exports = posixExportEnv(env);
-  const body = exports ? `${exports}; exec ${cmdline}` : `exec ${cmdline}`;
-  return ["--", "bash", "-lic", body];
+  const body = exports ? `${exports}; exec "$@"` : `exec "$@"`;
+  // Keep user prompts out of the shell program. bash receives every command
+  // argument positionally, so newlines and shell syntax remain literal data.
+  return ["--", "bash", "-lic", body, "anchor-agent", command, ...args];
 }
 
 export class WslHostSession implements HostSession {

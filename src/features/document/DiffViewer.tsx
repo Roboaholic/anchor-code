@@ -329,19 +329,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         });
     }
 
-    // Native Windows process startup is relatively expensive. Warm only the
-    // next file so speculative git reads cannot delay the active request.
-    const idx = item.files.findIndex((f) => f.path === activePath);
-    const next = item.files[idx + 1];
-    if (next) {
-      prefetchFileDiff({
-        repoRoot: item.repoRoot,
-        base: item.base,
-        head: item.head,
-        path: next.path,
-        status: next.status,
-      });
-    }
 
     return () => {
       cancelled = true;
@@ -354,6 +341,18 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     item.head,
     item.files,
   ]);
+
+  useEffect(() => {
+    for (const file of item.files) {
+      prefetchFileDiff({
+        repoRoot: item.repoRoot,
+        base: item.base,
+        head: item.head,
+        path: file.path,
+        status: file.status,
+      });
+    }
+  }, [item.repoRoot, item.base, item.head, item.files]);
 
   // Sessions are anchored to the workspace root (cross-repo comments), so ensure
   // they are loaded when opening a compare (reopen must repaint anchors from

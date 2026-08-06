@@ -25,6 +25,7 @@ export class ReviewFacade {
     private readonly hosts: HostManager,
     private readonly workspace: WorkspaceFacade,
   ) {}
+  private readonly approvedRepoCache = new Set<string>();
 
   async listFiles(path?: string | null) {
     const safePath = this.workspace.safePath(path);
@@ -126,19 +127,26 @@ export class ReviewFacade {
 
   private async approvedRepoRoots(inputs: string[]): Promise<string[]> {
     const candidates = inputs.map((input) => this.workspace.safePath(input));
-    const repos = await discoverRepos(this.hosts.session, this.workspace.root());
-    const approvedRoots = new Set(
-      repos.map((repo) => this.pathKey(repo.root)),
-    );
-    for (const candidate of candidates) {
-      if (!approvedRoots.has(this.pathKey(candidate))) {
-        throw new HostError(
-          "permission",
-          "Repository is not an approved Git repository in the active workspace",
-        );
-      }
-    }
+    await Promise.all(candidates.map((candidate) => this.approveRepoRoot(candidate)));
     return candidates;
+  }
+
+  private async approveRepoRoot(candidate: string): Promise<void> {
+    const cacheKey = `${this.hosts.session.id}\0${this.pathKey(this.workspace.root())}\0${this.pathKey(candidate)}`;
+    if (this.approvedRepoCache.has(cacheKey)) return;
+
+    const result = await this.hosts.session.run(candidate, "git", [
+      "rev-parse",
+      "--show-toplevel",
+    ], { timeoutMs: 10_000 });
+    const actualRoot = result.stdout.trim();
+    if (result.code !== 0 || !actualRoot || this.pathKey(actualRoot) !== this.pathKey(candidate)) {
+      throw new HostError(
+        "permission",
+        "Repository is not an approved Git repository in the active workspace",
+      );
+    }
+    this.approvedRepoCache.add(cacheKey);
   }
 
   private pathKey(input: string): string {

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { HostManager } from "../host/hostManager.js";
 import type { TerminalService } from "../services/terminalService.js";
 import { WorkspaceFacade } from "./workspaceFacade.js";
 
 describe("WorkspaceFacade", () => {
   it("publishes workspace changes with the caller source", async () => {
+    const workspacePath = path.resolve("/workspace");
     const host = {
       kind: "local" as const,
       profileId: "local-default",
@@ -31,7 +33,7 @@ describe("WorkspaceFacade", () => {
 
     await facade.open({ path: "/workspace", hostProfileId: "local-default" });
     expect(onChanged).toHaveBeenLastCalledWith(
-      expect.objectContaining({ path: "/workspace" }),
+      expect.objectContaining({ path: workspacePath }),
       "desktop",
     );
 
@@ -40,7 +42,7 @@ describe("WorkspaceFacade", () => {
       { source: "remote" },
     );
     expect(onChanged).toHaveBeenLastCalledWith(
-      expect.objectContaining({ path: "/workspace" }),
+      expect.objectContaining({ path: workspacePath }),
       "remote",
     );
   });

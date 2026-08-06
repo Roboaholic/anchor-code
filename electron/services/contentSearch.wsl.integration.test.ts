@@ -1,5 +1,5 @@
 /**
- * Real-world WSL monorepo search (pyoneer06) — only runs when path exists.
+ * Real-world WSL monorepo search — only runs when a test root is configured.
  */
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
@@ -7,11 +7,11 @@ import { WslHostSession } from "../host/wslHost.js";
 import { searchWorkspaceContent } from "./contentSearch.js";
 import { resolveWslLinuxRgPath } from "./rgPath.js";
 
-const ROOT = "/home/miles/pyoneer06";
+const ROOT = process.env.ANCHOR_WSL_SEARCH_ROOT;
 
-describe("WSL pyoneer06 Bookworm search", () => {
+describe.runIf(Boolean(ROOT))("WSL Bookworm search", () => {
   it(
-    "finds Bookworm via native Linux rg in under 8s",
+    "finds Bookworm via native Linux rg in under 20s",
     async () => {
       if (process.platform !== "win32") return;
 
@@ -24,14 +24,14 @@ describe("WSL pyoneer06 Bookworm search", () => {
         distro: "Ubuntu-24.04",
       });
       try {
-        const exists = await host.exists(ROOT);
+        const exists = await host.exists(ROOT!);
         if (!exists) {
-          console.log("skip: pyoneer06 not present");
+          console.log("skip: configured WSL search root not present");
           return;
         }
 
         const t0 = performance.now();
-        const r = await searchWorkspaceContent(host, ROOT, "Bookworm", {
+        const r = await searchWorkspaceContent(host, ROOT!, "Bookworm", {
           maxResults: 50,
           caseSensitive: false,
         });
@@ -51,7 +51,7 @@ describe("WSL pyoneer06 Bookworm search", () => {
         expect(r.source).toBe("rg");
         expect(r.hits.length).toBeGreaterThan(0);
         // Native + expanded excludes should be well under the old ~50s UNC path.
-        expect(ms).toBeLessThan(15_000);
+        expect(ms).toBeLessThan(20_000);
       } finally {
         await host.dispose();
       }

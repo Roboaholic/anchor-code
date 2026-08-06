@@ -3,9 +3,9 @@ import { WslHostSession } from "../host/wslHost.js";
 import { discoverRepos, loadRepoStatus } from "./historyService.js";
 
 const isWin = process.platform === "win32";
-const smokeRoot = process.env.ANCHOR_WSL_SMOKE_ROOT || "/home/miles/pyoneer06";
+const smokeRoot = process.env.ANCHOR_WSL_SMOKE_ROOT;
 
-describe.runIf(isWin)("WSL history + pty smoke", () => {
+describe.runIf(isWin && Boolean(smokeRoot))("WSL history + pty smoke", () => {
   let host: WslHostSession | null = null;
 
   afterAll(async () => {
@@ -20,7 +20,7 @@ describe.runIf(isWin)("WSL history + pty smoke", () => {
         distro: "Ubuntu-24.04",
       });
       const t0 = Date.now();
-      const repos = await discoverRepos(host, smokeRoot);
+      const repos = await discoverRepos(host, smokeRoot!);
       const discoverMs = Date.now() - t0;
       console.log(
         "discover",
@@ -58,7 +58,7 @@ describe.runIf(isWin)("WSL history + pty smoke", () => {
           profileId: "wsl-smoke",
           distro: "Ubuntu-24.04",
         });
-      const pty = await host.openPty(smokeRoot, 80, 24);
+      const pty = await host.openPty(smokeRoot!, 80, 24);
       expect(pty.id).toBeTruthy();
       let data = "";
       pty.onData((d) => {

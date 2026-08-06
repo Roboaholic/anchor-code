@@ -13,13 +13,13 @@ describe("parentPosix", () => {
   });
 
   it("returns parent for nested paths", () => {
-    expect(parentPosix("/home/miles")).toBe("/home");
-    expect(parentPosix("/home/miles/repo")).toBe("/home/miles");
+    expect(parentPosix("/home/tester")).toBe("/home");
+    expect(parentPosix("/home/tester/repo")).toBe("/home/tester");
     expect(parentPosix("/home")).toBe("/");
   });
 
   it("strips trailing slashes", () => {
-    expect(parentPosix("/home/miles/")).toBe("/home");
+    expect(parentPosix("/home/tester/")).toBe("/home");
   });
 });
 
@@ -29,8 +29,8 @@ describe("joinPosix", () => {
   });
 
   it("joins nested", () => {
-    expect(joinPosix("/home/miles", "repo")).toBe("/home/miles/repo");
-    expect(joinPosix("/home/miles/", "repo")).toBe("/home/miles/repo");
+    expect(joinPosix("/home/tester", "repo")).toBe("/home/tester/repo");
+    expect(joinPosix("/home/tester/", "repo")).toBe("/home/tester/repo");
   });
 });
 

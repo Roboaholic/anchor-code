@@ -31,9 +31,9 @@ describe("host paths", () => {
   });
 
   it("does not windows-resolve wsl absolute paths", () => {
-    const n = hostNormalize("wsl", "/home/miles/anchor-code");
+    const n = hostNormalize("wsl", "/home/tester/example-project");
     expect(n.startsWith("/")).toBe(true);
-    expect(n).toContain("anchor-code");
+    expect(n).toContain("example-project");
     // Must not become a Windows drive path
     expect(/^[A-Za-z]:/.test(n)).toBe(false);
   });

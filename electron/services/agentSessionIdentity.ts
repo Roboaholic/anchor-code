@@ -19,6 +19,18 @@ export function sessionIdPattern(profileId: string): RegExp | null {
   }
 }
 
+const UUID_PATTERN = new RegExp(UUID, "gi");
+
+export function sessionIdsFromPaths(text: string): Set<string> {
+  return new Set(text.match(UUID_PATTERN)?.map((id) => id.toLowerCase()) ?? []);
+}
+
+export interface AgentSessionSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 function sessionRoot(home: string, profileId: string): string | null {
   const root = home.replace(/[\\/]+$/, "");
   switch (profileId.trim().toLowerCase()) {
@@ -93,6 +105,117 @@ export function parseAgentSessionTitle(profileId: string, text: string): string 
   return fallback;
 }
 
+export function parseAgentSessionList(
+  profileId: string,
+  text: string,
+): AgentSessionSummary[] {
+  const pattern = sessionIdPattern(profileId);
+  const sessions: AgentSessionSummary[] = [];
+  for (const chunk of text.split("\x1e").slice(1)) {
+    const end = chunk.indexOf("\x1f");
+    const record = end >= 0 ? chunk.slice(0, end) : chunk;
+    const newline = record.indexOf("\n");
+    if (newline < 0) continue;
+    const header = record.slice(0, newline).replace(/\r$/, "");
+    const tab = header.indexOf("\t");
+    if (tab < 0) continue;
+    const modifiedSeconds = Number(header.slice(0, tab));
+    const filePath = header.slice(tab + 1);
+    const transcript = record.slice(newline + 1);
+    const pathId = filePath.match(UUID_PATTERN)?.[0];
+    const contentId = pattern ? [...transcript.matchAll(pattern)][0]?.[1] : undefined;
+    const id = (pathId ?? contentId)?.toLowerCase();
+    if (!id) continue;
+    sessions.push({
+      id,
+      title: parseAgentSessionTitle(profileId, transcript) ?? `Session ${id.slice(0, 8)}`,
+      updatedAt: Number.isFinite(modifiedSeconds)
+        ? new Date(modifiedSeconds * 1_000).toISOString()
+        : new Date(0).toISOString(),
+    });
+  }
+  return sessions;
+}
+
+function sessionSegments(profileId: string): string | null {
+  switch (profileId.trim().toLowerCase()) {
+    case "omp": return ".omp/agent/sessions";
+    case "codex": return ".codex/sessions";
+    case "claude": return ".claude/projects";
+    case "gemini": return ".gemini/tmp";
+    default: return null;
+  }
+}
+
+async function runRecentSessionScanFromHome(
+  host: HostSession,
+  profileId: string,
+  limit: number,
+): Promise<string> {
+  const segment = sessionSegments(profileId);
+  if (!segment) return "";
+  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const root = `"$HOME/${segment}"`;
+  const script = `root=${root}; if [ -d "$root" ]; then find "$root" -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${limit} | while IFS="$(printf '\\t')" read -r mtime file; do printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; done; fi`;
+  return (await host.run(cwd, "bash", ["-s"], {
+    stdin: script,
+    timeoutMs: 8_000,
+  })).stdout;
+}
+
+async function runRecentSessionScan(
+  host: HostSession,
+  root: string,
+  limit: number,
+): Promise<string> {
+  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  if (host.kind === "local" && process.platform === "win32") {
+    const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
+    const command = [
+      `$root=${rootArg}`,
+      `if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ${limit} | ForEach-Object { [Console]::Out.Write([char]30 + ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds().ToString() + [char]9 + $_.FullName + [char]10); Get-Content -LiteralPath $_.FullName -TotalCount 128; [Console]::Out.Write([char]31 + [char]10) } }`,
+    ].join("; ");
+    return (await host.run(cwd, "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { timeoutMs: 8_000 })).stdout;
+  }
+  const rootArg = shellQuote(root);
+  const script = `if [ -d ${rootArg} ]; then find ${rootArg} -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${limit} | while IFS="$(printf '\\t')" read -r mtime file; do printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; done; fi`;
+  if (host.kind === "wsl" || host.kind === "ssh") {
+    return (await host.run(cwd, "bash", ["-s"], { stdin: script, timeoutMs: 8_000 })).stdout;
+  }
+  return (await host.run(cwd, "sh", ["-lc", script], { timeoutMs: 8_000 })).stdout;
+}
+
+export async function listAgentSessions(
+  host: HostSession,
+  profileId: string,
+  limit = 12,
+): Promise<AgentSessionSummary[]> {
+  if (!sessionIdPattern(profileId)) return [];
+  const count = Math.min(30, Math.max(1, limit));
+  const text = host.kind === "wsl" || host.kind === "ssh"
+    ? await runRecentSessionScanFromHome(host, profileId, count)
+    : await (async () => {
+        const home = await resolveHostHome(host);
+        const root = sessionRoot(home, profileId);
+        return root ? runRecentSessionScan(host, root, count) : "";
+      })();
+  return parseAgentSessionList(profileId, text);
+}
+
+async function runSessionPathScan(host: HostSession, root: string): Promise<string> {
+  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  if (host.kind === "local" && process.platform === "win32") {
+    const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
+    const command = `$root=${rootArg}; if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } }`;
+    return (await host.run(cwd, "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { timeoutMs: 8_000 })).stdout;
+  }
+  const script = `if [ -d ${shellQuote(root)} ]; then find ${shellQuote(root)} -type f -name '*.jsonl' -print 2>/dev/null; fi`;
+  if (host.kind === "wsl" || host.kind === "ssh") {
+    return (await host.run(cwd, "bash", ["-s"], { stdin: script, timeoutMs: 8_000 })).stdout;
+  }
+  return (await host.run(cwd, "sh", ["-lc", script], { timeoutMs: 8_000 })).stdout;
+}
+
 async function runSessionScan(host: HostSession, root: string, sessionId?: string): Promise<string> {
   const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
   if (host.kind === "local" && process.platform === "win32") {
@@ -128,12 +251,16 @@ async function grokSessionIds(host: HostSession): Promise<Set<string>> {
 }
 
 export async function listAgentSessionIds(host: HostSession, profileId: string): Promise<Set<string>> {
-  if (profileId.trim().toLowerCase() === "grok") return grokSessionIds(host);
+  const id = profileId.trim().toLowerCase();
+  if (id === "grok") return grokSessionIds(host);
   const pattern = sessionIdPattern(profileId);
   if (!pattern) return new Set();
   const home = await resolveHostHome(host);
   const root = sessionRoot(home, profileId);
   if (!root) return new Set();
+  if (id === "omp") {
+    return sessionIdsFromPaths(await runSessionPathScan(host, root));
+  }
   const ids = new Set<string>();
   for (const match of (await runSessionScan(host, root)).matchAll(pattern)) {
     if (match[1]) ids.add(match[1]);

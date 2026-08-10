@@ -35,11 +35,11 @@ export function NewAgentDialogHost() {
 
   const onOpen = useCallback(
     async (p: AgentCliProfile, launch: AgentLaunchOptions) => {
-      await createAgentTab(p, launch);
-      // Open the agent side rail only after a session actually exists.
-      if (hasAgentSessions()) {
+      const created = await createAgentTab(p, launch);
+      if (created && hasAgentSessions()) {
         useShellStore.getState().setAgentVisible(true);
       }
+      return created;
     },
     [createAgentTab],
   );
@@ -59,9 +59,7 @@ export function NewAgentDialogHost() {
       profiles={agentProfiles}
       defaultAgentId={defaultAgentId}
       intent={agentMenuIntent}
-      onOpen={(p, launch) => {
-        void onOpen(p, launch);
-      }}
+      onOpen={onOpen}
       onDetect={() => void detectAgents()}
       onClose={onClose}
     />

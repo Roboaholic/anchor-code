@@ -5942,7 +5942,7 @@ select.field__input {
 /* ── New agent session modal ───────────────────────── */
 
 .modal--agent-new {
-  width: min(480px, calc(100vw - 32px));
+  width: min(680px, calc(100vw - 32px));
   gap: 16px;
   padding: 16px 18px 18px;
 }
@@ -6015,6 +6015,108 @@ select.field__input {
   font: inherit;
   font-size: 12.5px;
   padding: 0 8px;
+}
+
+.agent-new__resume {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+
+.agent-new__resume-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 18px;
+  font-size: 11.5px;
+}
+
+.agent-new__resume-list {
+  display: flex;
+  flex-direction: column;
+  height: min(294px, 42vh);
+  min-height: 168px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.agent-new__resume-loading {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.agent-new__resume-placeholder {
+  height: 42px;
+  flex: 0 0 42px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--text-muted) 7%, transparent) 45%,
+    transparent 90%
+  );
+}
+
+.agent-new__resume-placeholder:last-child {
+  border-bottom: 0;
+}
+
+.agent-new__resume-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-new__resume-item:last-child {
+  border-bottom: 0;
+}
+
+.agent-new__resume-item:hover,
+.agent-new__resume-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.agent-new__resume-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.agent-new__resume-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.agent-new__resume-time {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-new__resume-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 12px;
 }
 
 .agent-new__meta {

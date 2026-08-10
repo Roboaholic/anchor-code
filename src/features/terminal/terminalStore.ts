@@ -201,6 +201,7 @@ export type AgentLaunchOptions = {
   title?: string;
   /** Hidden CLI first-message; preferred over title for agent launch args. */
   prompt?: string;
+  resumeSessionId?: string;
 };
 
 export interface TerminalState {
@@ -226,7 +227,7 @@ export interface TerminalState {
   createAgentTab: (
     profile: AgentCliProfile,
     launch?: AgentLaunchOptions,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   createAgentDefault: () => Promise<void>;
   closeTab: (id: string) => Promise<void>;
   /** Drop tab after process exit without kill (already dead). */
@@ -447,6 +448,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         model: launch?.model,
         effort: launch?.effort,
         prompt: launch?.prompt?.trim() || taskTitle,
+        resume: Boolean(launch?.resumeSessionId),
+        sessionId: launch?.resumeSessionId,
         cols: 80,
         rows: 24,
       });
@@ -474,12 +477,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       } catch {
         // ignore
       }
+      return true;
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : String(err),
         agentMenuOpen: false,
         agentMenuIntent: { kind: "new" },
       });
+      return false;
     }
   },
 

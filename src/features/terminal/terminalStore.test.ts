@@ -117,3 +117,40 @@ describe("workspace agent persistence", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("createAgentTab resume", () => {
+  it("passes the selected session id to the agent launcher", async () => {
+    const createSession = vi.fn(async () => ({
+      id: "resumed",
+      title: "Previous task",
+      cwd: "/workspace",
+      status: "running" as const,
+      kind: "agent" as const,
+      agentId: "omp",
+      agentSessionId: "session-123",
+    }));
+    vi.stubGlobal("window", {
+      anchor: {
+        agent: { createSession, setDefaultId: vi.fn() },
+      },
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+    useTerminalStore.setState({ tabs: [], agentMenuOpen: true });
+
+    const created = await useTerminalStore.getState().createAgentTab(
+      { id: "omp", name: "OMP", command: "omp" },
+      { title: "Previous task", resumeSessionId: "session-123" },
+    );
+
+    expect(created).toBe(true);
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: "omp",
+      resume: true,
+      sessionId: "session-123",
+      prompt: "Previous task",
+    }));
+  });
+});

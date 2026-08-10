@@ -11,6 +11,7 @@ import {
 import { buildAgentLaunchArgs, buildAgentResumeArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
 import {
   listAgentSessionIds,
+  listAgentSessions,
   readAgentSessionTitle,
   waitForCreatedAgentSession,
 } from "../services/agentSessionIdentity.js";
@@ -50,6 +51,10 @@ export class AgentFacade {
     options?: Parameters<typeof discoverAgentLaunchOptions>[2],
   ) {
     return discoverAgentLaunchOptions(this.hosts.session, profileId, options);
+  }
+
+  sessions(profileId: string, limit?: number) {
+    return listAgentSessions(this.hosts.session, profileId, limit);
   }
 
   private watchSessionTitle(

@@ -225,6 +225,12 @@ export interface TerminalTabInfo {
   titleSource?: TerminalTitleSource;
 }
 
+export interface AgentSessionSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 export interface AgentModelOption {
   id: string;
   label: string;
@@ -398,6 +404,7 @@ export interface AnchorApi {
   clipboard: {
     writeText: (text: string) => Promise<boolean>;
     readText: () => Promise<string>;
+    hasImage: () => Promise<boolean>;
   };
   workspace: {
     pickFolder: () => Promise<string | null>;
@@ -642,6 +649,10 @@ export interface AnchorApi {
     discoverLaunch: (
       profileId: string | { profileId: string; force?: boolean },
     ) => Promise<AgentLaunchDiscovery>;
+    listSessions: (args: {
+      profileId: string;
+      limit?: number;
+    }) => Promise<AgentSessionSummary[]>;
     buildLaunchArgs: (args: {
       profileId: string;
       model?: string;

@@ -162,6 +162,12 @@ export interface TerminalTabInfo {
   titleSource?: TerminalTitleSource;
 }
 
+export interface AgentSessionSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 export interface AgentCliProfile {
   id: string;
   name: string;
@@ -228,6 +234,8 @@ const anchor = {
       ipcRenderer.invoke("clipboard:writeText", text),
     readText: (): Promise<string> =>
       ipcRenderer.invoke("clipboard:readText"),
+    hasImage: (): Promise<boolean> =>
+      ipcRenderer.invoke("clipboard:hasImage"),
   },
   workspace: {
     pickFolder: (): Promise<string | null> =>
@@ -681,6 +689,8 @@ const anchor = {
           ? { profileId, force: false }
           : profileId,
       ),
+    listSessions: (args: { profileId: string; limit?: number }): Promise<AgentSessionSummary[]> =>
+      ipcRenderer.invoke("agent:listSessions", args),
     buildLaunchArgs: (args: {
       profileId: string;
       model?: string;

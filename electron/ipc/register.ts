@@ -360,6 +360,10 @@ export function registerIpc(opts: {
     return clipboard.readText() ?? "";
   });
 
+  ipcMain.handle("clipboard:hasImage", async () => {
+    return !clipboard.readImage().isEmpty();
+  });
+
   // ── app updates ────────────────────────────────────
   ipcMain.handle("app:getUpdateState", async () => getUpdateState());
   ipcMain.handle("app:checkForUpdates", async () => {
@@ -1404,6 +1408,20 @@ export function registerIpc(opts: {
         // force: discover bypasses memory/disk and rewrites settings.json.
         // Do not call clear() here — its async wipe races the write.
         return await application.agent.launchOptions(profileId, { force });
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "agent:listSessions",
+    async (_evt, args: { profileId: string; limit?: number }) => {
+      try {
+        if (!args?.profileId || typeof args.profileId !== "string") {
+          throw new HostError("failed", "profileId required");
+        }
+        return await application.agent.sessions(args.profileId, args.limit);
       } catch (err) {
         rethrowIpc(err);
       }

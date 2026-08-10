@@ -615,13 +615,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         activeCommentId !== undefined
           ? activeCommentId
           : bubbleRef.current?.commentId ?? null;
-      // Prefer resolved/relocated; fall back to stored coords for unresolved so
-      // reopened diffs still show attachment while content is slightly off.
       const paintable = visualSpecs.filter(
         (s) =>
-          s.anchorStatus === "resolved" ||
-          s.anchorStatus === "relocated" ||
-          s.anchorStatus === "unresolved",
+          (s.anchorStatus === "resolved" || s.anchorStatus === "relocated") &&
+          !(s.startLine === s.endLine && s.endColumn <= s.startColumn),
       );
       const decorations: MonacoEditor.IModelDeltaDecoration[] = paintable.map(
         (s) => {

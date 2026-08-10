@@ -299,7 +299,8 @@ export function CodeViewer({
       const decorations: MonacoEditor.IModelDeltaDecoration[] = visualSpecs
         .filter(
           (s) =>
-            s.anchorStatus === "resolved" || s.anchorStatus === "relocated",
+            (s.anchorStatus === "resolved" || s.anchorStatus === "relocated") &&
+            !(s.startLine === s.endLine && s.endColumn <= s.startColumn),
         )
         .map((s) => {
           const selected = activeId === s.commentId;

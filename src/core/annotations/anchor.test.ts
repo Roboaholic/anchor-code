@@ -119,4 +119,21 @@ describe("resolveAnchor", () => {
     expect(r.status).toBe("unresolved");
     expect(r.startLine).toBe(5);
   });
+  it("keeps empty selections from producing a backwards range", () => {
+    const r = resolveAnchor(
+      "extern AMBA_IMU_OBJ_s AmbaIMU_Mpu6509VirtObj;\n\n#endif\n",
+      target({
+        start_line: 2,
+        end_line: 3,
+        start_column: 1,
+        end_column: 1,
+        selected_text: "\n",
+        before_context: "extern AMBA_IMU_OBJ_s AmbaIMU_Mpu6509VirtObj;",
+        after_context: "#endif",
+        line_text: "",
+      }),
+    );
+    expect(r.startLine).toBeLessThanOrEqual(r.endLine);
+    expect(r.startLine !== r.endLine || r.endColumn > r.startColumn).toBe(true);
+  });
 });

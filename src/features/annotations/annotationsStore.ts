@@ -51,6 +51,7 @@ function rangesOverlap(a: DecorationSpec, b: DecorationSpec): boolean {
   return true;
 }
 
+
 export function overlapRegionsForModel(
   specs: DecorationSpec[],
   lineMaxColumn: (line: number) => number,
@@ -596,6 +597,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       if (seen.has(c.id)) continue;
       if (!relativeMatch(repoRoot, absolutePath, c.target.file_path)) continue;
       const resolved = resolveAnchor(content, c.target);
+      if (resolved.startLine === resolved.endLine && resolved.endColumn <= resolved.startColumn) continue;
       const badge =
         resolved.status === "relocated"
           ? "relocated"

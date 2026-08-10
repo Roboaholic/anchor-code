@@ -24,6 +24,7 @@ import {
   fitXtermSession,
   getPooledXterm,
   scheduleFitXtermSession,
+  shouldForwardAgentImagePaste,
   setXtermFontSize,
   setXtermTheme,
 } from "./xtermSessionPool";
@@ -428,17 +429,22 @@ function XtermHost({
   const pasteClipboard = useCallback(async () => {
     const term = getPooledXterm(id)?.term;
     if (!term) return;
-    let text = "";
     try {
-      text = await window.anchor.clipboard.readText();
+      const hasImage = await window.anchor.clipboard.hasImage();
+      if (shouldForwardAgentImagePaste(kind, "paste", hasImage)) {
+        useTerminalStore.getState().write(id, "\x16");
+      } else {
+        const text = await window.anchor.clipboard.readText();
+        if (text) useTerminalStore.getState().write(id, text);
+      }
     } catch {
       try {
-        text = await navigator.clipboard.readText();
+        const text = await navigator.clipboard.readText();
+        if (text) useTerminalStore.getState().write(id, text);
       } catch {
-        text = "";
+        // ignore
       }
     }
-    if (text) useTerminalStore.getState().write(id, text);
     setCtxMenu(null);
     term.focus();
   }, [id]);

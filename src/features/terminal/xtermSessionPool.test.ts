@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAgentTaskSubmitKey,
+  shouldForwardAgentImagePaste,
   terminalClipboardAction,
   terminalKeySequence,
 } from "./xtermSessionPool";
@@ -52,6 +53,15 @@ describe("terminalClipboardAction", () => {
   it("handles explicit paste shortcuts", () => {
     expect(terminalClipboardAction(event("v", { ctrlKey: true }), false)).toBe("paste");
     expect(terminalClipboardAction(event("Insert", { shiftKey: true }), false)).toBe("paste");
+  });
+});
+
+describe("shouldForwardAgentImagePaste", () => {
+  it("forwards image paste only to agent sessions", () => {
+    expect(shouldForwardAgentImagePaste("agent", "paste", true)).toBe(true);
+    expect(shouldForwardAgentImagePaste("shell", "paste", true)).toBe(false);
+    expect(shouldForwardAgentImagePaste("agent", "paste", false)).toBe(false);
+    expect(shouldForwardAgentImagePaste("agent", "copy", true)).toBe(false);
   });
 });
 

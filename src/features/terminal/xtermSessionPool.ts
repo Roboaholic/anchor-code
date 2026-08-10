@@ -81,6 +81,14 @@ export function terminalClipboardAction(event: {
   return null;
 }
 
+export function shouldForwardAgentImagePaste(
+  kind: string,
+  action: TerminalClipboardAction | null,
+  hasClipboardImage: boolean,
+): boolean {
+  return kind === "agent" && action === "paste" && hasClipboardImage;
+}
+
 function registerFileLinkProvider(term: Terminal): IDisposable {
   return term.registerLinkProvider({
     provideLinks(bufferLineNumber, callback) {
@@ -289,8 +297,16 @@ export function acquireXtermSession(
     }
     if (clipboardAction === "paste") {
       e.preventDefault();
-      void window.anchor.clipboard.readText().then((text) => {
-        if (text) term.paste(text);
+      void window.anchor.clipboard.hasImage().then((hasImage) => {
+        if (shouldForwardAgentImagePaste(kind, clipboardAction, hasImage)) {
+          // Agent CLIs such as OMP bind Ctrl+V themselves to read image data.
+          // Let the PTY receive the key; renderer text paste would swallow it.
+          useTerminalStore.getState().write(id, "\x16");
+          return;
+        }
+        return window.anchor.clipboard.readText().then((text) => {
+          if (text) term.paste(text);
+        });
       }).catch(() => undefined);
       return false;
     }

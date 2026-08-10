@@ -176,6 +176,20 @@ function findSpecsAt(
   return hits.sort((a, b) => a.span - b.span).map((hit) => hit.spec);
 }
 
+function sameBubblePosition(
+  a: BubbleState | null,
+  b: BubbleState,
+): boolean {
+  return Boolean(
+    a &&
+    a.commentId === b.commentId &&
+    a.left === b.left &&
+    a.top === b.top &&
+    a.relatedCommentIds.length === b.relatedCommentIds.length &&
+    a.relatedCommentIds.every((id, index) => id === b.relatedCommentIds[index]),
+  );
+}
+
 export function CodeViewer({
   path,
   content,
@@ -349,8 +363,9 @@ export function CodeViewer({
           relatedCommentIds: open.relatedCommentIds ?? [],
           ...pos,
         };
+        const changed = !sameBubblePosition(bubbleRef.current, next);
         bubbleRef.current = next;
-        setBubble(next);
+        if (changed) setBubble(next);
       }
     },
     [content, decorationsFor, path, theme],
@@ -834,8 +849,9 @@ export function CodeViewer({
             relatedCommentIds: open.relatedCommentIds ?? [],
             ...pos,
           };
+          const changed = !sameBubblePosition(bubbleRef.current, next);
           bubbleRef.current = next;
-          setBubble(next);
+          if (changed) setBubble(next);
         }
       }),
     );

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAgentTaskSubmitKey,
+  shouldDeferAgentCtrlKey,
   shouldForwardAgentImagePaste,
   terminalClipboardAction,
   terminalKeySequence,
@@ -29,6 +30,14 @@ describe("terminalKeySequence", () => {
         shiftKey: true,
       }),
     ).toBe("\x1b\r");
+  });
+});
+
+describe("shouldDeferAgentCtrlKey", () => {
+  it("leaves Ctrl combinations to the agent CLI only", () => {
+    expect(shouldDeferAgentCtrlKey("agent", { ctrlKey: true, metaKey: false })).toBe(true);
+    expect(shouldDeferAgentCtrlKey("shell", { ctrlKey: true, metaKey: false })).toBe(false);
+    expect(shouldDeferAgentCtrlKey("agent", { ctrlKey: false, metaKey: true })).toBe(false);
   });
 });
 

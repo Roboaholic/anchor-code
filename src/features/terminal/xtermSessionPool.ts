@@ -63,6 +63,13 @@ export function isAgentTaskSubmitKey(event: {
     !event.shiftKey
   );
 }
+export function shouldDeferAgentCtrlKey(
+  kind: string,
+  event: { ctrlKey: boolean; metaKey: boolean },
+): boolean {
+  return kind === "agent" && event.ctrlKey && !event.metaKey;
+}
+
 export type TerminalClipboardAction = "copy" | "paste";
 
 export function terminalClipboardAction(event: {
@@ -274,6 +281,9 @@ export function acquireXtermSession(
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
+    // Agent CLIs own their Ctrl keymap (interrupts, modes, paste handling,
+    // and tool-specific bindings). Let xterm encode and forward it unchanged.
+    if (shouldDeferAgentCtrlKey(kind, e)) return true;
     if (kind === "agent" && agentHasUserInput && isAgentTaskSubmitKey(e)) {
       agentHasUserInput = false;
       useTerminalStore.getState().markAgentWorking(id);

@@ -78,6 +78,10 @@ function useCollapsiblePanel(
   }, [ref, expanded, expandSize]);
 }
 
+export function isAgentCliKeyTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest('[data-agent-cli="true"]'));
+}
+
 export function Shell() {
   const leftVisible = useShellStore((s) => s.leftVisible);
   const agentVisible = useShellStore((s) => s.agentVisible);
@@ -345,9 +349,11 @@ export function Shell() {
     return () => window.removeEventListener("beforeunload", saveCurrentWorkspace);
   }, []);
 
+
   // Renderer fallback shortcuts (menu accelerators also send shell:command).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isAgentCliKeyTarget(e.target)) return;
       const delta = fontSizeShortcutDelta(e);
       if (delta !== 0) {
         e.preventDefault();

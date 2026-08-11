@@ -558,11 +558,30 @@ function XtermHost({
     };
   }, [ctxMenu]);
 
+  useEffect(
+    () => () => {
+      if (kind === "agent") window.anchor.shell.setAgentInputFocused(false);
+    },
+    [kind],
+  );
+
   return (
     <div
       className="xterm-host-wrap"
       style={{ display: active ? "block" : "none" }}
       ref={slotRef}
+      data-agent-cli={kind === "agent" ? "true" : undefined}
+      onFocusCapture={() => {
+        if (kind === "agent") window.anchor.shell.setAgentInputFocused(true);
+      }}
+      onBlurCapture={(event) => {
+        if (
+          kind === "agent" &&
+          !event.currentTarget.contains(event.relatedTarget as Node | null)
+        ) {
+          window.anchor.shell.setAgentInputFocused(false);
+        }
+      }}
     >
       {ctxMenu ? (
         <div

@@ -375,6 +375,7 @@ export interface AnchorApi {
     getVersion: () => Promise<AppVersionInfo>;
     menuAction: (action: string) => Promise<boolean>;
     onCommand: (cb: (cmd: { type: string; path?: string; hostProfileId?: string }) => void) => () => void;
+    setAgentInputFocused: (focused: boolean) => void;
   };
   remote: {
     getInfo: () => Promise<RemoteAccessInfo>;

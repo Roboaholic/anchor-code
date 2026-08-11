@@ -291,6 +291,7 @@ function RenderedMarkdownPane({
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const bubbleRef = useRef<BubbleState | null>(null);
   const pendingSelectionTextRef = useRef<string | null>(null);
+  const handledRevealRef = useRef<string | null>(null);
   const fontSize = useThemeStore((s) => s.fontSize);
   const mdFontSize = markdownFontSize(fontSize);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
@@ -374,12 +375,17 @@ function RenderedMarkdownPane({
     };
   }, [refreshMarks]);
 
-  // Focus mark when jumping from comments pane.
+  // Focus once per explicit comments-pane jump. Mark measurement also runs on
+  // every scroll; without consuming the reveal, each measurement snaps the
+  // viewport back to the focused comment.
   useEffect(() => {
     if (!focusCommentId) return;
+    const revealKey = `${focusCommentId}:${revealNonce ?? 0}`;
+    if (handledRevealRef.current === revealKey) return;
     const mark = marks.find((m) => m.commentId === focusCommentId);
     const container = scrollRef.current;
     if (!mark || !container) return;
+    handledRevealRef.current = revealKey;
     container.scrollTo({
       top: Math.max(0, mark.top - 80),
       behavior: "smooth",
@@ -577,7 +583,7 @@ function RenderedMarkdownPane({
   const bubbleComment = bubble ? liveComment(bubble.commentId) : null;
 
   return (
-    <div className="md-viewer__rendered" ref={scrollRef}>
+    <div className="md-viewer__rendered">
       {truncated ? (
         <div className="banner banner--warn">
           File is larger than 1 MB — rendered view uses the first portion only.
@@ -586,6 +592,7 @@ function RenderedMarkdownPane({
 
       <div
         className="md-viewer__rendered-surface"
+        ref={scrollRef}
         onContextMenu={(e) => {
           e.preventDefault();
           setCtxMenu({ x: e.clientX, y: e.clientY });
@@ -676,7 +683,7 @@ function RenderedMarkdownPane({
       </div>
 
       {locateError ? (
-        <div className="banner banner--warn" role="status">
+        <div className="banner banner--warn md-viewer__locate-error" role="status">
           {locateError}
         </div>
       ) : null}

@@ -193,6 +193,8 @@ const anchor = {
       ipcRenderer.on("shell:command", listener);
       return () => ipcRenderer.removeListener("shell:command", listener);
     },
+    setAgentInputFocused: (focused: boolean): void =>
+      ipcRenderer.send("shell:setAgentInputFocused", focused),
   },
   remote: {
     getInfo: (): Promise<RemoteAccessInfo> =>

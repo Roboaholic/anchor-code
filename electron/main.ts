@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,11 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   : process.env.DIST;
 
 let mainWindow: BrowserWindow | null = null;
+let agentInputFocused = false;
+ipcMain.on("shell:setAgentInputFocused", (_event, focused: boolean) => {
+  agentInputFocused = Boolean(focused);
+  mainWindow?.webContents.setIgnoreMenuShortcuts(agentInputFocused);
+});
 
 const hosts = new HostManager();
 const terminal = new TerminalService(
@@ -125,6 +130,7 @@ function createWindow(theme: UiTheme) {
   });
   const createdWindow = mainWindow;
   createdWindow.webContents.on("before-input-event", (event, input) => {
+    if (agentInputFocused) return;
     const modifier = input.control || input.meta;
     if (!modifier || input.alt) return;
     const key = input.key;

@@ -2184,12 +2184,14 @@ body.files-split-resizing .monaco-editor {
 .md-viewer__rendered {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.md-viewer__rendered > .composer {
-  position: sticky;
-  bottom: 0;
+.md-viewer__rendered > .composer,
+.md-viewer__locate-error {
+  flex: 0 0 auto;
 }
 
 .md-body {
@@ -2284,7 +2286,9 @@ body.files-split-resizing .monaco-editor {
 
 .md-viewer__rendered-surface {
   position: relative;
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .md-anno-mark {

@@ -34,10 +34,25 @@ describe("terminalKeySequence", () => {
 });
 
 describe("shouldDeferAgentCtrlKey", () => {
-  it("leaves Ctrl combinations to the agent CLI only", () => {
-    expect(shouldDeferAgentCtrlKey("agent", { ctrlKey: true, metaKey: false })).toBe(true);
-    expect(shouldDeferAgentCtrlKey("shell", { ctrlKey: true, metaKey: false })).toBe(false);
-    expect(shouldDeferAgentCtrlKey("agent", { ctrlKey: false, metaKey: true })).toBe(false);
+  it("copies selected text before deferring Ctrl keys to the agent CLI", () => {
+    const ctrl = { key: "c", ctrlKey: true, metaKey: false };
+    expect(shouldDeferAgentCtrlKey("agent", ctrl, true)).toBe(false);
+    expect(shouldDeferAgentCtrlKey("agent", ctrl, false)).toBe(true);
+    expect(
+      shouldDeferAgentCtrlKey(
+        "agent",
+        { key: "r", ctrlKey: true, metaKey: false },
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      shouldDeferAgentCtrlKey(
+        "agent",
+        { key: "v", ctrlKey: true, metaKey: false },
+        false,
+      ),
+    ).toBe(false);
+    expect(shouldDeferAgentCtrlKey("shell", ctrl, false)).toBe(false);
   });
 });
 

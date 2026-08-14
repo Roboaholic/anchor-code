@@ -405,6 +405,7 @@ export interface AnchorApi {
   clipboard: {
     writeText: (text: string) => Promise<boolean>;
     readText: () => Promise<string>;
+    contentKind: () => Promise<"text" | "image" | "empty">;
     hasImage: () => Promise<boolean>;
   };
   workspace: {

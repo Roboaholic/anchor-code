@@ -154,3 +154,46 @@ describe("createAgentTab resume", () => {
     }));
   });
 });
+
+describe("terminal error isolation", () => {
+  it("keeps live terminal tabs when agent creation fails", async () => {
+    const shell: TerminalTabInfo = {
+      id: "shell-live",
+      title: "workspace",
+      cwd: "/workspace",
+      status: "running",
+      kind: "shell",
+    };
+    vi.stubGlobal("window", {
+      anchor: {
+        agent: {
+          createSession: vi.fn(async () => {
+            throw new Error("agent preflight failed");
+          }),
+        },
+      },
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+    useTerminalStore.setState({
+      tabs: [shell],
+      activeByMode: { terminal: shell.id, agent: null },
+      error: null,
+      agentMenuOpen: true,
+    });
+
+    const created = await useTerminalStore.getState().createAgentTab({
+      id: "omp",
+      name: "OMP",
+      command: "omp",
+    });
+
+    expect(created).toBe(false);
+    expect(useTerminalStore.getState().tabs).toEqual([shell]);
+    expect(useTerminalStore.getState().activeByMode.terminal).toBe(shell.id);
+    expect(useTerminalStore.getState().error).toBe("agent preflight failed");
+    vi.unstubAllGlobals();
+  });
+});

@@ -238,6 +238,8 @@ const anchor = {
       ipcRenderer.invoke("clipboard:readText"),
     hasImage: (): Promise<boolean> =>
       ipcRenderer.invoke("clipboard:hasImage"),
+    contentKind: (): Promise<"text" | "image" | "empty"> =>
+      ipcRenderer.invoke("clipboard:contentKind"),
   },
   workspace: {
     pickFolder: (): Promise<string | null> =>

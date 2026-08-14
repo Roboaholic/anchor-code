@@ -363,6 +363,10 @@ export function registerIpc(opts: {
   ipcMain.handle("clipboard:hasImage", async () => {
     return !clipboard.readImage().isEmpty();
   });
+  ipcMain.handle("clipboard:contentKind", async () => {
+    if (clipboard.readText()) return "text";
+    return clipboard.readImage().isEmpty() ? "empty" : "image";
+  });
 
   // ── app updates ────────────────────────────────────
   ipcMain.handle("app:getUpdateState", async () => getUpdateState());

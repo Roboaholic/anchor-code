@@ -65,9 +65,14 @@ export function isAgentTaskSubmitKey(event: {
 }
 export function shouldDeferAgentCtrlKey(
   kind: string,
-  event: { ctrlKey: boolean; metaKey: boolean },
+  event: { key: string; ctrlKey: boolean; metaKey: boolean },
+  hasSelection: boolean,
 ): boolean {
-  return kind === "agent" && event.ctrlKey && !event.metaKey;
+  if (kind !== "agent" || !event.ctrlKey || event.metaKey) return false;
+  const key = event.key.toLowerCase();
+  if (key === "c" && hasSelection) return false;
+  if (key === "v") return false;
+  return true;
 }
 
 export type TerminalClipboardAction = "copy" | "paste";
@@ -281,9 +286,9 @@ export function acquireXtermSession(
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
-    // Agent CLIs own their Ctrl keymap (interrupts, modes, paste handling,
-    // and tool-specific bindings). Let xterm encode and forward it unchanged.
-    if (shouldDeferAgentCtrlKey(kind, e)) return true;
+    // A selected range keeps the standard Ctrl+C copy behavior. Other Agent
+    // Ctrl combinations, including unselected Ctrl+C, belong to the CLI.
+    if (shouldDeferAgentCtrlKey(kind, e, term.hasSelection())) return true;
     if (kind === "agent" && agentHasUserInput && isAgentTaskSubmitKey(e)) {
       agentHasUserInput = false;
       useTerminalStore.getState().markAgentWorking(id);
@@ -307,16 +312,16 @@ export function acquireXtermSession(
     }
     if (clipboardAction === "paste") {
       e.preventDefault();
-      void window.anchor.clipboard.hasImage().then((hasImage) => {
-        if (shouldForwardAgentImagePaste(kind, clipboardAction, hasImage)) {
-          // Agent CLIs such as OMP bind Ctrl+V themselves to read image data.
-          // Let the PTY receive the key; renderer text paste would swallow it.
-          useTerminalStore.getState().write(id, "\x16");
-          return;
+      void window.anchor.clipboard.contentKind().then((clipboardKind) => {
+        if (clipboardKind === "text") {
+          return window.anchor.clipboard.readText().then((text) => {
+            if (text) term.paste(text);
+          });
         }
-        return window.anchor.clipboard.readText().then((text) => {
-          if (text) term.paste(text);
-        });
+        if (clipboardKind === "image" && kind === "agent") {
+          // Agent CLIs read the image from the native clipboard on Ctrl+V.
+          useTerminalStore.getState().write(id, "\x16");
+        }
       }).catch(() => undefined);
       return false;
     }

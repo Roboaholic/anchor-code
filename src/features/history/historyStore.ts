@@ -171,20 +171,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       toast: null,
     });
     try {
-      const found = await Promise.race([
-        window.anchor.history.discover(workspaceRoot),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  "Scanning timed out (20s). WSL may be cold-starting — try Rescan.",
-                ),
-              ),
-            20_000,
-          );
-        }),
-      ]);
+      // Host discovery owns command timeouts. A renderer-side 20s race reported
+      // failure while a cold WSL scan was still running, then Rescan started a
+      // second overlapping scan. Await the original IPC request to completion.
+      const found = await window.anchor.history.discover(workspaceRoot);
       // Keep prior status/branch/UI expand state for roots that still exist.
       // Replacing with emptyCard made every row flash "detached" until status returned.
       const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));

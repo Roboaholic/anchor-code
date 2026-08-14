@@ -247,7 +247,7 @@ export function TerminalPanel({
         </div>
 
         <div className="terminal-panel__body">
-          {error ? (
+          {error && modeTabs.length === 0 ? (
             <pre className="terminal-mock">
               {`Terminal unavailable:\n${error}\n\nIf using WSL:\n  • Confirm WSL is running (wsl -l -v)\n  • If stuck: wsl --shutdown, then reopen workspace\n  • Check workspace path exists inside the distro\n\nIf node-pty failed in a dev build:\n  npm run rebuild:native\n  npm run ensure:pty`}
             </pre>

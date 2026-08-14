@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_SESSION_CAPTURE_TIMEOUT_MS,
+  AGENT_SESSION_SCAN_TIMEOUT_MS,
   claimCreatedAgentSession,
   parseAgentSessionTitle,
   listAgentSessions,
@@ -73,11 +74,18 @@ describe("agent session identity", () => {
     await expect(listAgentSessions(host, "omp", 12)).resolves.toHaveLength(1);
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(
-      "/workspace",
+      "/",
       "bash",
       ["-s"],
-      expect.objectContaining({ stdin: expect.stringContaining("$HOME/.omp/agent/sessions") }),
+      expect.objectContaining({
+        stdin: expect.stringContaining("$HOME/.omp/agent/sessions"),
+        timeoutMs: AGENT_SESSION_SCAN_TIMEOUT_MS,
+      }),
     );
+  });
+
+  it("keeps session listing bounded at eight seconds", () => {
+    expect(AGENT_SESSION_SCAN_TIMEOUT_MS).toBe(8_000);
   });
 
 

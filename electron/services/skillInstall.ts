@@ -81,8 +81,7 @@ const USER_SKILL_SPECS: UserSkillSpec[] = [
 
 /** Resolve $HOME / %USERPROFILE% on the active host. */
 export async function resolveHostHome(host: HostSession): Promise<string> {
-  const cwd =
-    host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const cwd = host.kind === "local" ? process.cwd() : "/";
   try {
     if (host.kind === "local" && process.platform === "win32") {
       const r = await host.run(cwd, "cmd.exe", [

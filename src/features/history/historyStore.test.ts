@@ -145,6 +145,32 @@ describe("historyStore multi-repo", () => {
     expect(s.repos.every((r) => r.comparesOpen === false)).toBe(true);
   });
 
+  it("waits for cold host discovery to complete", async () => {
+    let resolveDiscover!: (repos: Array<{ root: string; name: string }>) => void;
+    const delayed = new Promise<Array<{ root: string; name: string }>>((resolve) => {
+      resolveDiscover = resolve;
+    });
+    const discover = vi.fn(() => delayed);
+    (
+      window.anchor.history as typeof window.anchor.history & {
+        discover: typeof discover;
+      }
+    ).discover = discover;
+
+    const pending = useHistoryStore.getState().discover("/ws");
+    await Promise.resolve();
+    expect(useHistoryStore.getState().discoverStatus).toBe("loading");
+
+    resolveDiscover([{ root: "/ws/repo-c", name: "repo-c" }]);
+    await pending;
+
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect(useHistoryStore.getState().discoverStatus).toBe("idle");
+    expect(useHistoryStore.getState().repos.map((repo) => repo.name)).toEqual([
+      "repo-c",
+    ]);
+  });
+
   it("loads log only when history is expanded", async () => {
     await useHistoryStore.getState().discover("/ws");
     await useHistoryStore.getState().toggleHistory("/ws/repo-a");

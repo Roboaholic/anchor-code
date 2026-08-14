@@ -4,6 +4,7 @@ import { resolveHostHome } from "./skillInstall.js";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 export const AGENT_SESSION_CAPTURE_TIMEOUT_MS = 5 * 60_000;
+export const AGENT_SESSION_SCAN_TIMEOUT_MS = 8_000;
 
 export function sessionIdPattern(profileId: string): RegExp | null {
   switch (profileId.trim().toLowerCase()) {
@@ -146,6 +147,10 @@ function sessionSegments(profileId: string): string | null {
     default: return null;
   }
 }
+function hostHomeCwd(host: HostSession): string {
+  return host.kind === "local" ? process.cwd() : "/";
+}
+
 
 async function runRecentSessionScanFromHome(
   host: HostSession,
@@ -154,12 +159,13 @@ async function runRecentSessionScanFromHome(
 ): Promise<string> {
   const segment = sessionSegments(profileId);
   if (!segment) return "";
-  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  // Session files live under $HOME, so workspace validity is irrelevant.
+  const cwd = hostHomeCwd(host);
   const root = `"$HOME/${segment}"`;
   const script = `root=${root}; if [ -d "$root" ]; then find "$root" -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${limit} | while IFS="$(printf '\\t')" read -r mtime file; do printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; done; fi`;
   return (await host.run(cwd, "bash", ["-s"], {
     stdin: script,
-    timeoutMs: 8_000,
+    timeoutMs: AGENT_SESSION_SCAN_TIMEOUT_MS,
   })).stdout;
 }
 
@@ -203,7 +209,7 @@ export async function listAgentSessions(
 }
 
 async function runSessionPathScan(host: HostSession, root: string): Promise<string> {
-  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const cwd = hostHomeCwd(host);
   if (host.kind === "local" && process.platform === "win32") {
     const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
     const command = `$root=${rootArg}; if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } }`;
@@ -217,7 +223,7 @@ async function runSessionPathScan(host: HostSession, root: string): Promise<stri
 }
 
 async function runSessionScan(host: HostSession, root: string, sessionId?: string): Promise<string> {
-  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const cwd = hostHomeCwd(host);
   if (host.kind === "local" && process.platform === "win32") {
     const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
     const idArg = powershellQuote(sessionId ?? "");
@@ -244,7 +250,7 @@ async function runSessionScan(host: HostSession, root: string, sessionId?: strin
 }
 
 async function grokSessionIds(host: HostSession): Promise<Set<string>> {
-  const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+  const cwd = hostHomeCwd(host);
   const script = "import{Database}from'bun:sqlite';import{homedir}from'node:os';import{join}from'node:path';try{const d=new Database(join(homedir(),'.grok','grok.db'),{readonly:true});console.log(d.query('select id from sessions').all().map(x=>x.id).join('\\n'))}catch{}";
   const result = await host.run(cwd, "bun", ["-e", script], { timeoutMs: 8_000 });
   return new Set(result.stdout.split(/\r?\n/).map((id) => id.trim()).filter(Boolean));
@@ -299,7 +305,7 @@ export async function waitForCreatedAgentSession(
 
 export async function readAgentSessionTitle(host: HostSession, profileId: string, sessionId: string): Promise<string | null> {
   if (profileId.trim().toLowerCase() === "grok") {
-    const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
+    const cwd = hostHomeCwd(host);
     const script = `import{Database}from'bun:sqlite';import{homedir}from'node:os';import{join}from'node:path';try{const d=new Database(join(homedir(),'.grok','grok.db'),{readonly:true});const r=d.query('select title from sessions where id = ?').get(${JSON.stringify(sessionId)});if(r?.title)console.log(r.title)}catch{}`;
     return cleanTitle((await host.run(cwd, "bun", ["-e", script], { timeoutMs: 8_000 })).stdout);
   }

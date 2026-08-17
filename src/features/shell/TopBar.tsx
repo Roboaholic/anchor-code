@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { workspaceDisplayName } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
-import type { AppUpdateState } from "@/shared/anchor-api";
+import type { AppUpdateState, HostKind } from "@/shared/anchor-api";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
@@ -48,6 +49,22 @@ function updateBadgeMeta(state: AppUpdateState | null): {
   return { show: false, title: "", label: "", icon: "cloud-download" };
 }
 
+function workspaceKey(path: string | null, hostProfileId: string | null): string {
+  return `${hostProfileId ?? "local-default"}::${(path ?? "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase()}`;
+}
+
+function hostLabel(kind: HostKind | null, hostProfileId: string | null): string {
+  if (kind === "local" || hostProfileId === "local-default") return "Local";
+  if (kind === "wsl" || hostProfileId === "wsl-default") return "WSL";
+  if (kind === "ssh") return "SSH";
+  if (!hostProfileId) return "Host";
+  if (hostProfileId.startsWith("ssh-")) return "SSH";
+  if (hostProfileId.startsWith("wsl-")) return "WSL";
+  return hostProfileId;
+}
 export function TopBar() {
   const agentVisible = useShellStore((s) => s.agentVisible);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
@@ -56,13 +73,42 @@ export function TopBar() {
   const openPalette = useShellStore((s) => s.openPalette);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const hostKind = useWorkspaceStore((s) => s.hostKind);
+  const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
+  const recent = useWorkspaceStore((s) => s.recent);
+  const loadRecent = useWorkspaceStore((s) => s.loadRecent);
   const settingsOpen = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
   const openSettings = useThemeStore((s) => s.openSettings);
   const rightRailRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [rightRailTip, setRightRailTip] = useState(false);
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
+
+  const activeWorkspaceKey = workspaceKey(workspaceRoot, hostProfileId);
+  const activeWorkspaceName = workspaceRoot
+    ? workspaceName || workspaceDisplayName(workspaceRoot)
+    : "Open Workspace";
+  const activeHostLabel = workspaceRoot
+    ? hostLabel(hostKind, hostProfileId)
+    : "";
+  const recentWorkspaces = useMemo(
+    () =>
+      recent.slice(0, 7).map((item) => {
+        const key = workspaceKey(item.path, item.hostProfileId);
+        return {
+          ...item,
+          key,
+          name: workspaceDisplayName(item.path),
+          hostLabel: hostLabel(null, item.hostProfileId),
+          isActive: key === activeWorkspaceKey,
+        };
+      }),
+    [activeWorkspaceKey, recent],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +123,33 @@ export function TopBar() {
       off?.();
     };
   }, []);
+
+  useEffect(() => {
+    void loadRecent();
+  }, [loadRecent]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        workspaceMenuRef.current &&
+        !workspaceMenuRef.current.contains(event.target as Node)
+      ) {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWorkspaceMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceMenuOpen]);
 
   useEffect(() => {
     return () => {
@@ -144,6 +217,18 @@ export function TopBar() {
     useShellStore.setState((s) => ({ terminalVisible: !s.terminalVisible }));
   };
 
+  const openWorkspaceDialog = () => {
+    setWorkspaceMenuOpen(false);
+    setOpenWorkspaceDialog(true);
+  };
+
+  const openRecentWorkspace = async (path: string, profileId: string) => {
+    setWorkspaceMenuOpen(false);
+    if (workspaceKey(path, profileId) === activeWorkspaceKey) return;
+    const { openWorkspacePath } = await import("./orchestrate");
+    await openWorkspacePath(path, profileId);
+  };
+
   return (
     <header className="chrome">
       {/* Row 1: app menus (fused, not OS title strip) */}
@@ -159,6 +244,133 @@ export function TopBar() {
           >
             Anchor Code
           </span>
+          <div className="topbar__workspace" ref={workspaceMenuRef}>
+            <button
+              type="button"
+              className={`workspace-switcher${
+                workspaceRoot ? "" : " is-empty"
+              }${workspaceMenuOpen ? " is-open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={workspaceMenuOpen}
+              aria-label={
+                workspaceRoot
+                  ? `Current workspace: ${activeWorkspaceName}`
+                  : "Open workspace"
+              }
+              title={
+                workspaceRoot
+                  ? `${workspaceRoot} (${activeHostLabel})`
+                  : "Open Workspace"
+              }
+              onClick={() => setWorkspaceMenuOpen((open) => !open)}
+            >
+              <Icon
+                name={workspaceRoot ? "folder" : "folder-opened"}
+                className="workspace-switcher__icon"
+              />
+              <span className="workspace-switcher__name">
+                {activeWorkspaceName}
+              </span>
+              {activeHostLabel ? (
+                <span className="workspace-switcher__host">
+                  {activeHostLabel}
+                </span>
+              ) : null}
+              <Icon
+                name="chevron-down"
+                className="workspace-switcher__chevron"
+              />
+            </button>
+
+            {workspaceMenuOpen ? (
+              <div
+                className="workspace-menu"
+                role="menu"
+                aria-label="Workspaces"
+              >
+                {workspaceRoot ? (
+                  <div className="workspace-menu__section">
+                    <div className="workspace-menu__heading">
+                      Current Workspace
+                    </div>
+                    <div className="workspace-menu__current">
+                      <Icon
+                        name="folder-opened"
+                        className="workspace-menu__item-icon"
+                      />
+                      <span className="workspace-menu__item-copy">
+                        <span className="workspace-menu__item-name">
+                          {activeWorkspaceName}
+                        </span>
+                        <span
+                          className="workspace-menu__item-path"
+                          title={workspaceRoot}
+                        >
+                          {workspaceRoot}
+                        </span>
+                      </span>
+                      <span className="workspace-menu__item-host">
+                        {activeHostLabel}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {recentWorkspaces.length > 0 ? (
+                  <div className="workspace-menu__section">
+                    <div className="workspace-menu__heading">Recent</div>
+                    <div className="workspace-menu__list">
+                      {recentWorkspaces.map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          role="menuitem"
+                          className={`workspace-menu__item${
+                            item.isActive ? " is-active" : ""
+                          }`}
+                          title={`${item.path} (${item.hostLabel})`}
+                          onClick={() =>
+                            void openRecentWorkspace(
+                              item.path,
+                              item.hostProfileId,
+                            )
+                          }
+                        >
+                          <Icon
+                            name={item.isActive ? "folder-opened" : "folder"}
+                            className="workspace-menu__item-icon"
+                          />
+                          <span className="workspace-menu__item-copy">
+                            <span className="workspace-menu__item-name">
+                              {item.name}
+                            </span>
+                            <span className="workspace-menu__item-path">
+                              {item.path}
+                            </span>
+                          </span>
+                          <span className="workspace-menu__item-host">
+                            {item.isActive ? "Current" : item.hostLabel}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="workspace-menu__footer">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="workspace-menu__open"
+                    onClick={openWorkspaceDialog}
+                  >
+                    <Icon name="add" className="workspace-menu__open-icon" />
+                    Open Workspace
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
 
 

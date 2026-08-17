@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DirEntry, RecentWorkspace } from "@/shared/anchor-api";
+import type { DirEntry, RecentWorkspace, WorkspaceInstance } from "@/shared/anchor-api";
 import {
   joinPath,
   shouldHideTreeEntry,
@@ -24,12 +24,15 @@ export interface WorkspaceState {
   hostProfileId: string | null;
   hostKind: "local" | "wsl" | "ssh" | null;
   recent: RecentWorkspace[];
+  openWorkspaces: WorkspaceInstance[];
+  activeWorkspaceId: string | null;
   rootEntries: TreeNode[];
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
   selectedPath: string | null;
 
   loadRecent: () => Promise<void>;
+  loadOpenWorkspaces: () => Promise<void>;
   openPath: (
     path: string,
     opts?: { hostProfileId?: string },
@@ -104,6 +107,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   hostProfileId: null,
   hostKind: null,
   recent: [],
+  openWorkspaces: [],
+  activeWorkspaceId: null,
   rootEntries: [],
   status: "idle",
   error: null,
@@ -113,6 +118,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const recent = await window.anchor.workspace.getRecent();
       set({ recent });
+    } catch {
+      // non-fatal
+    }
+  },
+
+  loadOpenWorkspaces: async () => {
+    try {
+      const instances = await window.anchor.workspace.listOpenInstances();
+      set({
+        openWorkspaces: instances.openWorkspaces,
+        activeWorkspaceId: instances.activeWorkspaceId,
+      });
     } catch {
       // non-fatal
     }
@@ -132,7 +149,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ? { path: dirPath, hostProfileId: opts.hostProfileId }
           : dirPath,
       );
-      const { root, name, hostKind, hostProfileId } = opened;
+      const { root, name, hostKind, hostProfileId, workspaceInstance } = opened;
       const profileId = hostProfileId ?? opts?.hostProfileId ?? null;
 
       // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
@@ -142,6 +159,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hostKind: hostKind ?? null,
         hostProfileId: profileId,
         selectedPath: null,
+        ...(workspaceInstance
+          ? {
+              openWorkspaces: [workspaceInstance],
+              activeWorkspaceId: workspaceInstance.id,
+            }
+          : {}),
         status: "loading",
         error: null,
       });
@@ -167,6 +190,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hostKind: hostKind ?? get().hostKind,
         hostProfileId: profileId ?? get().hostProfileId,
         rootEntries,
+        ...(workspaceInstance
+          ? {
+              openWorkspaces: [workspaceInstance],
+              activeWorkspaceId: workspaceInstance.id,
+            }
+          : {}),
         recent,
         status: treeError ? "error" : "ready",
         error: treeError,

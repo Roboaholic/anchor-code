@@ -3,6 +3,11 @@ import { hostBasename, hostJoin, hostNormalize } from "../host/paths.js";
 import { HostError } from "../host/types.js";
 import type { TerminalService } from "../services/terminalService.js";
 import {
+  readWorkspaceDefinition,
+  recordActiveWorkspaceInstance,
+  type WorkspaceInstance,
+} from "../services/workspaceState.js";
+import {
   getHostProfile,
   loadSettings,
   pushRecentWorkspace,
@@ -147,7 +152,7 @@ export class WorkspaceFacade {
   async open(
     input: RemoteWorkspaceRef,
     options: { requireApproved?: boolean; source?: WorkspaceChangeSource } = {},
-  ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string }> {
+  ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance?: WorkspaceInstance }> {
     if (!input.path || !input.hostProfileId) throw new HostError("failed", "Invalid workspace");
     if (options.requireApproved) {
       const settings = await this.registry.load();
@@ -172,18 +177,36 @@ export class WorkspaceFacade {
     this.terminal.disposeAll();
     host.workspaceRoot = resolved;
     await this.registry.pushRecent(resolved, host.profileId);
+    const definition = await readWorkspaceDefinition(host, resolved);
+    const name =
+      definition?.definition.workspace?.name?.trim() ||
+      hostBasename(host.kind, resolved) ||
+      resolved;
     const current = {
       path: resolved,
-      name: hostBasename(host.kind, resolved) || resolved,
+      name,
       hostProfileId: host.profileId,
       hostKind: host.kind,
     };
+    let workspaceInstance: WorkspaceInstance | undefined;
+    try {
+      workspaceInstance = await recordActiveWorkspaceInstance({
+        root: resolved,
+        name,
+        hostKind: host.kind,
+        hostProfileId: host.profileId,
+        definitionPath: definition?.path ?? null,
+      });
+    } catch (err) {
+      console.warn("[workspace] failed to persist runtime instance:", err);
+    }
     this.onChanged?.(current, options.source ?? "desktop");
     return {
       root: resolved,
       name: current.name,
       hostKind: host.kind,
       hostProfileId: host.profileId,
+      ...(workspaceInstance ? { workspaceInstance } : {}),
     };
   }
 }

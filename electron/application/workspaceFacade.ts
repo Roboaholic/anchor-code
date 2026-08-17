@@ -163,7 +163,8 @@ export class WorkspaceFacade {
         throw new HostError("permission", "Workspace must be opened on the PC before remote selection");
       }
     }
-    if (input.hostProfileId !== this.hosts.profileId) {
+    const profileChanged = input.hostProfileId !== this.hosts.profileId;
+    if (profileChanged) {
       const profile = await this.registry.getHostProfile(input.hostProfileId);
       if (!profile) throw new HostError("not_found", `Host profile not found: ${input.hostProfileId}`);
       this.terminal.disposeAll();
@@ -174,7 +175,6 @@ export class WorkspaceFacade {
     if (!(await host.exists(resolved))) throw new HostError("not_found", `Directory not found: ${resolved}`);
     const stat = await host.stat(resolved);
     if (!stat.isDir) throw new HostError("failed", `Not a directory: ${resolved}`);
-    this.terminal.disposeAll();
     host.workspaceRoot = resolved;
     await this.registry.pushRecent(resolved, host.profileId);
     const definition = await readWorkspaceDefinition(host, resolved);

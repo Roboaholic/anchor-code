@@ -102,10 +102,26 @@ export async function resumeWorkspaceAgents(
   const agents = readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId)];
   if (!Array.isArray(agents) || agents.length === 0) return;
 
+  const liveAgentSessionIds = new Set(
+    useTerminalStore
+      .getState()
+      .tabs.filter(
+        (tab) =>
+          tab.kind === "agent" &&
+          normalizedCwd(tab.cwd) === normalizedCwd(cwd) &&
+          typeof tab.agentSessionId === "string" &&
+          tab.agentSessionId.trim().length > 0,
+      )
+      .map((tab) => tab.agentSessionId!),
+  );
+  const missingAgents = agents.filter(
+    (saved) => !liveAgentSessionIds.has(saved.sessionId),
+  );
+  if (missingAgents.length === 0) return;
   const profiles = await window.anchor.agent.listProfiles();
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
   const results = await Promise.allSettled(
-    agents.map(async (saved) => {
+    missingAgents.map(async (saved) => {
       const profile = byId.get(saved.profileId);
       if (!profile || profile.enabled === false) {
         throw new Error(`Agent profile unavailable: ${saved.profileId}`);

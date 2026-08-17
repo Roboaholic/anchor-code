@@ -68,6 +68,20 @@ async function loadChildren(
     children: e.type === "dir" ? [] : undefined,
   }));
 }
+async function loadWorkspaceInstancesSafe(): Promise<{
+  openWorkspaces: WorkspaceInstance[];
+  activeWorkspaceId: string | null;
+} | null> {
+  try {
+    const instances = await window.anchor.workspace.listOpenInstances();
+    return {
+      openWorkspaces: instances.openWorkspaces,
+      activeWorkspaceId: instances.activeWorkspaceId,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** Last path segment (basename), handling both / and \ separators. */
 export function basenameOf(p: string): string {
@@ -150,6 +164,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           : dirPath,
       );
       const { root, name, hostKind, hostProfileId, workspaceInstance } = opened;
+      const workspaceInstances = await loadWorkspaceInstancesSafe();
       const profileId = hostProfileId ?? opts?.hostProfileId ?? null;
 
       // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
@@ -161,8 +176,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         selectedPath: null,
         ...(workspaceInstance
           ? {
-              openWorkspaces: [workspaceInstance],
-              activeWorkspaceId: workspaceInstance.id,
+              openWorkspaces: workspaceInstances?.openWorkspaces ?? [workspaceInstance],
+              activeWorkspaceId: workspaceInstances?.activeWorkspaceId ?? workspaceInstance.id,
             }
           : {}),
         status: "loading",
@@ -192,8 +207,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         rootEntries,
         ...(workspaceInstance
           ? {
-              openWorkspaces: [workspaceInstance],
-              activeWorkspaceId: workspaceInstance.id,
+              openWorkspaces: workspaceInstances?.openWorkspaces ?? [workspaceInstance],
+              activeWorkspaceId: workspaceInstances?.activeWorkspaceId ?? workspaceInstance.id,
             }
           : {}),
         recent,

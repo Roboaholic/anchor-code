@@ -425,12 +425,16 @@ export async function recordActiveWorkspaceInstance(
     restore: existing?.restore ?? defaultWorkspaceRestoreState(),
   };
 
-  // The current backend owns one active workspace session. Keep the runtime file
-  // semantically honest until WorkspaceSessionManager supports multiple live sessions.
+  const compatibleOpenWorkspaces = previous.openWorkspaces.filter(
+    (item) =>
+      item.hostProfileId === input.hostProfileId &&
+      item.hostKind === input.hostKind &&
+      item.id !== id,
+  );
   await saveWorkspaceInstances({
     version: 1,
     activeWorkspaceId: id,
-    openWorkspaces: [instance],
+    openWorkspaces: [...compatibleOpenWorkspaces, instance],
   });
   return instance;
 }

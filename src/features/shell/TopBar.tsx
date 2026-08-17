@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { workspaceDisplayName } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { AppUpdateState, HostKind } from "@/shared/anchor-api";
@@ -49,12 +49,6 @@ function updateBadgeMeta(state: AppUpdateState | null): {
   return { show: false, title: "", label: "", icon: "cloud-download" };
 }
 
-function workspaceKey(path: string | null, hostProfileId: string | null): string {
-  return `${hostProfileId ?? "local-default"}::${(path ?? "")
-    .replace(/\\/g, "/")
-    .replace(/\/+$/, "")
-    .toLowerCase()}`;
-}
 
 function hostLabel(kind: HostKind | null, hostProfileId: string | null): string {
   if (kind === "local" || hostProfileId === "local-default") return "Local";
@@ -76,8 +70,6 @@ export function TopBar() {
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const hostKind = useWorkspaceStore((s) => s.hostKind);
   const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
-  const recent = useWorkspaceStore((s) => s.recent);
-  const loadRecent = useWorkspaceStore((s) => s.loadRecent);
   const settingsOpen = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
   const openSettings = useThemeStore((s) => s.openSettings);
@@ -88,27 +80,12 @@ export function TopBar() {
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
-  const activeWorkspaceKey = workspaceKey(workspaceRoot, hostProfileId);
   const activeWorkspaceName = workspaceRoot
     ? workspaceName || workspaceDisplayName(workspaceRoot)
     : "Open Workspace";
   const activeHostLabel = workspaceRoot
     ? hostLabel(hostKind, hostProfileId)
     : "";
-  const recentWorkspaces = useMemo(
-    () =>
-      recent.slice(0, 7).map((item) => {
-        const key = workspaceKey(item.path, item.hostProfileId);
-        return {
-          ...item,
-          key,
-          name: workspaceDisplayName(item.path),
-          hostLabel: hostLabel(null, item.hostProfileId),
-          isActive: key === activeWorkspaceKey,
-        };
-      }),
-    [activeWorkspaceKey, recent],
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -123,10 +100,6 @@ export function TopBar() {
       off?.();
     };
   }, []);
-
-  useEffect(() => {
-    void loadRecent();
-  }, [loadRecent]);
 
   useEffect(() => {
     if (!workspaceMenuOpen) return;
@@ -222,13 +195,6 @@ export function TopBar() {
     setOpenWorkspaceDialog(true);
   };
 
-  const openRecentWorkspace = async (path: string, profileId: string) => {
-    setWorkspaceMenuOpen(false);
-    if (workspaceKey(path, profileId) === activeWorkspaceKey) return;
-    const { openWorkspacePath } = await import("./orchestrate");
-    await openWorkspacePath(path, profileId);
-  };
-
   return (
     <header className="chrome">
       {/* Row 1: app menus (fused, not OS title strip) */}
@@ -312,47 +278,6 @@ export function TopBar() {
                       <span className="workspace-menu__item-host">
                         {activeHostLabel}
                       </span>
-                    </div>
-                  </div>
-                ) : null}
-
-                {recentWorkspaces.length > 0 ? (
-                  <div className="workspace-menu__section">
-                    <div className="workspace-menu__heading">Recent</div>
-                    <div className="workspace-menu__list">
-                      {recentWorkspaces.map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          role="menuitem"
-                          className={`workspace-menu__item${
-                            item.isActive ? " is-active" : ""
-                          }`}
-                          title={`${item.path} (${item.hostLabel})`}
-                          onClick={() =>
-                            void openRecentWorkspace(
-                              item.path,
-                              item.hostProfileId,
-                            )
-                          }
-                        >
-                          <Icon
-                            name={item.isActive ? "folder-opened" : "folder"}
-                            className="workspace-menu__item-icon"
-                          />
-                          <span className="workspace-menu__item-copy">
-                            <span className="workspace-menu__item-name">
-                              {item.name}
-                            </span>
-                            <span className="workspace-menu__item-path">
-                              {item.path}
-                            </span>
-                          </span>
-                          <span className="workspace-menu__item-host">
-                            {item.isActive ? "Current" : item.hostLabel}
-                          </span>
-                        </button>
-                      ))}
                     </div>
                   </div>
                 ) : null}

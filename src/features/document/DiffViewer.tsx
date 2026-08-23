@@ -361,7 +361,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   useEffect(() => {
     if (!workspaceRoot) return;
     const current = useAnnotationsStore.getState().repoRoot;
-    if (current !== workspaceRoot || useAnnotationsStore.getState().sessions.length === 0) {
+    if (current !== workspaceRoot) {
       void loadForRepo(workspaceRoot);
     }
   }, [workspaceRoot, loadForRepo]);

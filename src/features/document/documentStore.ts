@@ -41,6 +41,8 @@ export interface PersistedDocumentState {
 }
 
 const WORKSPACE_DOCUMENTS_KEY = "anchor.workspace.documents.v1";
+type DocumentWorkspaceView = { openItems: OpenItem[]; activeId: string | null };
+const documentWorkspaceViews = new Map<string, DocumentWorkspaceView>();
 
 function workspaceKey(workspaceRoot: string, hostProfileId: string | null): string {
   return `${hostProfileId ?? "local-default"}::${normalizePathKey(workspaceRoot)}`;
@@ -77,12 +79,37 @@ function persistedItem(item: OpenItem): PersistedOpenItem {
   };
 }
 
+export function captureWorkspaceDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): void {
+  const state = useDocumentStore.getState();
+  documentWorkspaceViews.set(workspaceKey(workspaceRoot, hostProfileId), {
+    openItems: state.openItems,
+    activeId: state.activeId,
+  });
+}
+
+export function restoreCachedWorkspaceDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): boolean {
+  const cached = documentWorkspaceViews.get(workspaceKey(workspaceRoot, hostProfileId));
+  if (!cached) return false;
+  useDocumentStore.setState({
+    openItems: cached.openItems,
+    activeId: cached.activeId,
+  });
+  return true;
+}
+
 export function saveWorkspaceDocuments(
   workspaceRoot: string,
   hostProfileId: string | null,
 ): void {
   try {
     const state = useDocumentStore.getState();
+    captureWorkspaceDocuments(workspaceRoot, hostProfileId);
     const activeIndex = Math.max(
       0,
       state.openItems.findIndex((item) => item.id === state.activeId),
@@ -102,6 +129,7 @@ export async function restoreWorkspaceDocuments(
   workspaceRoot: string,
   hostProfileId: string | null,
 ): Promise<void> {
+  if (restoreCachedWorkspaceDocuments(workspaceRoot, hostProfileId)) return;
   const saved = readPersistedDocuments()[workspaceKey(workspaceRoot, hostProfileId)];
   useDocumentStore.getState().closeAllFiles();
   if (!saved || !Array.isArray(saved.openItems)) return;

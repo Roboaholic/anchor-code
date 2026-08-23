@@ -23,26 +23,26 @@ type IndexCache = {
   at: number;
 };
 
-let fileIndexCache: IndexCache | null = null;
+const fileIndexCache = new Map<string, IndexCache>();
 /** In-flight warm so open-workspace + first Ctrl+P share one findFiles. */
-let fileIndexInflight: Promise<IndexCache> | null = null;
+const fileIndexInflight = new Map<string, Promise<IndexCache>>();
 
 async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
+  const cached = fileIndexCache.get(root);
   if (
     !force &&
-    fileIndexCache &&
-    fileIndexCache.root === root &&
-    fileIndexCache.files.length > 0 &&
-    Date.now() - fileIndexCache.at < FILE_INDEX_CACHE_TTL_MS
+    cached &&
+    cached.files.length > 0 &&
+    Date.now() - cached.at < FILE_INDEX_CACHE_TTL_MS
   ) {
-    return fileIndexCache;
+    return cached;
   }
 
   // Share one in-flight findFiles between workspace warm and first Ctrl+P.
-  if (!force && fileIndexInflight) {
+  const pending = !force ? fileIndexInflight.get(root) : undefined;
+  if (pending) {
     try {
-      const pending = await fileIndexInflight;
-      if (pending.root === root) return pending;
+      return await pending;
     } catch {
       // fall through to a fresh load
     }
@@ -57,35 +57,40 @@ async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
       source: result.source,
       at: Date.now(),
     };
-    fileIndexCache = next;
+    fileIndexCache.set(root, next);
     return next;
   })();
 
-  fileIndexInflight = run;
+  fileIndexInflight.set(root, run);
   try {
     return await run;
   } finally {
-    if (fileIndexInflight === run) fileIndexInflight = null;
+    if (fileIndexInflight.get(root) === run) fileIndexInflight.delete(root);
   }
 }
 
-export function invalidateFileIndexCache(): void {
-  fileIndexCache = null;
-  fileIndexInflight = null;
+export function invalidateFileIndexCache(root?: string): void {
+  if (root) {
+    fileIndexCache.delete(root);
+    fileIndexInflight.delete(root);
+    return;
+  }
+  fileIndexCache.clear();
+  fileIndexInflight.clear();
 }
 
 /** Background warm so the first Ctrl+P is not a cold multi-repo scan. */
 export function warmFileIndexCache(root: string | null | undefined): void {
   if (!root) return;
+  const cached = fileIndexCache.get(root);
   if (
-    fileIndexCache &&
-    fileIndexCache.root === root &&
-    fileIndexCache.files.length > 0 &&
-    Date.now() - fileIndexCache.at < FILE_INDEX_CACHE_TTL_MS
+    cached &&
+    cached.files.length > 0 &&
+    Date.now() - cached.at < FILE_INDEX_CACHE_TTL_MS
   ) {
     return;
   }
-  if (fileIndexInflight) return;
+  if (fileIndexInflight.has(root)) return;
   void loadFileIndex(root).catch(() => {
     // quiet warm — Quick Open will surface errors on demand
   });
@@ -191,7 +196,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
     setIndexMs(null);
     const t0 = performance.now();
     // Always re-fetch when dialog opens if last cache was empty (bad prior index).
-    const force = !fileIndexCache || fileIndexCache.files.length === 0;
+    const force = !fileIndexCache.get(workspaceRoot)?.files.length;
     void loadFileIndex(workspaceRoot, force)
       .then((idx) => {
         if (cancelled) return;

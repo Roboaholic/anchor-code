@@ -37,7 +37,7 @@ export function HistoryPane() {
   useEffect(() => {
     if (!workspaceRoot) return;
     if (discoverStatus === "loading") return;
-    if (repos.length > 0) return;
+    if (useHistoryStore.getState().workspaceRoot === workspaceRoot) return;
     if (discoverStatus === "error") return;
     void discover(workspaceRoot);
   }, [workspaceRoot, discoverStatus, repos.length, discover]);

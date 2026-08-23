@@ -18,7 +18,7 @@ import { TerminalService } from "../services/terminalService.js";
 import { FileWatcherService } from "../services/fileWatcherService.js";
 import {
   ensureWorkspaceDefinition,
-  loadWorkspaceInstances,
+  getLiveWorkspaceInstances,
   type WorkspaceDefinition,
   type WorkspaceInstance,
   type WorkspaceInstancesState,
@@ -530,7 +530,19 @@ export function registerIpc(opts: {
   ipcMain.handle(
     "workspace:listOpenInstances",
     async (): Promise<WorkspaceInstancesState> => {
-      return await loadWorkspaceInstances();
+      return getLiveWorkspaceInstances();
+    },
+  );
+  ipcMain.handle(
+    "workspace:activate",
+    async (_evt, id: string): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance: WorkspaceInstance }> => {
+      try {
+        fileWatcher.stop();
+        return await application.workspace.activate(id);
+      } catch (err) {
+        console.error("[ipc] workspace:activate failed:", err);
+        rethrowIpc(err);
+      }
     },
   );
   ipcMain.handle(

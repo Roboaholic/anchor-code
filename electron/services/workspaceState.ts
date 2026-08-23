@@ -135,6 +135,23 @@ function runtimePath(): string {
   return path.join(app.getPath("userData"), WORKSPACE_INSTANCES_FILE);
 }
 
+let liveWorkspaceState: WorkspaceInstancesState = {
+  version: 1,
+  activeWorkspaceId: null,
+  openWorkspaces: [],
+};
+
+export function getLiveWorkspaceInstances(): WorkspaceInstancesState {
+  return {
+    version: 1,
+    activeWorkspaceId: liveWorkspaceState.activeWorkspaceId,
+    openWorkspaces: liveWorkspaceState.openWorkspaces.map((item) => ({
+      ...item,
+      foreground: item.id === liveWorkspaceState.activeWorkspaceId,
+    })),
+  };
+}
+
 export function normalizeWorkspaceRoot(root: string, hostKind: HostKind): string {
   const normalized = root.replace(/\\/g, "/").replace(/\/+$/, "");
   return hostKind === "local" ? normalized.toLowerCase() : normalized;
@@ -402,16 +419,40 @@ export async function saveWorkspaceInstances(
   const file = runtimePath();
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, stringify(normalized), "utf8");
+  liveWorkspaceState = normalized;
   return normalized;
+}
+
+export async function activateWorkspaceInstance(
+  id: WorkspaceId,
+): Promise<WorkspaceInstance> {
+  const current = liveWorkspaceState.openWorkspaces.find((item) => item.id === id);
+  if (!current) throw new Error(`Workspace instance not found: ${id}`);
+  const updated = {
+    ...current,
+    lastActiveAt: new Date().toISOString(),
+    foreground: true,
+  };
+  await saveWorkspaceInstances({
+    version: 1,
+    activeWorkspaceId: id,
+    openWorkspaces: liveWorkspaceState.openWorkspaces.map((item) =>
+      item.id === id ? updated : item,
+    ),
+  });
+  return updated;
 }
 
 export async function recordActiveWorkspaceInstance(
   input: OpenWorkspaceInstanceInput,
 ): Promise<WorkspaceInstance> {
   const now = new Date().toISOString();
-  const previous = await loadWorkspaceInstances();
+  const persisted = await loadWorkspaceInstances();
+  const previous = getLiveWorkspaceInstances();
   const id = workspaceInstanceId(input.hostProfileId, input.root, input.hostKind);
-  const existing = previous.openWorkspaces.find((item) => item.id === id);
+  const existing =
+    previous.openWorkspaces.find((item) => item.id === id) ??
+    persisted.openWorkspaces.find((item) => item.id === id);
   const instance: WorkspaceInstance = {
     id,
     root: input.root,

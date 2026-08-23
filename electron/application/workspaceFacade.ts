@@ -3,6 +3,8 @@ import { hostBasename, hostJoin, hostNormalize } from "../host/paths.js";
 import { HostError } from "../host/types.js";
 import type { TerminalService } from "../services/terminalService.js";
 import {
+  activateWorkspaceInstance,
+  getLiveWorkspaceInstances,
   readWorkspaceDefinition,
   recordActiveWorkspaceInstance,
   type WorkspaceInstance,
@@ -146,6 +148,37 @@ export class WorkspaceFacade {
           hostLabel: profile?.label || profile?.kind || workspace.hostProfileId,
         };
       }),
+    };
+  }
+
+  async activate(
+    id: string,
+  ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance: WorkspaceInstance }> {
+    const target = getLiveWorkspaceInstances().openWorkspaces.find((item) => item.id === id);
+    if (!target) throw new HostError("not_found", `Workspace instance not found: ${id}`);
+
+    if (target.hostProfileId !== this.hosts.profileId) {
+      const profile = await this.registry.getHostProfile(target.hostProfileId);
+      if (!profile) throw new HostError("not_found", `Host profile not found: ${target.hostProfileId}`);
+      await this.hosts.useProfile(profile);
+    }
+
+    const host = this.hosts.session;
+    host.workspaceRoot = target.root;
+    const workspaceInstance = await activateWorkspaceInstance(id);
+    const current = {
+      path: target.root,
+      name: target.name,
+      hostProfileId: target.hostProfileId,
+      hostKind: target.hostKind,
+    };
+    this.onChanged?.(current, "desktop");
+    return {
+      root: target.root,
+      name: target.name,
+      hostKind: target.hostKind,
+      hostProfileId: target.hostProfileId,
+      workspaceInstance,
     };
   }
 

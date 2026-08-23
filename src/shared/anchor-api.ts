@@ -481,6 +481,13 @@ export interface AnchorApi {
       hostProfileId: string;
       workspaceInstance?: WorkspaceInstance;
     }>;
+    activate: (id: string) => Promise<{
+      root: string;
+      name: string;
+      hostKind: HostKind;
+      hostProfileId: string;
+      workspaceInstance: WorkspaceInstance;
+    }>;
     getRecent: () => Promise<RecentWorkspace[]>;
     listOpenInstances: () => Promise<WorkspaceInstancesState>;
     ensureDefinition: () => Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }>;

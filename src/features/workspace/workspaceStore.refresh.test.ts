@@ -45,6 +45,89 @@ describe("workspace root refresh", () => {
     ]);
   });
 
+  it("activates a cached workspace without entering a loading state", async () => {
+    const workspaceA = {
+      id: "workspace-a",
+      root: "/workspace-a",
+      name: "workspace-a",
+      hostProfileId: "wsl-default",
+      hostKind: "wsl" as const,
+      definitionPath: null,
+      openedAt: "2026-08-23T00:00:00.000Z",
+      lastActiveAt: "2026-08-23T00:00:00.000Z",
+      foreground: false,
+      restore: {
+        ui: {
+          leftMode: "files" as const,
+          selectedPath: null,
+          expandedDirs: [],
+          agentVisible: false,
+          terminalVisible: false,
+        },
+        documents: { activeItemId: null, openItems: [] },
+        agents: { activeAgentId: null, openSessions: [] },
+        terminals: { activeTerminalId: null, openTabs: [] },
+      },
+    };
+    const workspaceB = { ...workspaceA, id: "workspace-b", root: "/workspace-b", name: "workspace-b", foreground: true };
+    const cachedTree = [
+      {
+        name: "README.md",
+        path: "/workspace-b/README.md",
+        type: "file" as const,
+        loaded: true,
+        expanded: false,
+      },
+    ];
+    const activate = vi.fn().mockResolvedValue({
+      root: workspaceB.root,
+      name: workspaceB.name,
+      hostKind: workspaceB.hostKind,
+      hostProfileId: workspaceB.hostProfileId,
+      workspaceInstance: workspaceB,
+    });
+    const listOpenInstances = vi.fn().mockResolvedValue({
+      version: 1 as const,
+      activeWorkspaceId: workspaceB.id,
+      openWorkspaces: [workspaceA, workspaceB],
+    });
+
+    useWorkspaceStore.setState({
+      workspaceRoot: workspaceA.root,
+      workspaceName: workspaceA.name,
+      hostProfileId: workspaceA.hostProfileId,
+      hostKind: workspaceA.hostKind,
+      openWorkspaces: [workspaceA, workspaceB],
+      activeWorkspaceId: workspaceA.id,
+      rootEntries: [],
+      workspaceViews: {
+        [workspaceB.id]: {
+          rootEntries: cachedTree,
+          status: "ready",
+          error: null,
+          selectedPath: cachedTree[0]!.path,
+          loadedAt: "2026-08-23T00:00:00.000Z",
+        },
+      },
+      status: "ready",
+      error: null,
+      selectedPath: null,
+    });
+    vi.stubGlobal("window", {
+      anchor: {
+        workspace: { activate, listOpenInstances },
+      },
+    });
+
+    await useWorkspaceStore.getState().activateWorkspace(workspaceB.id);
+
+    expect(activate).toHaveBeenCalledWith(workspaceB.id);
+    expect(listOpenInstances).toHaveBeenCalledTimes(1);
+    expect(useWorkspaceStore.getState().workspaceRoot).toBe(workspaceB.root);
+    expect(useWorkspaceStore.getState().rootEntries).toBe(cachedTree);
+    expect(useWorkspaceStore.getState().selectedPath).toBe(cachedTree[0]!.path);
+    expect(useWorkspaceStore.getState().status).toBe("ready");
+  });
   it("restores a cached open workspace tree without reloading the root", async () => {
     const cachedTree = [
       {

@@ -48,6 +48,7 @@ export interface WorkspaceState {
     path: string,
     opts?: { hostProfileId?: string },
   ) => Promise<void>;
+  activateWorkspace: (id: string) => Promise<void>;
   pickAndOpen: () => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
   /** Reload a directory's contents (for auto-refresh); no-op unless expanded+loaded. */
@@ -284,6 +285,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (treeError) {
         console.warn("[workspace] listDir failed:", treeError);
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      set({ status: "error", error: message });
+      throw err;
+    }
+  },
+
+  activateWorkspace: async (id) => {
+    if (!window.anchor?.workspace?.activate) {
+      const message =
+        "IPC bridge missing (window.anchor.workspace.activate). Restart the Electron app.";
+      set({ status: "error", error: message });
+      throw new Error(message);
+    }
+    try {
+      const activated = await window.anchor.workspace.activate(id);
+      const workspaceInstances = await loadWorkspaceInstancesSafe();
+      const activeWorkspaceId =
+        workspaceInstances?.activeWorkspaceId ?? activated.workspaceInstance.id;
+      const cachedView = get().workspaceViews[activeWorkspaceId];
+      const restoredView =
+        cachedView?.status === "ready" || cachedView?.status === "error"
+          ? cachedView
+          : null;
+      set({
+        workspaceRoot: activated.root,
+        workspaceName: activated.name || workspaceDisplayName(activated.root),
+        hostKind: activated.hostKind,
+        hostProfileId: activated.hostProfileId,
+        rootEntries: restoredView?.rootEntries ?? [],
+        status: restoredView?.status ?? "ready",
+        error: restoredView?.error ?? null,
+        selectedPath: restoredView?.selectedPath ?? null,
+        openWorkspaces: workspaceInstances?.openWorkspaces ?? [activated.workspaceInstance],
+        activeWorkspaceId,
+        workspaceViews: activeWorkspaceId
+          ? {
+              ...get().workspaceViews,
+              [activeWorkspaceId]: restoredView ?? {
+                rootEntries: [],
+                status: "ready",
+                error: null,
+                selectedPath: null,
+                loadedAt: null,
+              },
+            }
+          : get().workspaceViews,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       set({ status: "error", error: message });

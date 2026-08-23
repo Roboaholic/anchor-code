@@ -239,8 +239,8 @@ export function TopBar() {
   const openWorkspaceEntry = async (workspace: WorkspaceInstance) => {
     setWorkspaceMenuOpen(false);
     if (workspace.id === activeWorkspaceId || workspace.root === workspaceRoot) return;
-    const { openWorkspacePath } = await import("./orchestrate");
-    await openWorkspacePath(workspace.root, workspace.hostProfileId);
+    const { activateWorkspace } = await import("./orchestrate");
+    await activateWorkspace(workspace.id);
   };
 
   return (

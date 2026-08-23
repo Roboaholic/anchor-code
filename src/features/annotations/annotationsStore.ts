@@ -152,6 +152,42 @@ export interface AnnotationsState {
   reset: () => void;
 }
 
+type AnnotationWorkspaceView = {
+  repoRoot: string | null;
+  activeSession: SessionRecord | null;
+  sessions: SessionRecord[];
+  expandedSessionId: string | null;
+  error: string | null;
+  toast: string | null;
+  loading: boolean;
+};
+const annotationWorkspaceViews = new Map<string, AnnotationWorkspaceView>();
+
+function annotationWorkspaceKey(root: string): string {
+  return root.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+export function captureWorkspaceAnnotationsView(root: string): void {
+  const state = useAnnotationsStore.getState();
+  annotationWorkspaceViews.set(annotationWorkspaceKey(root), {
+    repoRoot: state.repoRoot,
+    activeSession: state.activeSession,
+    sessions: state.sessions,
+    expandedSessionId: state.expandedSessionId,
+    error: state.error,
+    toast: state.toast,
+    loading: state.loading,
+  });
+}
+
+export function restoreWorkspaceAnnotationsView(root: string): boolean {
+  const view = annotationWorkspaceViews.get(annotationWorkspaceKey(root));
+  if (!view) return false;
+  useAnnotationsStore.setState(view);
+  startDiskWatch(root);
+  return true;
+}
+
 function lastMessagePreview(c: CommentRecord): string {
   const last = c.messages[c.messages.length - 1];
   const text = commentBodyForDisplay(last?.body ?? "");

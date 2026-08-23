@@ -95,6 +95,45 @@ export interface HistoryState {
   reset: () => void;
 }
 
+type HistoryWorkspaceView = {
+  workspaceRoot: string | null;
+  discoverStatus: HistoryState["discoverStatus"];
+  discoverError: string | null;
+  repos: RepoCardState[];
+  recentCompares: HistoryCompareEntry[];
+  toast: string | null;
+};
+const historyWorkspaceViews = new Map<string, HistoryWorkspaceView>();
+
+function historyWorkspaceKey(root: string, hostProfileId: string | null): string {
+  return `${hostProfileId ?? "local-default"}::${root.replace(/\\/g, "/").replace(/\/+$/, "")}`;
+}
+
+export function captureWorkspaceHistoryView(
+  root: string,
+  hostProfileId: string | null,
+): void {
+  const state = useHistoryStore.getState();
+  historyWorkspaceViews.set(historyWorkspaceKey(root, hostProfileId), {
+    workspaceRoot: state.workspaceRoot,
+    discoverStatus: state.discoverStatus,
+    discoverError: state.discoverError,
+    repos: state.repos,
+    recentCompares: state.recentCompares,
+    toast: state.toast,
+  });
+}
+
+export function restoreWorkspaceHistoryView(
+  root: string,
+  hostProfileId: string | null,
+): boolean {
+  const view = historyWorkspaceViews.get(historyWorkspaceKey(root, hostProfileId));
+  if (!view) return false;
+  useHistoryStore.setState(view);
+  return true;
+}
+
 function emptyCard(repo: RepoInfo): RepoCardState {
   return {
     root: repo.root,

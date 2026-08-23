@@ -105,6 +105,67 @@ export interface RecentWorkspace {
   lastOpenedAt: string;
 }
 
+
+export interface WorkspaceDefinition {
+  version: 1;
+  workspace?: {
+    name?: string;
+    kind?: "project" | "repo" | "folder";
+    idHint?: string;
+  };
+  host?: { preferredKind?: HostKind };
+  paths?: {
+    root?: string;
+    defaultOpen?: string[];
+    exclude?: string[];
+  };
+  agents?: {
+    defaultProfileId?: string;
+    suggestedProfiles?: string[];
+  };
+  ui?: { defaultLeftMode?: "files" | "comments" | "history" };
+}
+
+export interface WorkspaceRestoreState {
+  ui: {
+    leftMode: "files" | "comments" | "history";
+    selectedPath: string | null;
+    expandedDirs: string[];
+    agentVisible: boolean;
+    terminalVisible: boolean;
+  };
+  documents: {
+    activeItemId: string | null;
+    openItems: Array<Record<string, unknown>>;
+  };
+  agents: {
+    activeAgentId: string | null;
+    openSessions: Array<Record<string, unknown>>;
+  };
+  terminals: {
+    activeTerminalId: string | null;
+    openTabs: Array<Record<string, unknown>>;
+  };
+}
+
+export interface WorkspaceInstance {
+  id: string;
+  root: string;
+  name: string;
+  hostProfileId: string;
+  hostKind: HostKind;
+  definitionPath: string | null;
+  openedAt: string;
+  lastActiveAt: string;
+  foreground: boolean;
+  restore: WorkspaceRestoreState;
+}
+
+export interface WorkspaceInstancesState {
+  version: 1;
+  activeWorkspaceId: string | null;
+  openWorkspaces: WorkspaceInstance[];
+}
 export interface ReadTextResult {
   text: string;
   size: number;
@@ -418,8 +479,18 @@ export interface AnchorApi {
       name: string;
       hostKind: HostKind;
       hostProfileId: string;
+      workspaceInstance?: WorkspaceInstance;
+    }>;
+    activate: (id: string) => Promise<{
+      root: string;
+      name: string;
+      hostKind: HostKind;
+      hostProfileId: string;
+      workspaceInstance: WorkspaceInstance;
     }>;
     getRecent: () => Promise<RecentWorkspace[]>;
+    listOpenInstances: () => Promise<WorkspaceInstancesState>;
+    ensureDefinition: () => Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }>;
     listDir: (path: string) => Promise<DirEntry[]>;
     readText: (path: string) => Promise<ReadTextResult>;
     stat: (path: string) => Promise<StatResult>;

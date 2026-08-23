@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DirEntry, RecentWorkspace } from "@/shared/anchor-api";
+import type { DirEntry, RecentWorkspace, WorkspaceInstance } from "@/shared/anchor-api";
 import {
   joinPath,
   shouldHideTreeEntry,
@@ -18,22 +18,37 @@ export interface TreeNode {
   error?: string;
 }
 
+type WorkspaceTreeStatus = "idle" | "loading" | "ready" | "error";
+
+export interface WorkspaceViewState {
+  rootEntries: TreeNode[];
+  status: WorkspaceTreeStatus;
+  error: string | null;
+  selectedPath: string | null;
+  loadedAt: string | null;
+}
+
 export interface WorkspaceState {
   workspaceRoot: string | null;
   workspaceName: string | null;
   hostProfileId: string | null;
   hostKind: "local" | "wsl" | "ssh" | null;
   recent: RecentWorkspace[];
+  openWorkspaces: WorkspaceInstance[];
+  activeWorkspaceId: string | null;
   rootEntries: TreeNode[];
-  status: "idle" | "loading" | "ready" | "error";
+  workspaceViews: Record<string, WorkspaceViewState>;
+  status: WorkspaceTreeStatus;
   error: string | null;
   selectedPath: string | null;
 
   loadRecent: () => Promise<void>;
+  loadOpenWorkspaces: () => Promise<void>;
   openPath: (
     path: string,
     opts?: { hostProfileId?: string },
   ) => Promise<void>;
+  activateWorkspace: (id: string) => Promise<void>;
   pickAndOpen: () => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
   /** Reload a directory's contents (for auto-refresh); no-op unless expanded+loaded. */
@@ -64,6 +79,44 @@ async function loadChildren(
     loaded: e.type === "file" ? true : false,
     children: e.type === "dir" ? [] : undefined,
   }));
+}
+async function loadWorkspaceInstancesSafe(): Promise<{
+  openWorkspaces: WorkspaceInstance[];
+  activeWorkspaceId: string | null;
+} | null> {
+  try {
+    const instances = await window.anchor.workspace.listOpenInstances();
+    return {
+      openWorkspaces: instances.openWorkspaces,
+      activeWorkspaceId: instances.activeWorkspaceId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function snapshotCurrentView(state: WorkspaceState): WorkspaceViewState {
+  return {
+    rootEntries: state.rootEntries,
+    status: state.status,
+    error: state.error,
+    selectedPath: state.selectedPath,
+    loadedAt: null,
+  };
+}
+
+function updateActiveWorkspaceView(
+  state: WorkspaceState,
+  updates: Partial<WorkspaceViewState>,
+): Record<string, WorkspaceViewState> {
+  if (!state.activeWorkspaceId) return state.workspaceViews;
+  return {
+    ...state.workspaceViews,
+    [state.activeWorkspaceId]: {
+      ...(state.workspaceViews[state.activeWorkspaceId] ?? snapshotCurrentView(state)),
+      ...updates,
+    },
+  };
 }
 
 /** Last path segment (basename), handling both / and \ separators. */
@@ -104,7 +157,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   hostProfileId: null,
   hostKind: null,
   recent: [],
+  openWorkspaces: [],
+  activeWorkspaceId: null,
   rootEntries: [],
+  workspaceViews: {},
   status: "idle",
   error: null,
   selectedPath: null,
@@ -113,6 +169,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const recent = await window.anchor.workspace.getRecent();
       set({ recent });
+    } catch {
+      // non-fatal
+    }
+  },
+
+  loadOpenWorkspaces: async () => {
+    try {
+      const instances = await window.anchor.workspace.listOpenInstances();
+      set({
+        openWorkspaces: instances.openWorkspaces,
+        activeWorkspaceId: instances.activeWorkspaceId,
+      });
     } catch {
       // non-fatal
     }
@@ -132,8 +200,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ? { path: dirPath, hostProfileId: opts.hostProfileId }
           : dirPath,
       );
-      const { root, name, hostKind, hostProfileId } = opened;
+      const { root, name, hostKind, hostProfileId, workspaceInstance } = opened;
+      const workspaceInstances = await loadWorkspaceInstancesSafe();
       const profileId = hostProfileId ?? opts?.hostProfileId ?? null;
+      const activeWorkspaceId =
+        workspaceInstances?.activeWorkspaceId ?? workspaceInstance?.id ?? null;
+      const cachedView = activeWorkspaceId
+        ? get().workspaceViews[activeWorkspaceId]
+        : undefined;
+      const restoredView =
+        cachedView?.status === "ready" || cachedView?.status === "error"
+          ? cachedView
+          : null;
 
       // Commit root immediately so UI leaves "NO WORKSPACE" even if tree load fails.
       set({
@@ -141,17 +219,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         workspaceName: name || workspaceDisplayName(root),
         hostKind: hostKind ?? null,
         hostProfileId: profileId,
-        selectedPath: null,
-        status: "loading",
-        error: null,
+        rootEntries: restoredView ? restoredView.rootEntries : [],
+        selectedPath: restoredView ? restoredView.selectedPath : null,
+        ...(workspaceInstance
+          ? {
+              openWorkspaces: workspaceInstances?.openWorkspaces ?? [workspaceInstance],
+              activeWorkspaceId,
+            }
+          : {}),
+        status: restoredView ? restoredView.status : "loading",
+        error: restoredView ? restoredView.error : null,
       });
 
       let rootEntries: TreeNode[] = [];
       let treeError: string | null = null;
-      try {
-        rootEntries = await loadChildren(root);
-      } catch (err) {
-        treeError = err instanceof Error ? err.message : String(err);
+      if (restoredView) {
+        rootEntries = restoredView.rootEntries;
+        treeError = restoredView.error;
+      } else {
+        try {
+          rootEntries = await loadChildren(root);
+        } catch (err) {
+          treeError = err instanceof Error ? err.message : String(err);
+        }
       }
 
       let recent = get().recent;
@@ -167,14 +257,82 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hostKind: hostKind ?? get().hostKind,
         hostProfileId: profileId ?? get().hostProfileId,
         rootEntries,
+        workspaceViews: activeWorkspaceId
+          ? {
+              ...get().workspaceViews,
+              [activeWorkspaceId]: {
+                rootEntries,
+                status: treeError ? "error" : "ready",
+                error: treeError,
+                selectedPath: restoredView ? restoredView.selectedPath : null,
+                loadedAt: restoredView
+                  ? restoredView.loadedAt
+                  : new Date().toISOString(),
+              },
+            }
+          : get().workspaceViews,
+        ...(workspaceInstance
+          ? {
+              openWorkspaces: workspaceInstances?.openWorkspaces ?? [workspaceInstance],
+              activeWorkspaceId,
+            }
+          : {}),
         recent,
         status: treeError ? "error" : "ready",
         error: treeError,
-        selectedPath: null,
+        selectedPath: restoredView ? restoredView.selectedPath : null,
       });
       if (treeError) {
         console.warn("[workspace] listDir failed:", treeError);
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      set({ status: "error", error: message });
+      throw err;
+    }
+  },
+
+  activateWorkspace: async (id) => {
+    if (!window.anchor?.workspace?.activate) {
+      const message =
+        "IPC bridge missing (window.anchor.workspace.activate). Restart the Electron app.";
+      set({ status: "error", error: message });
+      throw new Error(message);
+    }
+    try {
+      const activated = await window.anchor.workspace.activate(id);
+      const workspaceInstances = await loadWorkspaceInstancesSafe();
+      const activeWorkspaceId =
+        workspaceInstances?.activeWorkspaceId ?? activated.workspaceInstance.id;
+      const cachedView = get().workspaceViews[activeWorkspaceId];
+      const restoredView =
+        cachedView?.status === "ready" || cachedView?.status === "error"
+          ? cachedView
+          : null;
+      set({
+        workspaceRoot: activated.root,
+        workspaceName: activated.name || workspaceDisplayName(activated.root),
+        hostKind: activated.hostKind,
+        hostProfileId: activated.hostProfileId,
+        rootEntries: restoredView?.rootEntries ?? [],
+        status: restoredView?.status ?? "ready",
+        error: restoredView?.error ?? null,
+        selectedPath: restoredView?.selectedPath ?? null,
+        openWorkspaces: workspaceInstances?.openWorkspaces ?? [activated.workspaceInstance],
+        activeWorkspaceId,
+        workspaceViews: activeWorkspaceId
+          ? {
+              ...get().workspaceViews,
+              [activeWorkspaceId]: restoredView ?? {
+                rootEntries: [],
+                status: "ready",
+                error: null,
+                selectedPath: null,
+                loadedAt: null,
+              },
+            }
+          : get().workspaceViews,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       set({ status: "error", error: message });
@@ -248,7 +406,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     };
 
     const next = await updateNode(rootEntries);
-    set({ rootEntries: next });
+    set((state) => ({
+      rootEntries: next,
+      workspaceViews: updateActiveWorkspaceView(state, { rootEntries: next }),
+    }));
   },
 
   refreshDir: async (dirPath) => {
@@ -284,8 +445,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => {
       // Apply against the latest tree so concurrent watcher refreshes compose.
       if (dirPath === workspaceRoot) {
+        const rootEntries = preserveLoadedState(children, state.rootEntries);
         return {
-          rootEntries: preserveLoadedState(children, state.rootEntries),
+          rootEntries,
+          workspaceViews: updateActiveWorkspaceView(state, {
+            rootEntries,
+            status: "ready",
+            error: null,
+            loadedAt: new Date().toISOString(),
+          }),
         };
       }
 
@@ -303,7 +471,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           return { ...node, children: reloadNode(node.children) };
         });
 
-      return { rootEntries: reloadNode(state.rootEntries) };
+      const rootEntries = reloadNode(state.rootEntries);
+      return {
+        rootEntries,
+        workspaceViews: updateActiveWorkspaceView(state, {
+          rootEntries,
+          status: "ready",
+          error: null,
+          loadedAt: new Date().toISOString(),
+        }),
+      };
     });
   },
 
@@ -312,7 +489,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Clear selection if the deleted path was selected (or a parent of it).
     const sel = get().selectedPath;
     if (sel && (sel === path || sel.startsWith(path + "/") || sel.startsWith(path + "\\"))) {
-      set({ selectedPath: null });
+      get().setSelectedPath(null);
     }
     await get().refreshDir(parentDirOf(path));
   },
@@ -322,7 +499,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const newPath = joinPath(parent, newName.trim());
     await window.anchor.workspace.renamePath(oldPath, newPath);
     if (get().selectedPath === oldPath) {
-      set({ selectedPath: newPath });
+      get().setSelectedPath(newPath);
     }
     await get().refreshDir(parent);
   },
@@ -345,5 +522,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return res.path ?? null;
   },
 
-  setSelectedPath: (path) => set({ selectedPath: path }),
+  setSelectedPath: (path) => {
+    set((state) => ({
+      selectedPath: path,
+      workspaceViews: updateActiveWorkspaceView(state, { selectedPath: path }),
+    }));
+  },
 }));

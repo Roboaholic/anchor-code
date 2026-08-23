@@ -170,7 +170,7 @@ export function FileTree() {
     const off =
       window.anchor?.workspace?.onFileChange?.(({ dir }) => {
         void refreshDir(dir);
-        invalidateFileIndexCache();
+        invalidateFileIndexCache(workspaceRoot);
         warmFileIndexCache(workspaceRoot);
       }) ?? (() => undefined);
     return off;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { workspaceDisplayName } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
-import type { AppUpdateState } from "@/shared/anchor-api";
+import type { AppUpdateState, HostKind, WorkspaceInstance } from "@/shared/anchor-api";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
@@ -48,6 +49,16 @@ function updateBadgeMeta(state: AppUpdateState | null): {
   return { show: false, title: "", label: "", icon: "cloud-download" };
 }
 
+
+function hostLabel(kind: HostKind | null, hostProfileId: string | null): string {
+  if (kind === "local" || hostProfileId === "local-default") return "Local";
+  if (kind === "wsl" || hostProfileId === "wsl-default") return "WSL";
+  if (kind === "ssh") return "SSH";
+  if (!hostProfileId) return "Host";
+  if (hostProfileId.startsWith("ssh-")) return "SSH";
+  if (hostProfileId.startsWith("wsl-")) return "WSL";
+  return hostProfileId;
+}
 export function TopBar() {
   const agentVisible = useShellStore((s) => s.agentVisible);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
@@ -56,13 +67,62 @@ export function TopBar() {
   const openPalette = useShellStore((s) => s.openPalette);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const hostKind = useWorkspaceStore((s) => s.hostKind);
+  const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
+  const openWorkspaces = useWorkspaceStore((s) => s.openWorkspaces);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const loadOpenWorkspaces = useWorkspaceStore((s) => s.loadOpenWorkspaces);
   const settingsOpen = useThemeStore((s) => s.settingsOpen);
   const setSettingsOpen = useThemeStore((s) => s.setSettingsOpen);
   const openSettings = useThemeStore((s) => s.openSettings);
   const rightRailRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [rightRailTip, setRightRailTip] = useState(false);
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
+
+  const activeWorkspace =
+    openWorkspaces.find((item) => item.id === activeWorkspaceId) ??
+    openWorkspaces.find((item) => item.foreground) ??
+    null;
+  const activeWorkspaceName = workspaceRoot
+    ? activeWorkspace?.name || workspaceName || workspaceDisplayName(workspaceRoot)
+    : "Open Workspace";
+  const activeHostLabel = workspaceRoot
+    ? hostLabel(activeWorkspace?.hostKind ?? hostKind, activeWorkspace?.hostProfileId ?? hostProfileId)
+    : "";
+  const workspaceMenuItems: WorkspaceInstance[] =
+    openWorkspaces.length > 0
+      ? openWorkspaces
+      : workspaceRoot && hostKind && hostProfileId
+        ? [
+            {
+              id: `${hostProfileId}::${workspaceRoot}`,
+              root: workspaceRoot,
+              name: workspaceName || workspaceDisplayName(workspaceRoot),
+              hostProfileId,
+              hostKind,
+              definitionPath: null,
+              openedAt: "",
+              lastActiveAt: "",
+              foreground: true,
+              restore: {
+                ui: {
+                  leftMode: "files",
+                  selectedPath: null,
+                  expandedDirs: [],
+                  agentVisible: false,
+                  terminalVisible: false,
+                },
+                documents: { activeItemId: null, openItems: [] },
+                agents: { activeAgentId: null, openSessions: [] },
+                terminals: { activeTerminalId: null, openTabs: [] },
+              },
+            },
+          ]
+        : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +137,33 @@ export function TopBar() {
       off?.();
     };
   }, []);
+
+  useEffect(() => {
+    void loadOpenWorkspaces();
+  }, [loadOpenWorkspaces]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        workspaceMenuRef.current &&
+        !workspaceMenuRef.current.contains(event.target as Node)
+      ) {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWorkspaceMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceMenuOpen]);
 
   useEffect(() => {
     return () => {
@@ -144,6 +231,18 @@ export function TopBar() {
     useShellStore.setState((s) => ({ terminalVisible: !s.terminalVisible }));
   };
 
+  const openWorkspaceDialog = () => {
+    setWorkspaceMenuOpen(false);
+    setOpenWorkspaceDialog(true);
+  };
+
+  const openWorkspaceEntry = async (workspace: WorkspaceInstance) => {
+    setWorkspaceMenuOpen(false);
+    if (workspace.id === activeWorkspaceId || workspace.root === workspaceRoot) return;
+    const { activateWorkspace } = await import("./orchestrate");
+    await activateWorkspace(workspace.id);
+  };
+
   return (
     <header className="chrome">
       {/* Row 1: app menus (fused, not OS title strip) */}
@@ -159,6 +258,113 @@ export function TopBar() {
           >
             Anchor Code
           </span>
+          <div className="topbar__workspace" ref={workspaceMenuRef}>
+            <button
+              type="button"
+              className={`workspace-switcher${
+                workspaceRoot ? "" : " is-empty"
+              }${workspaceMenuOpen ? " is-open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={workspaceMenuOpen}
+              aria-label={
+                workspaceRoot
+                  ? `Current workspace: ${activeWorkspaceName}`
+                  : "Open workspace"
+              }
+              title={
+                workspaceRoot
+                  ? `${workspaceRoot} (${activeHostLabel})`
+                  : "Open Workspace"
+              }
+              onClick={() => setWorkspaceMenuOpen((open) => !open)}
+            >
+              <Icon
+                name={workspaceRoot ? "folder" : "folder-opened"}
+                className="workspace-switcher__icon"
+              />
+              <span className="workspace-switcher__name">
+                {activeWorkspaceName}
+              </span>
+              {activeHostLabel ? (
+                <span className="workspace-switcher__host">
+                  {activeHostLabel}
+                </span>
+              ) : null}
+              <Icon
+                name="chevron-down"
+                className="workspace-switcher__chevron"
+              />
+            </button>
+
+            {workspaceMenuOpen ? (
+              <div
+                className="workspace-menu"
+                role="menu"
+                aria-label="Workspaces"
+              >
+                {workspaceMenuItems.length > 0 ? (
+                  <div className="workspace-menu__section">
+                    <div className="workspace-menu__heading">
+                      Open Workspaces
+                    </div>
+                    <div className="workspace-menu__list">
+                      {workspaceMenuItems.map((item) => {
+                        const isActive =
+                          item.id === activeWorkspaceId ||
+                          (item.root === workspaceRoot &&
+                            item.hostProfileId === hostProfileId);
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="menuitem"
+                            className={`workspace-menu__item${
+                              isActive ? " is-active" : ""
+                            }`}
+                            title={`${item.root} (${hostLabel(item.hostKind, item.hostProfileId)})`}
+                            onClick={() => void openWorkspaceEntry(item)}
+                          >
+                            <Icon
+                              name={isActive ? "folder-opened" : "folder"}
+                              className="workspace-menu__item-icon"
+                            />
+                            <span className="workspace-menu__item-copy">
+                              <span className="workspace-menu__item-name">
+                                {item.name}
+                              </span>
+                              <span
+                                className="workspace-menu__item-path"
+                                title={item.root}
+                              >
+                                {item.root}
+                              </span>
+                            </span>
+                            <span className="workspace-menu__item-host">
+                              {isActive
+                                ? "Current"
+                                : hostLabel(item.hostKind, item.hostProfileId)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="workspace-menu__footer">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="workspace-menu__open"
+                    onClick={openWorkspaceDialog}
+                  >
+                    <Icon name="add" className="workspace-menu__open-icon" />
+                    Open Workspace
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
 
 

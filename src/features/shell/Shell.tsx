@@ -15,7 +15,6 @@ import { Icon } from "@/shared/Icon";
 import { LeftNav } from "./LeftNav";
 import {
   QuickOpenPalette,
-  invalidateFileIndexCache,
   warmFileIndexCache,
 } from "./QuickOpen";
 import { NewAgentDialogHost } from "@/features/terminal/NewAgentDialogHost";
@@ -388,7 +387,6 @@ export function Shell() {
   const setAgentVisible = useShellStore((s) => s.setAgentVisible);
   const setTerminalVisible = useShellStore((s) => s.setTerminalVisible);
   useEffect(() => {
-    invalidateFileIndexCache();
     // Start multi-repo indexing before the user hits Ctrl+P.
     warmFileIndexCache(workspaceRoot);
   }, [workspaceRoot]);

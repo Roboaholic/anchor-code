@@ -4,6 +4,31 @@ export type LeftMode = "files" | "comments" | "history";
 
 export type PaletteMode = "quickOpen" | "openPath";
 
+type WorkspaceShellView = {
+  leftMode: LeftMode;
+  leftVisible: boolean;
+  agentVisible: boolean;
+  terminalVisible: boolean;
+};
+const workspaceShellViews = new Map<string, WorkspaceShellView>();
+
+export function captureWorkspaceShellView(key: string): void {
+  const state = useShellStore.getState();
+  workspaceShellViews.set(key, {
+    leftMode: state.leftMode,
+    leftVisible: state.leftVisible,
+    agentVisible: state.agentVisible,
+    terminalVisible: state.terminalVisible,
+  });
+}
+
+export function restoreWorkspaceShellView(key: string): boolean {
+  const view = workspaceShellViews.get(key);
+  if (!view) return false;
+  useShellStore.setState(view);
+  return true;
+}
+
 export interface ShellState {
   leftMode: LeftMode;
   /** Files / Comments / History sidebar. */

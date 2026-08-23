@@ -2,22 +2,38 @@
  * Shell use-case orchestration — cross-feature flows only.
  */
 import { resolveAnchor } from "@/core/annotations/anchor";
-import { joinPath } from "@/core/workspace/paths";
-import { useAnnotationsStore } from "@/features/annotations/annotationsStore";
 import {
+  captureWorkspaceAnnotationsView,
+  restoreWorkspaceAnnotationsView,
+  useAnnotationsStore,
+} from "@/features/annotations/annotationsStore";
+import { joinPath } from "@/core/workspace/paths";
+
+import {
+  restoreCachedWorkspaceDocuments,
   restoreWorkspaceDocuments,
   saveWorkspaceDocuments,
   useDocumentStore,
 } from "@/features/document/documentStore";
-import { useHistoryStore } from "@/features/history/historyStore";
 import {
+  captureWorkspaceHistoryView,
+  restoreWorkspaceHistoryView,
+  useHistoryStore,
+} from "@/features/history/historyStore";
+import {
+  captureWorkspaceTerminalView,
+  restoreWorkspaceTerminalView,
   resumeWorkspaceAgents,
   saveWorkspaceAgents,
   useTerminalStore,
 } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { CommentRecord, HostKind } from "@/shared/anchor-api";
-import { useShellStore } from "./shellStore";
+import {
+  captureWorkspaceShellView,
+  restoreWorkspaceShellView,
+  useShellStore,
+} from "./shellStore";
 
 /** Opens the Local / WSL chooser dialog (Windows) or local picker flow. */
 export function openWorkspaceFromPicker(): void {
@@ -32,6 +48,9 @@ export async function openWorkspaceWithHost(args: {
   await openWorkspacePath(args.path, args.hostProfileId);
 }
 
+function workspaceViewKey(root: string, hostProfileId: string | null): string {
+  return `${hostProfileId ?? "local-default"}::${root.replace(/\\/g, "/").replace(/\/+$/, "")}`;
+}
 export async function openWorkspacePath(
   path: string,
   hostProfileId?: string,
@@ -41,6 +60,10 @@ export async function openWorkspacePath(
     if (previous.workspaceRoot) {
       saveWorkspaceDocuments(previous.workspaceRoot, previous.hostProfileId);
       saveWorkspaceAgents(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceHistoryView(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceAnnotationsView(previous.workspaceRoot);
+      captureWorkspaceTerminalView(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceShellView(workspaceViewKey(previous.workspaceRoot, previous.hostProfileId));
     }
     await useWorkspaceStore.getState().openPath(path, { hostProfileId });
     const workspace = useWorkspaceStore.getState();
@@ -54,6 +77,55 @@ export async function openWorkspacePath(
   }
 }
 
+export async function activateWorkspace(id: string): Promise<void> {
+  try {
+    const previous = useWorkspaceStore.getState();
+    if (previous.workspaceRoot) {
+      saveWorkspaceDocuments(previous.workspaceRoot, previous.hostProfileId);
+      saveWorkspaceAgents(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceHistoryView(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceAnnotationsView(previous.workspaceRoot);
+      captureWorkspaceTerminalView(previous.workspaceRoot, previous.hostProfileId);
+      captureWorkspaceShellView(workspaceViewKey(previous.workspaceRoot, previous.hostProfileId));
+    }
+
+    await useWorkspaceStore.getState().activateWorkspace(id);
+    const workspace = useWorkspaceStore.getState();
+    if (!workspace.workspaceRoot) return;
+
+    const restoredDocuments = restoreCachedWorkspaceDocuments(
+      workspace.workspaceRoot,
+      workspace.hostProfileId,
+    );
+    if (!restoredDocuments) {
+      await restoreWorkspaceDocuments(workspace.workspaceRoot, workspace.hostProfileId);
+    }
+
+    restoreWorkspaceHistoryView(workspace.workspaceRoot, workspace.hostProfileId);
+    restoreWorkspaceAnnotationsView(workspace.workspaceRoot);
+
+    const restoredTerminal = restoreWorkspaceTerminalView(
+      workspace.workspaceRoot,
+      workspace.hostProfileId,
+    );
+    if (!restoredTerminal) {
+      await useTerminalStore.getState().resetForWorkspace(workspace.workspaceRoot);
+      await resumeWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
+    }
+
+    const key = workspaceViewKey(workspace.workspaceRoot, workspace.hostProfileId);
+    if (!restoreWorkspaceShellView(key)) {
+      const hasAgents = useTerminalStore
+        .getState()
+        .tabs.some((tab) => tab.kind === "agent");
+      useShellStore.getState().setAgentVisible(hasAgents);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[shell] activateWorkspace failed:", err);
+    useWorkspaceStore.setState({ status: "error", error: message });
+  }
+}
 async function afterWorkspaceOpened(
   root: string,
   hostProfileId: string | null,

@@ -17,6 +17,13 @@ import type { RepoStatus } from "../services/historyService.js";
 import { TerminalService } from "../services/terminalService.js";
 import { FileWatcherService } from "../services/fileWatcherService.js";
 import {
+  ensureWorkspaceDefinition,
+  getLiveWorkspaceInstances,
+  type WorkspaceDefinition,
+  type WorkspaceInstance,
+  type WorkspaceInstancesState,
+} from "../services/workspaceState.js";
+import {
   getSkillInstallStatus,
   installSkill,
   installSkillToWorkspace,
@@ -521,6 +528,38 @@ export function registerIpc(opts: {
   );
 
   ipcMain.handle(
+    "workspace:listOpenInstances",
+    async (): Promise<WorkspaceInstancesState> => {
+      return getLiveWorkspaceInstances();
+    },
+  );
+  ipcMain.handle(
+    "workspace:activate",
+    async (_evt, id: string): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance: WorkspaceInstance }> => {
+      try {
+        fileWatcher.stop();
+        return await application.workspace.activate(id);
+      } catch (err) {
+        console.error("[ipc] workspace:activate failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
+  ipcMain.handle(
+    "workspace:ensureDefinition",
+    async (): Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }> => {
+      try {
+        const active = application.workspace.active();
+        if (!active) throw new HostError("failed", "No workspace open");
+        return await ensureWorkspaceDefinition(host(), active.path, active.name);
+      } catch (err) {
+        console.error("[ipc] workspace:ensureDefinition failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     "workspace:pickFolder",
     async (): Promise<string | null> => {
       try {
@@ -560,7 +599,7 @@ export function registerIpc(opts: {
     async (
       _evt,
       args: string | { path: string; hostProfileId?: string },
-    ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string }> => {
+    ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance?: WorkspaceInstance }> => {
       try {
         const dirPath = typeof args === "string" ? args : args.path;
         const requestedProfileId =

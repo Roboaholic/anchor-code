@@ -5,7 +5,6 @@ import type {
   TerminalTabInfo,
 } from "@/shared/anchor-api";
 import {
-  disposeAllXtermSessions,
   disposeXtermSession,
 } from "./xtermSessionPool";
 
@@ -50,6 +49,14 @@ const SESSION_LIST_KEY_LEGACY = "anchor.terminal.sessionListOpen";
 const WORKSPACE_AGENTS_KEY = "anchor.workspace.agents.v1";
 
 type PersistedAgent = { profileId: string; sessionId: string; title: string };
+type TerminalWorkspaceView = {
+  tabs: TerminalTabInfo[];
+  activeByMode: Record<RightTermMode, string | null>;
+  agentActivity: Record<string, AgentActivityState>;
+  mode: RightTermMode;
+  sessionListOpenByMode: Record<RightTermMode, boolean>;
+};
+const terminalWorkspaceViews = new Map<string, TerminalWorkspaceView>();
 
 function workspaceAgentKey(cwd: string, hostProfileId: string | null): string {
   return `${hostProfileId ?? "local-default"}::${normalizedCwd(cwd)}`;
@@ -68,11 +75,60 @@ function readPersistedAgents(): Record<string, PersistedAgent[]> {
   }
 }
 
+export function captureWorkspaceTerminalView(
+  cwd: string,
+  hostProfileId: string | null,
+): void {
+  const key = workspaceAgentKey(cwd, hostProfileId);
+  const state = useTerminalStore.getState();
+  const tabs = state.tabs.filter((tab) => normalizedCwd(tab.cwd) === normalizedCwd(cwd));
+  terminalWorkspaceViews.set(key, {
+    tabs,
+    activeByMode: {
+      terminal: state.activeByMode.terminal && tabs.some((tab) => tab.id === state.activeByMode.terminal)
+        ? state.activeByMode.terminal
+        : pickActive(tabs, "terminal", null),
+      agent: state.activeByMode.agent && tabs.some((tab) => tab.id === state.activeByMode.agent)
+        ? state.activeByMode.agent
+        : pickActive(tabs, "agent", null),
+    },
+    agentActivity: Object.fromEntries(
+      Object.entries(state.agentActivity).filter(([id]) => tabs.some((tab) => tab.id === id)),
+    ),
+    mode: state.mode,
+    sessionListOpenByMode: state.sessionListOpenByMode,
+  });
+}
+
+export function restoreWorkspaceTerminalView(
+  cwd: string,
+  hostProfileId: string | null,
+): boolean {
+  const view = terminalWorkspaceViews.get(workspaceAgentKey(cwd, hostProfileId));
+  if (!view) return false;
+  setTerminalWorkspaceView(view, cwd);
+  return true;
+}
+
+function setTerminalWorkspaceView(view: TerminalWorkspaceView, cwd: string): void {
+  useTerminalStore.setState({
+    workspaceCwd: cwd,
+    tabs: view.tabs,
+    activeByMode: view.activeByMode,
+    agentActivity: view.agentActivity,
+    mode: view.mode,
+    sessionListOpenByMode: view.sessionListOpenByMode,
+    agentMenuOpen: false,
+    error: null,
+  });
+}
+
 export function saveWorkspaceAgents(
   cwd: string,
   hostProfileId: string | null,
 ): void {
   try {
+    captureWorkspaceTerminalView(cwd, hostProfileId);
     const saved = readPersistedAgents();
     saved[workspaceAgentKey(cwd, hostProfileId)] = useTerminalStore
       .getState()
@@ -102,10 +158,26 @@ export async function resumeWorkspaceAgents(
   const agents = readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId)];
   if (!Array.isArray(agents) || agents.length === 0) return;
 
+  const liveAgentSessionIds = new Set(
+    useTerminalStore
+      .getState()
+      .tabs.filter(
+        (tab) =>
+          tab.kind === "agent" &&
+          normalizedCwd(tab.cwd) === normalizedCwd(cwd) &&
+          typeof tab.agentSessionId === "string" &&
+          tab.agentSessionId.trim().length > 0,
+      )
+      .map((tab) => tab.agentSessionId!),
+  );
+  const missingAgents = agents.filter(
+    (saved) => !liveAgentSessionIds.has(saved.sessionId),
+  );
+  if (missingAgents.length === 0) return;
   const profiles = await window.anchor.agent.listProfiles();
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
   const results = await Promise.allSettled(
-    agents.map(async (saved) => {
+    missingAgents.map(async (saved) => {
       const profile = byId.get(saved.profileId);
       if (!profile || profile.enabled === false) {
         throw new Error(`Agent profile unavailable: ${saved.profileId}`);
@@ -296,7 +368,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     const reset = (async () => {
       try {
-        disposeAllXtermSessions();
         const existing = (await window.anchor.terminal.list()).filter(
           (tab) => normalizedCwd(tab.cwd) === key,
         );
@@ -344,7 +415,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         void get().loadAgentProfiles();
         void get().detectAgents();
       } catch (err) {
-        disposeAllXtermSessions();
         set((s) => ({
           workspaceCwd: cwd,
           tabs: [],

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  isUntrackedDirectoryPath,
+  mergeBadgePorcelain,
+  mergeUntrackedFilePaths,
   parseBranchHeader,
+  parseLsFilesOthers,
   parsePorcelainStatus,
   parsePorcelainStatusDetailed,
   statusCounts,
@@ -84,5 +88,104 @@ describe("parseBranchHeader", () => {
       behind: null,
       branch: "main",
     });
+  });
+});
+
+describe("untracked directory paths", () => {
+  it("treats porcelain collapsed dirs as directory entries", () => {
+    expect(isUntrackedDirectoryPath("filter/fan_bypass/unit_test/")).toBe(true);
+    expect(isUntrackedDirectoryPath("filter/fan_bypass/unit_test/a.c")).toBe(
+      false,
+    );
+  });
+
+  it("expands a collapsed directory using ls-files output", () => {
+    const porcelain = parsePorcelainStatus(
+      [
+        " M filter/CMakeLists.txt",
+        "?? filter/fan_bypass/unit_test/",
+      ].join("\n"),
+    );
+    const extra = parseLsFilesOthers(
+      [
+        "filter/fan_bypass/unit_test/a.c",
+        "filter/fan_bypass/unit_test/b.c",
+      ].join("\n"),
+    );
+    const merged = mergeUntrackedFilePaths(porcelain, extra);
+    expect(merged.map((e) => [e.status, e.path])).toEqual([
+      ["M", "filter/CMakeLists.txt"],
+      ["?", "filter/fan_bypass/unit_test/a.c"],
+      ["?", "filter/fan_bypass/unit_test/b.c"],
+    ]);
+  });
+
+  it("keeps a collapsed directory when ls-files finds nothing", () => {
+    const porcelain = parsePorcelainStatus("?? empty_dir/\n");
+    expect(mergeUntrackedFilePaths(porcelain, [])).toEqual([
+      { path: "empty_dir/", status: "?", code: "??" },
+    ]);
+  });
+});
+
+describe("mergeBadgePorcelain", () => {
+  it("keeps untracked files when badge-only omits them", () => {
+    const prev = {
+      entries: [
+        { path: "a.ts", status: "M", code: " M" },
+        { path: "filter/fan_bypass/unit_test/a.c", status: "?", code: "??" },
+        { path: "filter/fan_bypass/unit_test/b.c", status: "?", code: "??" },
+      ],
+      untracked: 2,
+    };
+    const next = {
+      entries: [{ path: "a.ts", status: "M", code: " M" }],
+      untracked: 0,
+    };
+    const merged = mergeBadgePorcelain(prev, next);
+    expect(merged.entries.map((e) => e.path)).toEqual([
+      "a.ts",
+      "filter/fan_bypass/unit_test/a.c",
+      "filter/fan_bypass/unit_test/b.c",
+    ]);
+    expect(merged.untracked).toBe(2);
+  });
+
+  it("drops untracked files that are now tracked", () => {
+    const prev = {
+      entries: [{ path: "new.ts", status: "?", code: "??" }],
+      untracked: 1,
+    };
+    const next = {
+      entries: [{ path: "new.ts", status: "A", code: "A " }],
+      untracked: 0,
+    };
+    const merged = mergeBadgePorcelain(prev, next);
+    expect(merged.entries).toEqual([
+      { path: "new.ts", status: "A", code: "A " },
+    ]);
+    expect(merged.untracked).toBe(0);
+  });
+
+  it("does not replace a file list with a collapsed untracked directory", () => {
+    const prev = {
+      entries: [
+        { path: "filter/fan_bypass/unit_test/a.c", status: "?", code: "??" },
+        { path: "filter/fan_bypass/unit_test/b.c", status: "?", code: "??" },
+      ],
+      untracked: 2,
+    };
+    const next = {
+      entries: [
+        { path: "filter/fan_bypass/unit_test/", status: "?", code: "??" },
+      ],
+      untracked: 1,
+    };
+    const merged = mergeBadgePorcelain(prev, next);
+    expect(merged.entries.map((e) => e.path)).toEqual([
+      "filter/fan_bypass/unit_test/a.c",
+      "filter/fan_bypass/unit_test/b.c",
+    ]);
+    expect(merged.untracked).toBe(2);
   });
 });

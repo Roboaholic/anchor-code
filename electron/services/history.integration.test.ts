@@ -148,6 +148,56 @@ describe("historyService (integration, temp git repo)", () => {
     expect(diff.newText).toContain("n = 3");
   });
 
+  it("lists files inside an untracked directory instead of collapsing it", async () => {
+    await fs.mkdir(path.join(root, "filter", "fan_bypass", "unit_test"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(root, "filter", "fan_bypass", "unit_test", "a.c"),
+      "int a;\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(root, "filter", "fan_bypass", "unit_test", "b.c"),
+      "int b;\n",
+      "utf8",
+    );
+
+    const status = await loadRepoStatus(host, root);
+    const untracked = status.entries
+      .filter((e) => e.status === "?")
+      .map((e) => e.path.replace(/\\/g, "/"));
+    expect(untracked).toEqual([
+      "filter/fan_bypass/unit_test/a.c",
+      "filter/fan_bypass/unit_test/b.c",
+    ]);
+    expect(status.untracked).toBe(2);
+
+    const badge = await loadRepoStatus(host, root, { badgeOnly: true });
+    expect(badge.entries.some((e) => e.status === "?")).toBe(false);
+
+    const payload = await compareToWorktree(host, root, "HEAD");
+    const files = payload.files.map((f) => f.path.replace(/\\/g, "/"));
+    expect(files).toEqual(
+      expect.arrayContaining([
+        "filter/fan_bypass/unit_test/a.c",
+        "filter/fan_bypass/unit_test/b.c",
+      ]),
+    );
+    expect(files.some((p) => p.endsWith("/"))).toBe(false);
+
+    const diff = await getFileDiff(
+      host,
+      root,
+      "HEAD",
+      "worktree",
+      "filter/fan_bypass/unit_test/a.c",
+      "?",
+    );
+    expect(diff.oldText).toBe("");
+    expect(diff.newText).toContain("int a;");
+  });
+
   it("loads porcelain status and includes untracked in worktree compare", async () => {
     await fs.writeFile(path.join(root, "scratch.tmp"), "hi\n", "utf8");
     const status = await loadRepoStatus(host, root);

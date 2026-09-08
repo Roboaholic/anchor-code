@@ -6,6 +6,7 @@ import {
   resolveCompareRange,
   toggleCommitSelection,
 } from "@/core/history/selection";
+import { mergeBadgePorcelain } from "@/core/history/statusParse";
 import {
   makeCompareEntry,
   type CompareEntry,
@@ -173,6 +174,30 @@ function findCard(
   return repos.find((r) => r.root === repoRoot);
 }
 
+async function refreshExpandedFull(
+  get: () => HistoryState,
+  expandedRoots: Set<string>,
+): Promise<void> {
+  if (expandedRoots.size === 0) return;
+  const roots = [...expandedRoots];
+  const concurrency = 2;
+  let i = 0;
+  async function worker() {
+    while (i < roots.length) {
+      const idx = i++;
+      const root = roots[idx];
+      if (!root) break;
+      await get().refreshStatus(root, { quiet: true, badgeOnly: false });
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, Math.max(roots.length, 1)) },
+      () => worker(),
+    ),
+  );
+}
+
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   workspaceRoot: null,
   discoverStatus: "idle",
@@ -247,6 +272,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const badgeOnly = opts?.badgeOnly !== false;
     const { repos } = get();
     if (repos.length === 0) return;
+    const expandedRoots = new Set(
+      repos.filter((r) => r.expanded && r.changesOpen).map((r) => r.root),
+    );
 
     // Visible refresh: show a small "…" on every row until that row is updated.
     // Quiet polls keep the UI still.
@@ -262,7 +290,6 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     // One bulk call on WSL/SSH (N×wsl.exe hangs). Progressive events clear dots.
     if (badgeOnly && typeof window.anchor.history.statusBulk === "function") {
-      const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));
       const applyOne = (st: {
         repoRoot: string;
         entries: { path: string; status: string; code: string }[];
@@ -274,18 +301,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         ahead: number | null;
         behind: number | null;
       }) => {
-        const prev = prevByRoot.get(st.repoRoot);
-        const merged =
-          prev?.status?.entries?.length && st.entries.length === 0
-            ? {
-                ...st,
-                entries: prev.status.entries,
-                untracked:
-                  st.untracked > 0
-                    ? st.untracked
-                    : (prev.status.untracked ?? 0),
-              }
-            : st;
+        const prev = findCard(get().repos, st.repoRoot);
+        const merged = mergeBadgePorcelain(prev?.status, st);
         set((s) => ({
           repos: mapCard(s.repos, st.repoRoot, {
             status: merged,
@@ -328,6 +345,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
               : r,
           ),
         }));
+        // Expanded Changes rows need file-level untracked lists, not badge-only.
+        await refreshExpandedFull(get, expandedRoots);
         return;
       } catch (err) {
         set((s) => ({
@@ -366,6 +385,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         () => worker(),
       ),
     );
+    if (badgeOnly) {
+      await refreshExpandedFull(get, expandedRoots);
+    }
   },
 
   refreshStatus: async (repoRoot, opts) => {
@@ -398,20 +420,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           );
         }),
       ]);
-      const merged =
-        badgeOnly && existing?.status?.entries?.length
-          ? {
-              ...status,
-              entries:
-                status.entries.length > 0
-                  ? status.entries
-                  : existing.status.entries,
-              untracked:
-                status.untracked > 0
-                  ? status.untracked
-                  : (existing.status.untracked ?? 0),
-            }
-          : status;
+      const merged = badgeOnly
+        ? mergeBadgePorcelain(findCard(get().repos, repoRoot)?.status, status)
+        : status;
       set((s) => ({
         repos: mapCard(s.repos, repoRoot, {
           status: merged,
@@ -608,7 +619,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           selectedHashes: [],
         }),
       }));
-      await get().refreshStatus(repoRoot);
+      await get().refreshStatus(repoRoot, { badgeOnly: false });
       await get().loadBranches(repoRoot);
       // If History section is open, reload commits for the new branch.
       const next = findCard(get().repos, repoRoot);
@@ -684,7 +695,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           }),
         };
       });
-      await get().refreshStatus(repoRoot);
+      await get().refreshStatus(repoRoot, { badgeOnly: false });
       const next = findCard(get().repos, repoRoot);
       if (next?.historyOpen) {
         try {

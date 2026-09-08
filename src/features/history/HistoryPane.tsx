@@ -20,6 +20,7 @@ import {
   type RepoCardState,
 } from "@/features/history/historyStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { isUntrackedDirectoryPath } from "@/core/history/statusParse";
 import type { HistoryCompareEntry } from "@/shared/anchor-api";
 
 export function HistoryPane() {
@@ -505,8 +506,16 @@ function RepoCard({
                         <button
                           type="button"
                           className="wt-row wt-row--btn"
-                          title={`Diff ${e.path} (HEAD → worktree)`}
+                          title={
+                            isUntrackedDirectoryPath(e.path)
+                              ? `Untracked directory ${e.path}`
+                              : `Diff ${e.path} (HEAD → worktree)`
+                          }
                           onClick={() => {
+                            if (isUntrackedDirectoryPath(e.path)) {
+                              void refreshStatus(card.root, { badgeOnly: false });
+                              return;
+                            }
                             void openWorkingTreeFileDiff(
                               card.root,
                               e.path,

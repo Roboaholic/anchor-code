@@ -272,6 +272,57 @@ describe("historyStore multi-repo", () => {
     expect(useHistoryStore.getState().toast).toMatch(/feature/i);
   });
 
+  it("keeps untracked files when a badge-only refresh omits them", async () => {
+    const status = {
+      repoRoot: "/ws/repo-a",
+      entries: [
+        { path: "a.ts", status: "M", code: " M" },
+        { path: "filter/fan_bypass/unit_test/a.c", status: "?", code: "??" },
+        { path: "filter/fan_bypass/unit_test/b.c", status: "?", code: "??" },
+      ],
+      modified: 1,
+      added: 0,
+      deleted: 0,
+      untracked: 2,
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+    };
+    mockAnchor({ status });
+    await useHistoryStore.getState().discover("/ws");
+    await useHistoryStore.getState().refreshStatus("/ws/repo-a", {
+      badgeOnly: false,
+    });
+
+    vi.mocked(window.anchor.history.status).mockImplementation(
+      async (root: string, opts?: { badgeOnly?: boolean }) => {
+        if (opts?.badgeOnly) {
+          return {
+            ...status,
+            repoRoot: root,
+            entries: [{ path: "a.ts", status: "M", code: " M" }],
+            untracked: 0,
+          };
+        }
+        return { ...status, repoRoot: root };
+      },
+    );
+
+    await useHistoryStore.getState().refreshStatus("/ws/repo-a", {
+      quiet: true,
+      badgeOnly: true,
+    });
+    const card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.status?.entries.map((e) => e.path)).toEqual([
+      "a.ts",
+      "filter/fan_bypass/unit_test/a.c",
+      "filter/fan_bypass/unit_test/b.c",
+    ]);
+    expect(card?.status?.untracked).toBe(2);
+  });
+
   it("commits all changes and clears worktree selection", async () => {
     await useHistoryStore.getState().discover("/ws");
     useHistoryStore.getState().toggleCommit("/ws/repo-a", WORKTREE_SELECTION);

@@ -61,8 +61,10 @@ function hostLabel(kind: HostKind | null, hostProfileId: string | null): string 
 }
 export function TopBar() {
   const agentVisible = useShellStore((s) => s.agentVisible);
+  const leftMode = useShellStore((s) => s.leftMode);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
+  const agentWorkbench = leftMode === "agent";
   const versionLabel = useShellStore((s) => s.versionLabel);
   const openPalette = useShellStore((s) => s.openPalette);
   const setOpenWorkspaceDialog = useShellStore((s) => s.setOpenWorkspaceDialog);
@@ -207,7 +209,17 @@ export function TopBar() {
       }
     }
     const hasAgent = tabs.some((tab) => (tab.kind ?? "shell") === "agent");
-    const { agentVisible } = useShellStore.getState();
+    const shell = useShellStore.getState();
+
+    if (shell.leftMode === "agent") {
+      shell.leaveAgentWorkbench();
+      if (hasAgent) shell.setAgentVisible(true);
+      else {
+        void useTerminalStore.getState().loadAgentProfiles();
+        useTerminalStore.getState().setAgentMenuOpen(true);
+      }
+      return;
+    }
 
     if (!hasAgent) {
       if (useTerminalStore.getState().agentMenuOpen) {
@@ -219,7 +231,7 @@ export function TopBar() {
       return;
     }
 
-    useShellStore.setState({ agentVisible: !agentVisible });
+    useShellStore.setState({ agentVisible: !shell.agentVisible });
   };
 
   const toggleTerminalPanel = () => {
@@ -429,12 +441,12 @@ export function TopBar() {
 
             <button
               type="button"
-              className={`topbar__rail-btn${(agentVisible || agentMenuOpen) && workspaceRoot ? " is-active" : ""}`}
+              className={`topbar__rail-btn${(agentVisible || agentMenuOpen) && workspaceRoot && !agentWorkbench ? " is-active" : ""}`}
               onClick={toggleAgentPanel}
-              aria-pressed={Boolean(workspaceRoot && (agentVisible || agentMenuOpen))}
-              aria-label="Toggle agent panel"
+              aria-pressed={Boolean(workspaceRoot && (agentVisible || agentMenuOpen) && !agentWorkbench)}
+              aria-label="Toggle agent copilot"
               title={
-                workspaceRoot ? "Toggle agent panel" : "Open a workspace first"
+                workspaceRoot ? "Toggle agent copilot" : "Open a workspace first"
               }
             >
               <Icon name="robot" className="topbar__rail-btn-icon" />

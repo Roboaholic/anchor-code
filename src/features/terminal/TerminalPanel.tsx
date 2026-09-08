@@ -11,6 +11,7 @@ import {
 } from "react";
 import "@xterm/xterm/css/xterm.css";
 import {
+  agentTabsInWorkgroup,
   sessionsForMode,
   useTerminalStore,
   type AgentActivityState,
@@ -33,15 +34,20 @@ export function TerminalPanel({
   mode,
   maximized = false,
   onToggleMaximized,
+  variant = "panel",
 }: {
   mode: RightTermMode;
   maximized?: boolean;
   onToggleMaximized?: () => void;
+  /** `stage` is the Agent workbench interaction surface (no session rail). */
+  variant?: "panel" | "stage";
 }) {
   // Guard: never fall through to the other mode if prop is missing after HMR.
   const panelMode: RightTermMode = mode === "agent" ? "agent" : "terminal";
   const tabs = useTerminalStore((s) => s.tabs);
   const activeByMode = useTerminalStore((s) => s.activeByMode);
+  const activeGroupId = useTerminalStore((s) => s.activeGroupId);
+  const tabWorkgroupById = useTerminalStore((s) => s.tabWorkgroupById);
   const sessionListOpenByMode = useTerminalStore((s) => s.sessionListOpenByMode);
   const agentActivity = useTerminalStore((s) => s.agentActivity);
   const error = useTerminalStore((s) => s.error);
@@ -52,17 +58,32 @@ export function TerminalPanel({
   const setAgentMenuOpen = useTerminalStore((s) => s.setAgentMenuOpen);
   const renameTab = useTerminalStore((s) => s.renameTab);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
   const resetForWorkspace = useTerminalStore((s) => s.resetForWorkspace);
   const sessionTabLayout = useThemeStore((s) => s.sessionTabLayout);
 
-  const activeTabId = activeByMode[panelMode];
-  const modeTabs = sessionsForMode(tabs, panelMode);
-  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isAgent = panelMode === "agent";
-  const tabsPlacement = sessionTabLayout === "top" ? "top" : "side";
+  const isStage = variant === "stage";
+  const allModeTabs = sessionsForMode(tabs, panelMode);
+  const visibleTabs =
+    isStage && isAgent
+      ? agentTabsInWorkgroup(allModeTabs, tabWorkgroupById, activeGroupId)
+      : allModeTabs;
+  const preferredActive = activeByMode[panelMode];
+  const activeTabId =
+    preferredActive && visibleTabs.some((tab) => tab.id === preferredActive)
+      ? preferredActive
+      : visibleTabs.at(-1)?.id ?? null;
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const modeTabs = isStage ? allModeTabs : visibleTabs;
+  const tabsPlacement = isStage
+    ? "side"
+    : sessionTabLayout === "top"
+      ? "top"
+      : "side";
   const sessionListOpen = sessionListOpenByMode[panelMode];
   // Both layouts use the expand button; top layout just defaults open (see effect).
-  const showSessionList = sessionListOpen;
+  const showSessionList = isStage ? false : sessionListOpen;
   const [sessionRailWidth, setSessionRailWidth] = useState(() => {
     const stored = Number(localStorage.getItem("anchor.terminal.sessionRailWidth"));
     return Number.isFinite(stored) ? Math.min(320, Math.max(96, stored)) : 148;
@@ -104,9 +125,9 @@ export function TerminalPanel({
   useEffect(() => {
     if (panelMode !== "terminal") return;
     if (workspaceRoot && tabs.length === 0 && !error) {
-      void resetForWorkspace(workspaceRoot);
+      void resetForWorkspace(workspaceRoot, hostProfileId);
     }
-  }, [panelMode, workspaceRoot, tabs.length, error, resetForWorkspace]);
+  }, [panelMode, workspaceRoot, hostProfileId, tabs.length, error, resetForWorkspace]);
 
   // Top layout: expand this mode's session strip by default once when switching to top.
   const topDefaultedRef = useRef<Partial<Record<RightTermMode, boolean>>>({});
@@ -141,52 +162,58 @@ export function TerminalPanel({
     setAgentMenuOpen(true);
   }, [workspaceRoot, panelMode, createShellTab, setAgentMenuOpen]);
 
-  const placementClass = isAgent
-    ? "terminal-panel--side"
-    : "terminal-panel--bottom";
+  const placementClass = isStage
+    ? "terminal-panel--stage"
+    : isAgent
+      ? "terminal-panel--side"
+      : "terminal-panel--bottom";
 
   return (
     <aside
       className={`terminal-panel ${placementClass} terminal-panel--tabs-${tabsPlacement}`}
-      aria-label={isAgent ? "Agent panel" : "Terminal panel"}
+      aria-label={isStage ? "Agent conversation" : isAgent ? "Agent panel" : "Terminal panel"}
     >
       <header className="terminal-panel__header">
         <div className="terminal-panel__header-left">
-          <button
-            type="button"
-            className={`icon-btn${sessionListOpen ? " is-active" : ""}`}
-            aria-label="Session list"
-            aria-pressed={sessionListOpen}
-            title={
-              tabsPlacement === "top"
-                ? "Show or hide session tabs"
-                : "Session list"
-            }
-            onClick={() => toggleSessionList(panelMode)}
-          >
-            <Icon name="list-flat" />
-          </button>
-          <button
-            type="button"
-            className="terminal-add-btn"
-            aria-label={isAgent ? "New agent session" : "New terminal"}
-            title={isAgent ? "New agent session" : "New shell"}
-            onClick={onAdd}
-            disabled={!workspaceRoot}
-          >
-            <Icon name="add" />
-          </button>
+          {isStage ? null : (
+            <button
+              type="button"
+              className={`icon-btn${sessionListOpen ? " is-active" : ""}`}
+              aria-label="Session list"
+              aria-pressed={sessionListOpen}
+              title={
+                tabsPlacement === "top"
+                  ? "Show or hide session tabs"
+                  : "Session list"
+              }
+              onClick={() => toggleSessionList(panelMode)}
+            >
+              <Icon name="list-flat" />
+            </button>
+          )}
+          {isStage ? null : (
+            <button
+              type="button"
+              className="terminal-add-btn"
+              aria-label={isAgent ? "New agent session" : "New terminal"}
+              title={isAgent ? "New agent session" : "New shell"}
+              onClick={onAdd}
+              disabled={!workspaceRoot}
+            >
+              <Icon name="add" />
+            </button>
+          )}
           <span className="terminal-panel__title">
-            {isAgent ? "AGENT" : "TERMINAL"}
+            {isStage ? "CONVERSATION" : isAgent ? "AGENT" : "TERMINAL"}
           </span>
-          {activeTab && tabsPlacement === "side" ? (
+          {activeTab && (isStage || tabsPlacement === "side") ? (
             <span className="terminal-panel__active-title" title={activeTab.title}>
               {activeTab.title}
               {activeTab.status === "exited" ? " · exited" : ""}
             </span>
           ) : null}
         </div>
-        {onToggleMaximized ? (
+        {onToggleMaximized && !isStage ? (
           <div className="terminal-panel__header-right">
             <button
               type="button"
@@ -223,7 +250,8 @@ export function TerminalPanel({
           className={`terminal-session-rail-slot terminal-session-rail-slot--${tabsPlacement}${
             showSessionList ? "" : " is-collapsed"
           }`}
-          aria-hidden={!showSessionList}
+          hidden={isStage}
+          aria-hidden={isStage || !showSessionList}
         >
           <SessionRail
             mode={panelMode}
@@ -255,20 +283,26 @@ export function TerminalPanel({
             <pre className="terminal-mock">
               {`$ # Open a workspace to start a shell (cwd = workspace root)`}
             </pre>
-          ) : isAgent && modeTabs.length === 0 ? (
-            // NewAgentDialog covers the create flow when agentMenuOpen.
+          ) : isAgent && !isStage && modeTabs.length === 0 ? (
             <div className="terminal-panel__body-empty" aria-hidden />
           ) : !isAgent && modeTabs.length === 0 ? (
             <pre className="terminal-mock">$ # Starting shell…</pre>
           ) : (
-            modeTabs.map((t) => (
-              <XtermHost
-                key={t.id}
-                id={t.id}
-                kind={t.kind ?? "shell"}
-                active={t.id === activeTabId}
-              />
-            ))
+            <>
+              {modeTabs.map((t) => (
+                <XtermHost
+                  key={t.id}
+                  id={t.id}
+                  kind={t.kind ?? "shell"}
+                  active={t.id === activeTabId}
+                />
+              ))}
+              {isStage && isAgent && visibleTabs.length === 0 ? (
+                <div className="agent-stage-empty">
+                  <p className="muted">Start a conversation from the workgroup sidebar</p>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </div>

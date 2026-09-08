@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { createPortal } from "react-dom";
 import {
   Panel,
   PanelGroup,
@@ -83,8 +82,10 @@ export function isAgentCliKeyTarget(target: EventTarget | null): boolean {
 
 export function Shell() {
   const leftVisible = useShellStore((s) => s.leftVisible);
+  const leftMode = useShellStore((s) => s.leftMode);
   const agentVisible = useShellStore((s) => s.agentVisible);
   const terminalVisible = useShellStore((s) => s.terminalVisible);
+  const agentWorkbench = leftMode === "agent";
   const terminalActiveId = useTerminalStore((s) => s.activeByMode.terminal);
   const agentMenuOpen = useTerminalStore((s) => s.agentMenuOpen);
   const setVersionLabel = useShellStore((s) => s.setVersionLabel);
@@ -97,11 +98,6 @@ export function Shell() {
   const [skillInstallBusy, setSkillInstallBusy] = useState(false);
   const [terminalMaximized, setTerminalMaximized] = useState(false);
   const [terminalOverlayTop, setTerminalOverlayTop] = useState(0);
-  const [agentMaximized, setAgentMaximized] = useState(false);
-  const [agentOverlayLeft, setAgentOverlayLeft] = useState(0);
-  const [agentOverlayWidth, setAgentOverlayWidth] = useState(0);
-  const [agentOverlayHeight, setAgentOverlayHeight] = useState(0);
-  const [agentOverlayTop, setAgentOverlayTop] = useState(0);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(
     null,
   );
@@ -114,10 +110,8 @@ export function Shell() {
   const leftPanelRef = useRef<ImperativePanelHandle>(null);
   const agentPanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
-  const agentTerminalPanelRef = useRef<ImperativePanelHandle>(null);
   const terminalDragCleanupRef = useRef<(() => void) | null>(null);
   const terminalRestoreSizeRef = useRef(28);
-  const agentRestoreSizeRef = useRef(28);
 
   const restoreTerminal = (size = terminalRestoreSizeRef.current) => {
     terminalPanelRef.current?.resize(size);
@@ -126,7 +120,6 @@ export function Shell() {
   };
 
   const enterTerminalMaximized = () => {
-    setAgentMaximized(false);
     terminalRestoreSizeRef.current = terminalPanelRef.current?.getSize() ?? 28;
     setTerminalOverlayTop(0);
     setTerminalMaximized(true);
@@ -189,58 +182,13 @@ export function Shell() {
     window.addEventListener("pointerup", onEnd, true);
     window.addEventListener("pointercancel", onEnd, true);
   };
-  const measureAgentOverlayBounds = () => {
-    const group = document.querySelector<HTMLElement>(".shell__panels--main");
-    if (!group) return { left: 0, top: 0, width: 0, height: 0 };
-    const groupRect = group.getBoundingClientRect();
-    const leftHandle = group.querySelector<HTMLElement>(".resize-handle--left");
-    const leftPanel = group.querySelector<HTMLElement>(".shell__left-panel");
-    const left = leftVisible
-      ? (leftHandle?.getBoundingClientRect().right ?? leftPanel?.getBoundingClientRect().right ?? groupRect.left)
-      : groupRect.left;
-    return {
-      left,
-      top: groupRect.top,
-      width: Math.max(0, groupRect.right - left),
-      height: groupRect.height,
-    };
-  };
 
-  const enterAgentMaximized = () => {
+  const enterAgentWorkbench = () => {
     setTerminalMaximized(false);
-    agentRestoreSizeRef.current = agentPanelRef.current?.getSize() ?? 28;
-    const bounds = measureAgentOverlayBounds();
-    setAgentOverlayLeft(bounds.left);
-    setAgentOverlayTop(bounds.top);
-    setAgentOverlayWidth(bounds.width);
-    setAgentOverlayHeight(bounds.height);
-    setAgentMaximized(true);
+    useShellStore.getState().enterAgentWorkbench();
+    const id = useTerminalStore.getState().activeByMode.agent;
+    if (id) useTerminalStore.getState().focusAgentTab(id);
   };
-
-  const restoreAgent = (size = agentRestoreSizeRef.current) => {
-    agentPanelRef.current?.resize(size);
-    setAgentMaximized(false);
-  };
-
-  useEffect(() => {
-    if (!agentMaximized) return;
-    const group = document.querySelector<HTMLElement>(".shell__panels--main");
-    const leftPanel = group?.querySelector<HTMLElement>(".shell__left-panel");
-    const leftHandle = group?.querySelector<HTMLElement>(".resize-handle--left");
-    if (!group) return;
-    const sync = () => {
-      const bounds = measureAgentOverlayBounds();
-      setAgentOverlayLeft(bounds.left);
-      setAgentOverlayTop(bounds.top);
-      setAgentOverlayWidth(bounds.width);
-      setAgentOverlayHeight(bounds.height);
-    };
-    const observer = new ResizeObserver(sync);
-    observer.observe(group);
-    if (leftPanel) observer.observe(leftPanel);
-    if (leftHandle) observer.observe(leftHandle);
-    return () => observer.disconnect();
-  }, [agentMaximized, leftVisible]);
 
   useEffect(() => {
     if (terminalMaximized) return;
@@ -396,6 +344,7 @@ export function Shell() {
     if (!workspaceRoot) {
       setAgentVisible(false);
       setTerminalVisible(false);
+      useShellStore.getState().setLeftMode("files");
       useTerminalStore.getState().closeAgentMenu();
     }
   }, [workspaceRoot, setAgentVisible, setTerminalVisible]);
@@ -427,16 +376,12 @@ export function Shell() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [palette, closePalette]);
 
-  const showAgent = Boolean(agentVisible && workspaceRoot);
-  const showTerminal = Boolean(terminalVisible && workspaceRoot);
+  const showAgent = Boolean(agentVisible && workspaceRoot && !agentWorkbench);
+  const showTerminal = Boolean(terminalVisible && workspaceRoot && !agentWorkbench);
 
   useEffect(() => {
     if (!showTerminal && terminalMaximized) setTerminalMaximized(false);
   }, [showTerminal, terminalMaximized]);
-
-  useEffect(() => {
-    if (!showAgent && agentMaximized) setAgentMaximized(false);
-  }, [showAgent, agentMaximized]);
 
   useEffect(() => {
     if (!terminalMaximized) return;
@@ -450,7 +395,7 @@ export function Shell() {
   }, [terminalMaximized]);
 
   useEffect(() => {
-    if (agentMaximized || !showTerminal || agentMenuOpen || !terminalActiveId) return;
+    if (agentWorkbench || !showTerminal || agentMenuOpen || !terminalActiveId) return;
     let frame = 0;
     let attempts = 0;
     const refit = () => {
@@ -460,13 +405,19 @@ export function Shell() {
     frame = requestAnimationFrame(refit);
     scheduleFitXtermSession(terminalActiveId, 220);
     return () => cancelAnimationFrame(frame);
-  }, [agentMaximized, agentMenuOpen, showAgent, showTerminal, terminalActiveId]);
+  }, [agentWorkbench, agentMenuOpen, showAgent, showTerminal, terminalActiveId]);
+
+  useEffect(() => {
+    if (!agentWorkbench) return;
+    const id = useTerminalStore.getState().activeByMode.agent;
+    if (!id) return;
+    scheduleFitXtermSession(id, 80);
+  }, [agentWorkbench]);
 
   // Never remount PanelGroup for these toggles — only collapse/expand.
   useCollapsiblePanel(leftPanelRef, leftVisible, 22);
   useCollapsiblePanel(agentPanelRef, showAgent, 28);
   useCollapsiblePanel(terminalPanelRef, showTerminal, 28);
-  useCollapsiblePanel(agentTerminalPanelRef, agentMaximized && showTerminal, 28);
 
   return (
     <div className="shell">
@@ -566,7 +517,7 @@ export function Shell() {
         */}
         <PanelGroup
           direction="horizontal"
-          className={`shell__panels shell__panels--main${agentMaximized ? " is-agent-maximized" : ""}`}
+          className={`shell__panels shell__panels--main${agentWorkbench ? " is-agent-workbench" : ""}`}
         >
           <Panel
             ref={leftPanelRef}
@@ -595,7 +546,20 @@ export function Shell() {
                 className="shell__panels shell__panels--col"
               >
                 <Panel order={1} defaultSize={72} minSize={25} id="document">
-                  <DocumentArea />
+                  <div className="shell__center-main">
+                    <div
+                      className="shell__document-surface"
+                      hidden={agentWorkbench}
+                      aria-hidden={agentWorkbench}
+                    >
+                      <DocumentArea />
+                    </div>
+                    {workspaceRoot && agentWorkbench ? (
+                      <div className="shell__agent-stage">
+                        <TerminalPanel mode="agent" variant="stage" />
+                      </div>
+                    ) : null}
+                  </div>
                 </Panel>
 
                 <PanelResizeHandle
@@ -626,7 +590,7 @@ export function Shell() {
                       }
                     />
                   ) : null}
-                  {workspaceRoot && !agentMaximized ? (
+                  {workspaceRoot && !agentWorkbench ? (
                     <TerminalPanel
                       mode="terminal"
                       maximized={terminalMaximized}
@@ -642,7 +606,7 @@ export function Shell() {
           </Panel>
           <PanelResizeHandle
             className="resize-handle resize-handle--agent"
-            style={{ display: showAgent && !agentMaximized ? undefined : "none" }}
+            style={{ display: showAgent ? undefined : "none" }}
           />
 
           <Panel
@@ -656,67 +620,18 @@ export function Shell() {
             maxSize={50}
             id="agent"
           >
-            {workspaceRoot && !agentMaximized ? (
+            {workspaceRoot && !agentWorkbench ? (
               <div className="shell__agent-content">
                 <TerminalPanel
                   mode="agent"
                   maximized={false}
-                  onToggleMaximized={enterAgentMaximized}
+                  onToggleMaximized={enterAgentWorkbench}
                 />
               </div>
             ) : null}
           </Panel>
         </PanelGroup>
       </div>
-      {workspaceRoot && agentMaximized
-        ? createPortal(
-            <div
-              className="shell__agent-content is-maximized"
-              style={{
-                left: agentOverlayLeft,
-                top: agentOverlayTop,
-                width: agentOverlayWidth,
-                height: agentOverlayHeight,
-              }}
-            >
-              <PanelGroup
-                direction="vertical"
-                autoSaveId="anchor-shell-agent-maximized-v1"
-                className="shell__panels shell__panels--col"
-              >
-                <Panel order={1} defaultSize={showTerminal ? 72 : 100} minSize={25}>
-                  <TerminalPanel
-                    mode="agent"
-                    maximized={true}
-                    onToggleMaximized={() => restoreAgent()}
-                  />
-                </Panel>
-                <PanelResizeHandle
-                  className="resize-handle resize-handle--row"
-                  style={{ display: showTerminal ? undefined : "none" }}
-                />
-                <Panel
-                  ref={agentTerminalPanelRef}
-                  order={2}
-                  collapsible
-                  collapsedSize={0}
-                  defaultSize={showTerminal ? 28 : 0}
-                  minSize={12}
-                  maxSize={75}
-                >
-                  {showTerminal ? (
-                    <TerminalPanel
-                      mode="terminal"
-                      maximized={false}
-                      onToggleMaximized={enterTerminalMaximized}
-                    />
-                  ) : null}
-                </Panel>
-              </PanelGroup>
-            </div>,
-            document.body,
-          )
-        : null}
 
       <OpenWorkspaceDialog
         open={openWorkspaceDialog}

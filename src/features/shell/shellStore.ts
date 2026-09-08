@@ -1,11 +1,12 @@
 import { create } from "zustand";
 
-export type LeftMode = "files" | "comments" | "history";
+export type LeftMode = "files" | "comments" | "history" | "agent";
 
 export type PaletteMode = "quickOpen" | "openPath";
 
 type WorkspaceShellView = {
   leftMode: LeftMode;
+  reviewLeftMode: Exclude<LeftMode, "agent">;
   leftVisible: boolean;
   agentVisible: boolean;
   terminalVisible: boolean;
@@ -16,6 +17,7 @@ export function captureWorkspaceShellView(key: string): void {
   const state = useShellStore.getState();
   workspaceShellViews.set(key, {
     leftMode: state.leftMode,
+    reviewLeftMode: state.reviewLeftMode,
     leftVisible: state.leftVisible,
     agentVisible: state.agentVisible,
     terminalVisible: state.terminalVisible,
@@ -31,6 +33,8 @@ export function restoreWorkspaceShellView(key: string): boolean {
 
 export interface ShellState {
   leftMode: LeftMode;
+  /** Last Files / Comments / History mode, restored when leaving Agent. */
+  reviewLeftMode: Exclude<LeftMode, "agent">;
   /** Files / Comments / History sidebar. */
   leftVisible: boolean;
   /** Right rail — agent sessions. */
@@ -47,6 +51,8 @@ export interface ShellState {
   /** Quick Open (Ctrl+P) or Open Path (Ctrl+O). */
   palette: PaletteMode | null;
   setLeftMode: (mode: LeftMode) => void;
+  enterAgentWorkbench: () => void;
+  leaveAgentWorkbench: () => void;
   toggleLeft: () => void;
   setLeftVisible: (visible: boolean) => void;
   toggleAgent: () => void;
@@ -63,6 +69,7 @@ export interface ShellState {
 
 export const useShellStore = create<ShellState>((set) => ({
   leftMode: "files",
+  reviewLeftMode: "files",
   leftVisible: true,
   /** Closed until a workspace is open (user can then toggle). */
   agentVisible: false,
@@ -71,7 +78,21 @@ export const useShellStore = create<ShellState>((set) => ({
   openWorkspaceDialog: false,
   skillInstallPromptRoot: null,
   palette: null,
-  setLeftMode: (mode) => set({ leftMode: mode }),
+  setLeftMode: (mode) =>
+    set((s) => ({
+      leftMode: mode,
+      reviewLeftMode: mode === "agent" ? s.reviewLeftMode : mode,
+    })),
+  enterAgentWorkbench: () =>
+    set((s) => ({
+      leftMode: "agent",
+      reviewLeftMode: s.leftMode === "agent" ? s.reviewLeftMode : s.leftMode,
+      leftVisible: true,
+    })),
+  leaveAgentWorkbench: () =>
+    set((s) => ({
+      leftMode: s.reviewLeftMode,
+    })),
   toggleLeft: () => set((s) => ({ leftVisible: !s.leftVisible })),
   setLeftVisible: (visible) => set({ leftVisible: visible }),
   toggleAgent: () => set((s) => ({ agentVisible: !s.agentVisible })),

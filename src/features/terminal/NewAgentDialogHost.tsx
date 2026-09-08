@@ -27,6 +27,7 @@ export function NewAgentDialogHost() {
   const closeAgentMenu = useTerminalStore((s) => s.closeAgentMenu);
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
   const detectAgents = useTerminalStore((s) => s.detectAgents);
+  const hideResume = useShellStore((s) => s.leftMode === "agent");
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -37,7 +38,8 @@ export function NewAgentDialogHost() {
     async (p: AgentCliProfile, launch: AgentLaunchOptions) => {
       const created = await createAgentTab(p, launch);
       if (created && hasAgentSessions()) {
-        useShellStore.getState().setAgentVisible(true);
+        const shell = useShellStore.getState();
+        if (shell.leftMode !== "agent") shell.setAgentVisible(true);
       }
       return created;
     },
@@ -59,6 +61,7 @@ export function NewAgentDialogHost() {
       profiles={agentProfiles}
       defaultAgentId={defaultAgentId}
       intent={agentMenuIntent}
+      hideResume={hideResume}
       onOpen={onOpen}
       onDetect={() => void detectAgents()}
       onClose={onClose}

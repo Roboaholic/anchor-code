@@ -109,7 +109,10 @@ export async function activateWorkspace(id: string): Promise<void> {
       workspace.hostProfileId,
     );
     if (!restoredTerminal) {
-      await useTerminalStore.getState().resetForWorkspace(workspace.workspaceRoot);
+      await useTerminalStore.getState().resetForWorkspace(
+        workspace.workspaceRoot,
+        workspace.hostProfileId,
+      );
       await resumeWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
     }
 
@@ -132,6 +135,7 @@ async function afterWorkspaceOpened(
 ): Promise<void> {
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
+  useShellStore.getState().setLeftMode("files");
   useShellStore.getState().setAgentVisible(false);
   useShellStore.getState().setTerminalVisible(false);
   useShellStore.getState().setSkillInstallPromptRoot(null);
@@ -143,7 +147,7 @@ async function afterWorkspaceOpened(
     console.warn("[shell] history.discover failed:", err);
   }
   try {
-    await useTerminalStore.getState().resetForWorkspace(root);
+    await useTerminalStore.getState().resetForWorkspace(root, hostProfileId);
     await resumeWorkspaceAgents(root, hostProfileId);
     const hasAgents = useTerminalStore
       .getState()

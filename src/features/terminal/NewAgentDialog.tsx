@@ -11,7 +11,11 @@ import {
   feedbackTabTitle,
   isAnchorReviewInstalled,
 } from "@/features/annotations/feedbackPrompt";
-import type { AgentLaunchOptions, AgentMenuIntent } from "./terminalStore";
+import {
+  type AgentLaunchOptions,
+  type AgentMenuIntent,
+  useTerminalStore,
+} from "./terminalStore";
 
 const LAST_PROFILE_KEY = "anchor.agent.lastProfileId";
 
@@ -36,6 +40,7 @@ export function NewAgentDialog({
   profiles,
   defaultAgentId,
   intent = { kind: "new" },
+  hideResume = false,
   onOpen,
   onDetect,
   onClose,
@@ -43,17 +48,24 @@ export function NewAgentDialog({
   profiles: AgentCliProfile[];
   defaultAgentId: string | null;
   intent?: AgentMenuIntent;
+  hideResume?: boolean;
   onOpen: (profile: AgentCliProfile, launch: AgentLaunchOptions) => Promise<boolean>;
   onDetect: () => void;
   onClose: () => void;
 }) {
   const isFeedback = intent.kind === "feedback";
+  const workgroupProfileId = useTerminalStore((s) =>
+    s.workgroups.find((group) => group.id === s.activeGroupId)?.lastProfileId,
+  );
   const enabled = useMemo(
     () => profiles.filter((p) => p.enabled !== false),
     [profiles],
   );
 
   const initialProfileId = useMemo(() => {
+    if (workgroupProfileId && enabled.some((p) => p.id === workgroupProfileId)) {
+      return workgroupProfileId;
+    }
     try {
       const last = localStorage.getItem(LAST_PROFILE_KEY);
       if (last && enabled.some((p) => p.id === last)) return last;
@@ -64,7 +76,7 @@ export function NewAgentDialog({
       return defaultAgentId;
     }
     return enabled[0]?.id ?? "";
-  }, [enabled, defaultAgentId]);
+  }, [enabled, defaultAgentId, workgroupProfileId]);
 
   const [notes, setNotes] = useState("");
   const [profileId, setProfileId] = useState(initialProfileId);
@@ -133,8 +145,9 @@ export function NewAgentDialog({
   }, [profile?.id]);
 
   useEffect(() => {
-    if (!profile || isFeedback || !window.anchor?.agent?.listSessions) {
+    if (!profile || isFeedback || hideResume || !window.anchor?.agent?.listSessions) {
       setSessions([]);
+      setSessionsLoading(false);
       return;
     }
     let cancelled = false;
@@ -157,7 +170,7 @@ export function NewAgentDialog({
     return () => {
       cancelled = true;
     };
-  }, [isFeedback, profile?.id]);
+  }, [hideResume, isFeedback, profile?.id]);
 
   const effortOptions = useMemo(() => {
     if (!discovery) return [];
@@ -387,7 +400,7 @@ export function NewAgentDialog({
               </span>
             </div>
           </div>
-        ) : (
+        ) : hideResume ? null : (
           <div className="agent-new__resume">
             <div className="agent-new__resume-header">
               <span className="agent-new__label">Resume</span>

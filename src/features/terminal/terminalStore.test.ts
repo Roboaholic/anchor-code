@@ -5,6 +5,7 @@ import {
   saveWorkspaceAgents,
   useTerminalStore,
 } from "./terminalStore";
+import { DEFAULT_WORKGROUP_ID } from "./workgroups";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -152,6 +153,170 @@ describe("createAgentTab resume", () => {
       sessionId: "session-123",
       prompt: "Previous task",
     }));
+    expect(useTerminalStore.getState().tabWorkgroupById.resumed).toBe(
+      DEFAULT_WORKGROUP_ID,
+    );
+  });
+
+  it("focuses a live session instead of launching a second PTY", async () => {
+    const createSession = vi.fn();
+    vi.stubGlobal("window", {
+      anchor: { agent: { createSession, setDefaultId: vi.fn() } },
+    });
+    useTerminalStore.setState({
+      tabs: [
+        {
+          id: "live",
+          title: "Auth",
+          cwd: "/workspace",
+          status: "running",
+          kind: "agent",
+          agentId: "omp",
+          agentSessionId: "session-123",
+        },
+      ],
+      tabWorkgroupById: { live: "wg-1" },
+      workgroups: [
+        { id: DEFAULT_WORKGROUP_ID, name: "Default", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "wg-1", name: "Login", createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      activeGroupId: DEFAULT_WORKGROUP_ID,
+      activeByMode: { terminal: null, agent: null },
+      agentMenuOpen: true,
+    });
+
+    const created = await useTerminalStore.getState().createAgentTab(
+      { id: "omp", name: "OMP", command: "omp" },
+      { resumeSessionId: "session-123" },
+    );
+
+    expect(created).toBe(true);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().activeByMode.agent).toBe("live");
+    expect(useTerminalStore.getState().activeGroupId).toBe("wg-1");
+    vi.unstubAllGlobals();
+  });
+
+  it("assigns new conversations to the active workgroup", async () => {
+    const createSession = vi.fn(async () => ({
+      id: "new-1",
+      title: "New task",
+      cwd: "/workspace",
+      status: "running" as const,
+      kind: "agent" as const,
+      agentId: "omp",
+      agentSessionId: "sess-new",
+    }));
+    vi.stubGlobal("window", {
+      anchor: { agent: { createSession, setDefaultId: vi.fn() } },
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+    useTerminalStore.setState({
+      tabs: [],
+      workspaceCwd: "/workspace",
+      workgroups: [
+        { id: DEFAULT_WORKGROUP_ID, name: "Default", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "wg-1", name: "Login", createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      activeGroupId: "wg-1",
+      tabWorkgroupById: {},
+      sessionGroupById: {},
+    });
+
+    await useTerminalStore.getState().createAgentTab(
+      { id: "omp", name: "OMP", command: "omp" },
+      { title: "New task" },
+    );
+
+    expect(useTerminalStore.getState().tabWorkgroupById["new-1"]).toBe("wg-1");
+    expect(useTerminalStore.getState().sessionGroupById["sess-new"]).toBe("wg-1");
+    vi.unstubAllGlobals();
+  });
+
+  it("selects a conversation from the workgroup being focused", () => {
+    useTerminalStore.setState({
+      workspaceCwd: "/workspace",
+      workgroups: [
+        { id: DEFAULT_WORKGROUP_ID, name: "Default", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "wg-1", name: "Login", createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      activeGroupId: DEFAULT_WORKGROUP_ID,
+      tabWorkgroupById: { a: DEFAULT_WORKGROUP_ID, b: "wg-1" },
+      activeByMode: { terminal: null, agent: "a" },
+      tabs: [
+        {
+          id: "a",
+          title: "Default task",
+          cwd: "/workspace",
+          status: "running",
+          kind: "agent",
+          agentId: "omp",
+          agentSessionId: "sess-a",
+        },
+        {
+          id: "b",
+          title: "Login task",
+          cwd: "/workspace",
+          status: "running",
+          kind: "agent",
+          agentId: "omp",
+          agentSessionId: "sess-b",
+        },
+      ],
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+
+    useTerminalStore.getState().setActiveWorkgroup("wg-1");
+
+    expect(useTerminalStore.getState().activeGroupId).toBe("wg-1");
+    expect(useTerminalStore.getState().activeByMode.agent).toBe("b");
+    vi.unstubAllGlobals();
+  });
+
+  it("moves live conversations to Default when a workgroup is deleted", () => {
+    useTerminalStore.setState({
+      workspaceCwd: "/workspace",
+      workgroups: [
+        { id: DEFAULT_WORKGROUP_ID, name: "Default", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "wg-1", name: "Login", createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      activeGroupId: "wg-1",
+      tabWorkgroupById: { live: "wg-1" },
+      sessionGroupById: { "sess-1": "wg-1" },
+      tabs: [
+        {
+          id: "live",
+          title: "Auth",
+          cwd: "/workspace",
+          status: "running",
+          kind: "agent",
+          agentId: "omp",
+          agentSessionId: "sess-1",
+        },
+      ],
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+
+    useTerminalStore.getState().deleteWorkgroup("wg-1");
+
+    expect(useTerminalStore.getState().workgroups.map((group) => group.id)).toEqual([
+      DEFAULT_WORKGROUP_ID,
+    ]);
+    expect(useTerminalStore.getState().activeGroupId).toBe(DEFAULT_WORKGROUP_ID);
+    expect(useTerminalStore.getState().tabWorkgroupById.live).toBe(DEFAULT_WORKGROUP_ID);
+    expect(useTerminalStore.getState().sessionGroupById["sess-1"]).toBe(
+      DEFAULT_WORKGROUP_ID,
+    );
+    vi.unstubAllGlobals();
   });
 });
 

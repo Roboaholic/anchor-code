@@ -7,6 +7,19 @@ import type {
 import {
   disposeXtermSession,
 } from "./xtermSessionPool";
+import {
+  DEFAULT_WORKGROUP_ID,
+  emptyWorkgroupsState,
+  nextWorkgroupId,
+  parseWorkgroupsState,
+  reassignGroupIds,
+  removeWorkgroup,
+  renameWorkgroupInState,
+  uniqueWorkgroupName,
+  WORKSPACE_WORKGROUPS_KEY,
+  type AgentWorkgroup,
+  type WorkgroupsState,
+} from "./workgroups";
 
 export type RightTermMode = "terminal" | "agent";
 export type AgentActivityState = "idle" | "working" | "completed-unread";
@@ -55,6 +68,11 @@ type TerminalWorkspaceView = {
   agentActivity: Record<string, AgentActivityState>;
   mode: RightTermMode;
   sessionListOpenByMode: Record<RightTermMode, boolean>;
+  workgroups: AgentWorkgroup[];
+  activeGroupId: string;
+  tabWorkgroupById: Record<string, string>;
+  sessionGroupById: Record<string, string>;
+  workspaceHostProfileId: string | null;
 };
 const terminalWorkspaceViews = new Map<string, TerminalWorkspaceView>();
 
@@ -75,6 +93,132 @@ function readPersistedAgents(): Record<string, PersistedAgent[]> {
   }
 }
 
+function readPersistedWorkgroups(): Record<string, WorkgroupsState> {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_WORKGROUPS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+        key,
+        parseWorkgroupsState(value),
+      ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function persistWorkgroupsState(
+  cwd: string | null,
+  hostProfileId: string | null,
+  state: WorkgroupsState,
+): void {
+  if (!cwd) return;
+  try {
+    const saved = readPersistedWorkgroups();
+    saved[workspaceAgentKey(cwd, hostProfileId)] = state;
+    localStorage.setItem(WORKSPACE_WORKGROUPS_KEY, JSON.stringify(saved));
+  } catch {
+    // Persistence must not interrupt workspace switching.
+  }
+}
+
+function loadWorkgroupsState(
+  cwd: string,
+  hostProfileId: string | null,
+): WorkgroupsState {
+  return (
+    readPersistedWorkgroups()[workspaceAgentKey(cwd, hostProfileId)] ??
+    emptyWorkgroupsState()
+  );
+}
+
+function workgroupsSnapshot(state: {
+  workgroups: AgentWorkgroup[];
+  activeGroupId: string;
+  sessionGroupById: Record<string, string>;
+  tabWorkgroupById: Record<string, string>;
+  tabs: TerminalTabInfo[];
+}): WorkgroupsState {
+  const sessionGroupById = { ...state.sessionGroupById };
+  for (const tab of state.tabs) {
+    if ((tab.kind ?? "shell") !== "agent") continue;
+    const groupId = state.tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID;
+    if (tab.agentSessionId) sessionGroupById[tab.agentSessionId] = groupId;
+  }
+  return parseWorkgroupsState({
+    groups: state.workgroups,
+    activeGroupId: state.activeGroupId,
+    sessionGroupById,
+  });
+}
+
+function persistCurrentWorkgroups(hostProfileId?: string | null): void {
+  const state = useTerminalStore.getState();
+  if (!state.workspaceCwd) return;
+  persistWorkgroupsState(
+    state.workspaceCwd,
+    hostProfileId ?? state.workspaceHostProfileId,
+    workgroupsSnapshot(state),
+  );
+}
+
+function assignTabsToWorkgroups(
+  tabs: TerminalTabInfo[],
+  workgroups: WorkgroupsState,
+  tabWorkgroupById: Record<string, string>,
+): {
+  tabWorkgroupById: Record<string, string>;
+  sessionGroupById: Record<string, string>;
+} {
+  const groupIds = new Set(workgroups.groups.map((group) => group.id));
+  const fallback = (id: string | undefined) =>
+    id && groupIds.has(id) ? id : DEFAULT_WORKGROUP_ID;
+  const nextTabs = { ...tabWorkgroupById };
+  const nextSessions = { ...workgroups.sessionGroupById };
+  for (const tab of tabs) {
+    if ((tab.kind ?? "shell") !== "agent") continue;
+    const groupId = fallback(
+      nextTabs[tab.id] ??
+        (tab.agentSessionId ? nextSessions[tab.agentSessionId] : undefined),
+    );
+    nextTabs[tab.id] = groupId;
+    if (tab.agentSessionId) nextSessions[tab.agentSessionId] = groupId;
+  }
+  return { tabWorkgroupById: nextTabs, sessionGroupById: nextSessions };
+}
+
+function applyWorkgroupToTab(
+  state: Pick<
+    TerminalState,
+    "tabWorkgroupById" | "sessionGroupById" | "workgroups"
+  >,
+  tab: TerminalTabInfo,
+  groupId: string,
+  profileId?: string,
+): Pick<
+  TerminalState,
+  "tabWorkgroupById" | "sessionGroupById" | "workgroups"
+> {
+  const resolved =
+    state.workgroups.some((group) => group.id === groupId)
+      ? groupId
+      : DEFAULT_WORKGROUP_ID;
+  return {
+    tabWorkgroupById: { ...state.tabWorkgroupById, [tab.id]: resolved },
+    sessionGroupById: tab.agentSessionId
+      ? { ...state.sessionGroupById, [tab.agentSessionId]: resolved }
+      : state.sessionGroupById,
+    workgroups: profileId
+      ? state.workgroups.map((group) =>
+          group.id === resolved ? { ...group, lastProfileId: profileId } : group,
+        )
+      : state.workgroups,
+  };
+}
+
 export function captureWorkspaceTerminalView(
   cwd: string,
   hostProfileId: string | null,
@@ -82,6 +226,7 @@ export function captureWorkspaceTerminalView(
   const key = workspaceAgentKey(cwd, hostProfileId);
   const state = useTerminalStore.getState();
   const tabs = state.tabs.filter((tab) => normalizedCwd(tab.cwd) === normalizedCwd(cwd));
+  persistWorkgroupsState(cwd, hostProfileId, workgroupsSnapshot(state));
   terminalWorkspaceViews.set(key, {
     tabs,
     activeByMode: {
@@ -97,6 +242,15 @@ export function captureWorkspaceTerminalView(
     ),
     mode: state.mode,
     sessionListOpenByMode: state.sessionListOpenByMode,
+    workgroups: state.workgroups,
+    activeGroupId: state.activeGroupId,
+    tabWorkgroupById: Object.fromEntries(
+      Object.entries(state.tabWorkgroupById).filter(([id]) =>
+        tabs.some((tab) => tab.id === id),
+      ),
+    ),
+    sessionGroupById: state.sessionGroupById,
+    workspaceHostProfileId: hostProfileId,
   });
 }
 
@@ -111,13 +265,28 @@ export function restoreWorkspaceTerminalView(
 }
 
 function setTerminalWorkspaceView(view: TerminalWorkspaceView, cwd: string): void {
+  const workgroups = parseWorkgroupsState({
+    groups: view.workgroups,
+    activeGroupId: view.activeGroupId,
+    sessionGroupById: view.sessionGroupById,
+  });
+  const assigned = assignTabsToWorkgroups(
+    view.tabs,
+    workgroups,
+    view.tabWorkgroupById,
+  );
   useTerminalStore.setState({
     workspaceCwd: cwd,
+    workspaceHostProfileId: view.workspaceHostProfileId,
     tabs: view.tabs,
     activeByMode: view.activeByMode,
     agentActivity: view.agentActivity,
     mode: view.mode,
     sessionListOpenByMode: view.sessionListOpenByMode,
+    workgroups: workgroups.groups,
+    activeGroupId: workgroups.activeGroupId,
+    tabWorkgroupById: assigned.tabWorkgroupById,
+    sessionGroupById: assigned.sessionGroupById,
     agentMenuOpen: false,
     error: null,
   });
@@ -129,6 +298,7 @@ export function saveWorkspaceAgents(
 ): void {
   try {
     captureWorkspaceTerminalView(cwd, hostProfileId);
+    persistCurrentWorkgroups(hostProfileId);
     const saved = readPersistedAgents();
     saved[workspaceAgentKey(cwd, hostProfileId)] = useTerminalStore
       .getState()
@@ -210,18 +380,32 @@ export async function resumeWorkspaceAgents(
     }
     return;
   }
-  useTerminalStore.setState((state) => ({
-    tabs: [
-      ...state.tabs.filter((tab) => !restored.some((item) => item.id === tab.id)),
-      ...restored,
-    ],
-    activeByMode: {
-      ...state.activeByMode,
-      agent: restored.at(-1)?.id ?? state.activeByMode.agent,
-    },
-    mode: "agent",
-    error: null,
-  }));
+  useTerminalStore.setState((state) => {
+    const assigned = assignTabsToWorkgroups(
+      restored,
+      {
+        groups: state.workgroups,
+        activeGroupId: state.activeGroupId,
+        sessionGroupById: state.sessionGroupById,
+      },
+      state.tabWorkgroupById,
+    );
+    return {
+      tabs: [
+        ...state.tabs.filter((tab) => !restored.some((item) => item.id === tab.id)),
+        ...restored,
+      ],
+      tabWorkgroupById: assigned.tabWorkgroupById,
+      sessionGroupById: assigned.sessionGroupById,
+      activeByMode: {
+        ...state.activeByMode,
+        agent: restored.at(-1)?.id ?? state.activeByMode.agent,
+      },
+      mode: "agent",
+      error: null,
+    };
+  });
+  persistCurrentWorkgroups(hostProfileId);
 }
 function readSessionListOpenByMode(): Record<RightTermMode, boolean> {
   try {
@@ -286,12 +470,19 @@ export interface TerminalState {
   sessionListOpenByMode: Record<RightTermMode, boolean>;
   error: string | null;
   workspaceCwd: string | null;
+  workspaceHostProfileId: string | null;
+  workgroups: AgentWorkgroup[];
+  activeGroupId: string;
+  /** Live PTY tab id → workgroup. */
+  tabWorkgroupById: Record<string, string>;
+  /** CLI session id → workgroup, kept after the tab closes. */
+  sessionGroupById: Record<string, string>;
   agentProfiles: AgentCliProfile[];
   defaultAgentId: string | null;
   agentMenuOpen: boolean;
   agentMenuIntent: AgentMenuIntent;
 
-  resetForWorkspace: (cwd: string) => Promise<void>;
+  resetForWorkspace: (cwd: string, hostProfileId?: string | null) => Promise<void>;
   setMode: (mode: RightTermMode) => void;
   toggleSessionList: (mode: RightTermMode) => void;
   setSessionListOpen: (mode: RightTermMode, open: boolean) => void;
@@ -324,6 +515,11 @@ export interface TerminalState {
     command: string;
     args?: string[];
   }) => Promise<AgentCliProfile | null>;
+  setActiveWorkgroup: (id: string) => void;
+  createWorkgroup: (name?: string) => string;
+  renameWorkgroup: (id: string, name: string) => void;
+  deleteWorkgroup: (id: string) => void;
+  focusAgentTab: (id: string) => void;
 }
 
 function modeOf(tab: TerminalTabInfo): RightTermMode {
@@ -348,12 +544,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   sessionListOpenByMode: readSessionListOpenByMode(),
   error: null,
   workspaceCwd: null,
+  workspaceHostProfileId: null,
+  workgroups: emptyWorkgroupsState().groups,
+  activeGroupId: DEFAULT_WORKGROUP_ID,
+  tabWorkgroupById: {},
+  sessionGroupById: {},
   agentProfiles: [],
   defaultAgentId: null,
   agentMenuOpen: false,
   agentMenuIntent: { kind: "new" },
 
-  resetForWorkspace: (cwd) => {
+  resetForWorkspace: (cwd, hostProfileId) => {
     const key = normalizedCwd(cwd);
     const current = get();
     if (
@@ -374,6 +575,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         for (const id of [...agentCompletionTimers.keys()]) {
           clearAgentCompletionTimer(id);
         }
+        const workgroups = loadWorkgroupsState(cwd, hostProfileId ?? null);
+        const assigned = assignTabsToWorkgroups(existing, workgroups, {});
         if (existing.length > 0) {
           const shell = existing
             .filter((tab) => modeOf(tab) === "terminal")
@@ -383,7 +586,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             .at(-1);
           set((s) => ({
             workspaceCwd: cwd,
+            workspaceHostProfileId: hostProfileId ?? s.workspaceHostProfileId,
             tabs: existing,
+            workgroups: workgroups.groups,
+            activeGroupId: workgroups.activeGroupId,
+            tabWorkgroupById: assigned.tabWorkgroupById,
+            sessionGroupById: assigned.sessionGroupById,
             activeByMode: {
               terminal: shell?.id ?? null,
               agent: agent?.id ?? null,
@@ -403,7 +611,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           });
           set((s) => ({
             workspaceCwd: cwd,
+            workspaceHostProfileId: hostProfileId ?? s.workspaceHostProfileId,
             tabs: [tab],
+            workgroups: workgroups.groups,
+            activeGroupId: workgroups.activeGroupId,
+            tabWorkgroupById: assigned.tabWorkgroupById,
+            sessionGroupById: assigned.sessionGroupById,
             activeByMode: { terminal: tab.id, agent: null },
             agentActivity: {},
             mode: "terminal",
@@ -412,12 +625,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             agentMenuIntent: s.agentMenuIntent,
           }));
         }
+        persistCurrentWorkgroups(hostProfileId ?? null);
         void get().loadAgentProfiles();
         void get().detectAgents();
       } catch (err) {
+        const workgroups = loadWorkgroupsState(cwd, hostProfileId ?? null);
         set((s) => ({
           workspaceCwd: cwd,
+          workspaceHostProfileId: hostProfileId ?? s.workspaceHostProfileId,
           tabs: [],
+          workgroups: workgroups.groups,
+          activeGroupId: workgroups.activeGroupId,
+          tabWorkgroupById: {},
+          sessionGroupById: workgroups.sessionGroupById,
           activeByMode: { terminal: null, agent: null },
           mode: "terminal",
           error: err instanceof Error ? err.message : String(err),
@@ -512,6 +732,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   createAgentTab: async (profile, launch) => {
     try {
+      const resumeSessionId = launch?.resumeSessionId?.trim();
+      if (resumeSessionId) {
+        const live = get().tabs.find(
+          (tab) =>
+            (tab.kind ?? "shell") === "agent" &&
+            tab.agentSessionId === resumeSessionId,
+        );
+        if (live) {
+          get().focusAgentTab(live.id);
+          set({
+            agentMenuOpen: false,
+            agentMenuIntent: { kind: "new" },
+            defaultAgentId: profile.id,
+          });
+          return true;
+        }
+      }
       const taskTitle = launch?.title?.trim();
       const tab = await window.anchor.agent.createSession({
         profileId: profile.id,
@@ -523,17 +760,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         cols: 80,
         rows: 24,
       });
-      set((s) => ({
-        tabs: s.tabs.some((item) => item.id === tab.id)
-          ? s.tabs.map((item) => (item.id === tab.id ? tab : item))
-          : [...s.tabs, tab],
-        mode: "agent",
-        activeByMode: { ...s.activeByMode, agent: tab.id },
-        error: null,
-        agentMenuOpen: false,
-        agentMenuIntent: { kind: "new" },
-        defaultAgentId: profile.id,
-      }));
+      set((s) => {
+        const existing = s.tabs.find((item) => item.id === tab.id);
+        const groupId = existing
+          ? s.tabWorkgroupById[tab.id] ?? s.activeGroupId
+          : s.activeGroupId;
+        const grouping = applyWorkgroupToTab(s, tab, groupId, profile.id);
+        return {
+          tabs: s.tabs.some((item) => item.id === tab.id)
+            ? s.tabs.map((item) => (item.id === tab.id ? tab : item))
+            : [...s.tabs, tab],
+          ...grouping,
+          mode: "agent",
+          activeByMode: { ...s.activeByMode, agent: tab.id },
+          error: null,
+          agentMenuOpen: false,
+          agentMenuIntent: { kind: "new" },
+          defaultAgentId: profile.id,
+        };
+      });
+      persistCurrentWorkgroups();
       void window.anchor.agent.setDefaultId(profile.id);
       try {
         localStorage.setItem("anchor.agent.lastProfileId", profile.id);
@@ -602,9 +848,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const hasAgent = tabs.some((t) => modeOf(t) === "agent");
       const mode =
         closedMode === "agent" && !hasAgent ? "terminal" : s.mode;
+      const { [id]: _closedGroup, ...tabWorkgroupById } = s.tabWorkgroupById;
       return {
         tabs,
         activeByMode,
+        tabWorkgroupById,
         agentActivity: Object.fromEntries(
           Object.entries(s.agentActivity).filter(([tabId]) => tabId !== id),
         ),
@@ -612,6 +860,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         agentMenuOpen: mode === "terminal" ? false : s.agentMenuOpen,
       };
     });
+    persistCurrentWorkgroups();
   },
 
   setActive: (id) =>
@@ -781,6 +1030,108 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return null;
     }
   },
+
+  setActiveWorkgroup: (id) =>
+    set((s) => {
+      if (!s.workgroups.some((group) => group.id === id)) return s;
+      const groupTabs = agentTabsInWorkgroup(s.tabs, s.tabWorkgroupById, id);
+      const keepCurrent =
+        s.activeByMode.agent &&
+        groupTabs.some((tab) => tab.id === s.activeByMode.agent);
+      const nextActive = keepCurrent
+        ? s.activeByMode.agent
+        : groupTabs.at(-1)?.id ?? s.activeByMode.agent;
+      const next = { ...s, activeGroupId: id };
+      persistWorkgroupsState(
+        s.workspaceCwd,
+        s.workspaceHostProfileId,
+        workgroupsSnapshot(next),
+      );
+      return {
+        activeGroupId: id,
+        activeByMode: { ...s.activeByMode, agent: nextActive },
+      };
+    }),
+
+  createWorkgroup: (name) => {
+    const id = nextWorkgroupId();
+    set((s) => {
+      const group = {
+        id,
+        name: uniqueWorkgroupName(s.workgroups, name?.trim() || "Workgroup"),
+        createdAt: new Date().toISOString(),
+      };
+      const next = {
+        ...s,
+        workgroups: [...s.workgroups, group],
+        activeGroupId: id,
+      };
+      persistWorkgroupsState(
+        s.workspaceCwd,
+        s.workspaceHostProfileId,
+        workgroupsSnapshot(next),
+      );
+      return {
+        workgroups: next.workgroups,
+        activeGroupId: id,
+      };
+    });
+    return id;
+  },
+
+  renameWorkgroup: (id, name) =>
+    set((s) => {
+      const next = renameWorkgroupInState(
+        {
+          groups: s.workgroups,
+          activeGroupId: s.activeGroupId,
+          sessionGroupById: s.sessionGroupById,
+        },
+        id,
+        name,
+      );
+      persistWorkgroupsState(s.workspaceCwd, s.workspaceHostProfileId, next);
+      return { workgroups: next.groups };
+    }),
+
+  deleteWorkgroup: (id) =>
+    set((s) => {
+      const next = removeWorkgroup(
+        {
+          groups: s.workgroups,
+          activeGroupId: s.activeGroupId,
+          sessionGroupById: s.sessionGroupById,
+        },
+        id,
+      );
+      if (next.groups === s.workgroups) return s;
+      persistWorkgroupsState(s.workspaceCwd, s.workspaceHostProfileId, next);
+      return {
+        workgroups: next.groups,
+        activeGroupId: next.activeGroupId,
+        sessionGroupById: next.sessionGroupById,
+        tabWorkgroupById: reassignGroupIds(
+          s.tabWorkgroupById,
+          id,
+          DEFAULT_WORKGROUP_ID,
+        ),
+      };
+    }),
+
+  focusAgentTab: (id) => {
+    const tab = get().tabs.find((item) => item.id === id);
+    if (!tab || (tab.kind ?? "shell") !== "agent") return;
+    set((s) => ({
+      activeGroupId: s.tabWorkgroupById[id] ?? s.activeGroupId,
+      activeByMode: { ...s.activeByMode, agent: id },
+      mode: "agent",
+      agentActivity: {
+        ...s.agentActivity,
+        [id]: nextAgentActivity(s.agentActivity[id] ?? "idle", "viewed"),
+      },
+    }));
+    persistCurrentWorkgroups();
+  },
 }));
 
 // Push title updates from main (agent TUI topic scrape via PTY output).
@@ -798,18 +1149,35 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onTitle) {
 if (typeof window !== "undefined" && window.anchor?.terminal?.onCreated) {
   window.anchor.terminal.onCreated(({ info }) => {
     const mode = modeOf(info);
-    useTerminalStore.setState((state) => ({
-      tabs: state.tabs.some((tab) => tab.id === info.id)
-        ? state.tabs.map((tab) => (tab.id === info.id ? info : tab))
-        : [...state.tabs, info],
-      activeByMode: { ...state.activeByMode, [mode]: info.id },
-      mode: mode === "agent" ? "agent" : state.mode,
-      agentMenuOpen: mode === "agent" ? false : state.agentMenuOpen,
-      error: null,
-    }));
+    useTerminalStore.setState((state) => {
+      const already = state.tabs.some((tab) => tab.id === info.id);
+      const grouping =
+        mode === "agent"
+          ? applyWorkgroupToTab(
+              state,
+              info,
+              already
+                ? state.tabWorkgroupById[info.id] ?? state.activeGroupId
+                : state.activeGroupId,
+              info.agentId,
+            )
+          : null;
+      return {
+        tabs: already
+          ? state.tabs.map((tab) => (tab.id === info.id ? info : tab))
+          : [...state.tabs, info],
+        ...(grouping ?? {}),
+        activeByMode: { ...state.activeByMode, [mode]: info.id },
+        mode: mode === "agent" ? "agent" : state.mode,
+        agentMenuOpen: mode === "agent" ? false : state.agentMenuOpen,
+        error: null,
+      };
+    });
     if (mode === "agent") {
+      persistCurrentWorkgroups();
       void import("@/features/shell/shellStore").then(({ useShellStore }) => {
-        useShellStore.getState().setAgentVisible(true);
+        const shell = useShellStore.getState();
+        if (shell.leftMode !== "agent") shell.setAgentVisible(true);
       });
     }
   });
@@ -817,9 +1185,21 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onCreated) {
 
 if (typeof window !== "undefined" && window.anchor?.terminal?.onUpdated) {
   window.anchor.terminal.onUpdated(({ info }) => {
-    useTerminalStore.setState((state) => ({
-      tabs: state.tabs.map((tab) => (tab.id === info.id ? info : tab)),
-    }));
+    useTerminalStore.setState((state) => {
+      const grouping =
+        info.kind === "agent" && info.agentSessionId
+          ? applyWorkgroupToTab(
+              state,
+              info,
+              state.tabWorkgroupById[info.id] ?? state.activeGroupId,
+              info.agentId,
+            )
+          : null;
+      return {
+        tabs: state.tabs.map((tab) => (tab.id === info.id ? info : tab)),
+        ...(grouping ?? {}),
+      };
+    });
   });
 }
 
@@ -859,4 +1239,16 @@ export function sessionsForMode(
 ): TerminalTabInfo[] {
   const kind: TerminalSessionKind = mode === "agent" ? "agent" : "shell";
   return tabs.filter((tab) => (tab.kind ?? "shell") === kind);
+}
+
+export function agentTabsInWorkgroup(
+  tabs: TerminalTabInfo[],
+  tabWorkgroupById: Record<string, string>,
+  groupId: string,
+): TerminalTabInfo[] {
+  return tabs.filter(
+    (tab) =>
+      (tab.kind ?? "shell") === "agent" &&
+      (tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID) === groupId,
+  );
 }

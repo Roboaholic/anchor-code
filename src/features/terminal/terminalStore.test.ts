@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTabInfo } from "@/shared/anchor-api";
 import {
-  resumeWorkspaceAgents,
+  restoreParkedWorkspaceAgents,
   saveWorkspaceAgents,
   useTerminalStore,
 } from "./terminalStore";
@@ -15,6 +15,7 @@ describe("terminal workspace initialization", () => {
   beforeEach(() => {
     useTerminalStore.setState({
       tabs: [],
+      parkedAgents: [],
       activeByMode: { terminal: null, agent: null },
       agentActivity: {},
       workspaceCwd: null,
@@ -62,22 +63,16 @@ describe("terminal workspace initialization", () => {
   });
 });
 describe("workspace agent persistence", () => {
-  it("starts all saved agent resumes concurrently", async () => {
+  it("parks saved agents until a title is clicked", async () => {
     const storage = new Map<string, string>();
-    const first = deferred<TerminalTabInfo>();
-    const second = deferred<TerminalTabInfo>();
-    const createSession = vi
-      .fn()
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-    const rename = vi.fn(async (id: string, title: string) => ({
-      id,
-      title,
+    const createSession = vi.fn(async () => ({
+      id: "a1",
+      title: "Auth",
       cwd: "/workspace",
       status: "running" as const,
       kind: "agent" as const,
-      agentId: id === "a1" ? "codex" : "omp",
-      agentSessionId: id === "a1" ? "codex-session" : "omp-session",
+      agentId: "codex",
+      agentSessionId: "codex-session",
     }));
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => storage.get(key) ?? null,
@@ -88,33 +83,150 @@ describe("workspace agent persistence", () => {
         agent: {
           listProfiles: vi.fn(async () => [
             { id: "codex", name: "Codex", command: "codex" },
-            { id: "omp", name: "OMP", command: "omp" },
           ]),
           createSession,
+          setDefaultId: vi.fn(),
         },
-        terminal: { rename },
+        terminal: { rename: vi.fn(async (_id: string, title: string) => ({
+          id: "a1",
+          title,
+          cwd: "/workspace",
+          status: "running" as const,
+          kind: "agent" as const,
+          agentId: "codex",
+          agentSessionId: "codex-session",
+        })) },
       },
     });
     useTerminalStore.setState({
+      workspaceCwd: "/workspace",
+      workspaceHostProfileId: "local-default",
+      tabWorkgroupById: { "old-1": "default" },
+      parkedAgents: [],
       tabs: [
         { id: "old-1", title: "Auth", cwd: "/workspace", status: "running", kind: "agent", agentId: "codex", agentSessionId: "codex-session" },
-        { id: "old-2", title: "Tests", cwd: "/workspace", status: "running", kind: "agent", agentId: "omp", agentSessionId: "omp-session" },
       ],
     });
     saveWorkspaceAgents("/workspace", "local-default");
-    useTerminalStore.setState({ tabs: [] });
+    useTerminalStore.setState({ tabs: [], parkedAgents: [] });
 
-    const restoring = resumeWorkspaceAgents("/workspace", "local-default");
-    await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(2));
-    expect(createSession.mock.calls.map(([input]) => input)).toEqual([
-      { profileId: "codex", resume: true, sessionId: "codex-session", cols: 80, rows: 24 },
-      { profileId: "omp", resume: true, sessionId: "omp-session", cols: 80, rows: 24 },
+    restoreParkedWorkspaceAgents("/workspace", "local-default");
+    expect(createSession).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().parkedAgents).toEqual([
+      { profileId: "codex", sessionId: "codex-session", title: "Auth", groupId: "default" },
     ]);
-    first.resolve({ id: "a1", title: "Codex", cwd: "/workspace", status: "running", kind: "agent", agentId: "codex", agentSessionId: "codex-session" });
-    second.resolve({ id: "a2", title: "OMP", cwd: "/workspace", status: "running", kind: "agent", agentId: "omp", agentSessionId: "omp-session" });
-    await restoring;
 
-    expect(useTerminalStore.getState().tabs.map((tab) => tab.title)).toEqual(["Auth", "Tests"]);
+    await useTerminalStore.getState().resumeParkedAgent("codex-session");
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: "codex",
+      resume: true,
+      sessionId: "codex-session",
+    }));
+    expect(useTerminalStore.getState().parkedAgents).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not resume parked agents while resetting a workspace", async () => {
+    const storage = new Map<string, string>([
+      [
+        "anchor.workspace.agents.v1",
+        JSON.stringify({
+          "local-default::/workspace": [
+            {
+              profileId: "codex",
+              sessionId: "codex-session",
+              title: "Auth",
+              groupId: "default",
+            },
+          ],
+        }),
+      ],
+    ]);
+    const createSession = vi.fn();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    vi.stubGlobal("window", {
+      anchor: {
+        terminal: {
+          list: vi.fn(async () => []),
+          create: vi.fn(async () => ({
+            id: "shell-1",
+            title: "workspace",
+            cwd: "/workspace",
+            status: "running" as const,
+            kind: "shell" as const,
+          })),
+        },
+        agent: {
+          listProfiles: vi.fn(async () => []),
+          getDefaultId: vi.fn(async () => null),
+          detect: vi.fn(async () => []),
+          createSession,
+        },
+      },
+    });
+    useTerminalStore.setState({
+      workspaceCwd: "/other",
+      parkedAgents: [
+        {
+          profileId: "omp",
+          sessionId: "other-session",
+          title: "Other",
+          groupId: "default",
+        },
+      ],
+      tabs: [],
+    });
+
+    await useTerminalStore.getState().resetForWorkspace("/workspace", "local-default");
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().parkedAgents).toEqual([
+      {
+        profileId: "codex",
+        sessionId: "codex-session",
+        title: "Auth",
+        groupId: "default",
+      },
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  it("moves parked conversations to Default when a workgroup is deleted", () => {
+    useTerminalStore.setState({
+      workspaceCwd: "/workspace",
+      workgroups: [
+        { id: DEFAULT_WORKGROUP_ID, name: "Default", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "wg-1", name: "Login", createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      activeGroupId: "wg-1",
+      parkedAgents: [
+        {
+          profileId: "codex",
+          sessionId: "parked-1",
+          title: "Auth",
+          groupId: "wg-1",
+        },
+      ],
+      tabs: [],
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+
+    useTerminalStore.getState().deleteWorkgroup("wg-1");
+
+    expect(useTerminalStore.getState().parkedAgents).toEqual([
+      {
+        profileId: "codex",
+        sessionId: "parked-1",
+        title: "Auth",
+        groupId: DEFAULT_WORKGROUP_ID,
+      },
+    ]);
     vi.unstubAllGlobals();
   });
 });

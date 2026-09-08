@@ -53,6 +53,7 @@ export function AgentSidebar() {
   const activeGroupId = useTerminalStore((s) => s.activeGroupId);
   const tabs = useTerminalStore((s) => s.tabs);
   const tabWorkgroupById = useTerminalStore((s) => s.tabWorkgroupById);
+  const parkedAgents = useTerminalStore((s) => s.parkedAgents);
   const activeTabId = useTerminalStore((s) => s.activeByMode.agent);
   const agentActivity = useTerminalStore((s) => s.agentActivity);
   const agentProfiles = useTerminalStore((s) => s.agentProfiles);
@@ -64,6 +65,7 @@ export function AgentSidebar() {
   const closeTab = useTerminalStore((s) => s.closeTab);
   const renameTab = useTerminalStore((s) => s.renameTab);
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
+  const resumeParkedAgent = useTerminalStore((s) => s.resumeParkedAgent);
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
 
   const liveSessionIds = useMemo(
@@ -369,6 +371,7 @@ export function AgentSidebar() {
       <div className="agent-sidebar__groups">
         {workgroups.map((group) => {
           const groupTabs = agentTabsInWorkgroup(tabs, tabWorkgroupById, group.id);
+          const parked = parkedAgents.filter((item) => item.groupId === group.id);
           const activity = groupActivity(groupTabs, agentActivity);
           const isCurrent = group.id === activeGroupId;
           return (
@@ -411,7 +414,7 @@ export function AgentSidebar() {
                     ) : null}
                     <span className="agent-workgroup__name">{group.name}</span>
                     <span className="agent-workgroup__count">
-                      {groupTabs.length}
+                      {groupTabs.length + parked.length}
                     </span>
                   </button>
                 )}
@@ -469,10 +472,33 @@ export function AgentSidebar() {
                   </button>
                 ) : null}
               </div>
-              {groupTabs.length === 0 ? (
+              {groupTabs.length === 0 && parked.length === 0 ? (
                 <p className="agent-sidebar__empty muted">No conversations</p>
               ) : (
                 <ul className="agent-sidebar__list agent-workgroup__sessions">
+                  {parked.map((item) => (
+                    <li key={`parked:${item.sessionId}`} className="agent-sidebar__item">
+                      <button
+                        type="button"
+                        className="agent-sidebar__row agent-sidebar__row--parked"
+                        disabled={resumingId === item.sessionId}
+                        onClick={() => {
+                          setResumingId(item.sessionId);
+                          void resumeParkedAgent(item.sessionId).finally(() => {
+                            setResumingId((current) =>
+                              current === item.sessionId ? null : current,
+                            );
+                          });
+                        }}
+                        title="Click title to resume"
+                      >
+                        <span className="agent-sidebar__row-title">{item.title}</span>
+                        <span className="muted">
+                          {resumingId === item.sessionId ? "resuming" : "saved"}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
                   {groupTabs.map((tab) => (
                     <li key={tab.id} className="agent-sidebar__item">
                       {editingTabId === tab.id ? (

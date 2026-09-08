@@ -172,4 +172,28 @@ describe("workspace document persistence", () => {
     expect(restored.openItems[1]).toMatchObject({ mdViewMode: "raw" });
     vi.unstubAllGlobals();
   });
+
+  it("can restore files without stealing the active tab", async () => {
+    mockReadText({ "/proj/a.ts": "a", "/proj/b.ts": "b" });
+    useDocumentStore.setState({
+      openItems: [{ id: "welcome", kind: "welcome", title: "Welcome" }],
+      activeId: "welcome",
+    });
+    await useDocumentStore.getState().openFile({
+      path: "/proj/a.ts",
+      workspaceRoot: "/proj",
+      activate: false,
+    });
+    await useDocumentStore.getState().openFile({
+      path: "/proj/b.ts",
+      workspaceRoot: "/proj",
+      activate: false,
+    });
+    expect(useDocumentStore.getState().activeId).toBe("welcome");
+    expect(useDocumentStore.getState().openItems.map((item) => item.id)).toEqual([
+      "welcome",
+      "file:/proj/a.ts",
+      "file:/proj/b.ts",
+    ]);
+  });
 });

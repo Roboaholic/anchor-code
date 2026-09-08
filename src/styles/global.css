@@ -8102,6 +8102,14 @@ select.field__input {
   color: var(--text);
 }
 
+.agent-sidebar__row--parked {
+  color: var(--text-muted);
+}
+
+.agent-sidebar__row--parked .agent-sidebar__row-title {
+  color: var(--text);
+}
+
 .agent-sidebar__row-title {
   overflow: hidden;
   text-overflow: ellipsis;

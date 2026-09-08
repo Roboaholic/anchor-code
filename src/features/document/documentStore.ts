@@ -131,18 +131,22 @@ export async function restoreWorkspaceDocuments(
 ): Promise<void> {
   if (restoreCachedWorkspaceDocuments(workspaceRoot, hostProfileId)) return;
   const saved = readPersistedDocuments()[workspaceKey(workspaceRoot, hostProfileId)];
-  useDocumentStore.getState().closeAllFiles();
-  if (!saved || !Array.isArray(saved.openItems)) return;
+  useDocumentStore.setState({ openItems: [], activeId: null });
+  if (!saved || !Array.isArray(saved.openItems) || saved.openItems.length === 0) {
+    useDocumentStore.getState().openWelcome();
+    return;
+  }
 
   const restoredIds: string[] = [];
   for (const item of saved.openItems) {
     if (item?.kind === "welcome") {
-      useDocumentStore.getState().openWelcome();
+      useDocumentStore.getState().openWelcome({ activate: false });
       restoredIds.push("welcome");
     } else if (item?.kind === "file" && typeof item.path === "string") {
       await useDocumentStore.getState().openFile({
         path: item.path,
         workspaceRoot,
+        activate: false,
       });
       const restored = findOpenFile(useDocumentStore.getState().openItems, item.path);
       if (restored) {
@@ -158,9 +162,8 @@ export async function restoreWorkspaceDocuments(
       (typeof item.head === "string") &&
       Array.isArray(item.files)
     ) {
-      useDocumentStore.getState().openDiff(item);
-      const activeId = useDocumentStore.getState().activeId;
-      if (activeId) restoredIds.push(activeId);
+      useDocumentStore.getState().openDiff(item, { activate: false });
+      restoredIds.push(diffItemId(item));
     }
   }
 
@@ -212,15 +215,17 @@ export interface DocumentState {
   openItems: OpenItem[];
   activeId: string | null;
 
-  openWelcome: () => void;
+  openWelcome: (opts?: { activate?: boolean }) => void;
   openFile: (opts: {
     path: string;
     workspaceRoot: string | null;
     revealLine?: number;
     focusCommentId?: string | null;
     searchHighlight?: Omit<SearchHighlight, "nonce"> | null;
+    /** Restore many tabs without making each one active (avoids N Monaco mounts). */
+    activate?: boolean;
   }) => Promise<void>;
-  openDiff: (payload: DiffOpenPayload) => void;
+  openDiff: (payload: DiffOpenPayload, opts?: { activate?: boolean }) => void;
   setDiffActiveFile: (id: string, filePath: string) => void;
   closeItem: (id: string) => void;
   /** Keep only the tab with `id` (activate it). */
@@ -274,11 +279,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   openItems: [welcomeItem()],
   activeId: "welcome",
 
-  openWelcome: () => {
+  openWelcome: (opts) => {
     const { openItems } = get();
+    const activate = opts?.activate !== false;
     if (!openItems.some((i) => i.kind === "welcome")) {
-      set({ openItems: [welcomeItem(), ...openItems], activeId: "welcome" });
-    } else {
+      set({
+        openItems: [welcomeItem(), ...openItems],
+        activeId: activate ? "welcome" : get().activeId,
+      });
+    } else if (activate) {
       set({ activeId: "welcome" });
     }
   },
@@ -289,6 +298,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     revealLine,
     focusCommentId,
     searchHighlight,
+    activate = true,
   }) => {
     const normalizedPath = normalizePathKey(path);
     const id = fileItemId(normalizedPath);
@@ -304,7 +314,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           : null;
     if (existing && !existing.error) {
       set((s) => ({
-        activeId: existing.id,
+        activeId: activate ? existing.id : s.activeId,
         openItems: s.openItems.map((item) =>
           item.id === existing.id && item.kind === "file"
             ? {
@@ -355,7 +365,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     set((s) => {
       const without = s.openItems.filter((i) => i.id !== id);
-      return { openItems: [...without, loading], activeId: id };
+      return {
+        openItems: [...without, loading],
+        activeId: activate ? id : s.activeId,
+      };
     });
 
     try {
@@ -387,7 +400,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  openDiff: (payload) => {
+  openDiff: (payload, opts) => {
     if (payload.head === "worktree") {
       invalidateWorktreeDiffCache(payload.repoRoot, payload.base);
     }
@@ -411,7 +424,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     set((s) => {
       const without = s.openItems.filter((i) => i.id !== id);
-      return { openItems: [...without, item], activeId: id };
+      return {
+        openItems: [...without, item],
+        activeId: opts?.activate === false ? s.activeId : id,
+      };
     });
   },
 

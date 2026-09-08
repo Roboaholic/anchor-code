@@ -11,6 +11,7 @@ import type { CodiconName } from "@/shared/Icon";
 import { CodeViewer } from "./CodeViewer";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
 
 const TAB_DND_MIME = "application/x-anchor-tab-index";
@@ -36,10 +37,26 @@ export function DocumentArea() {
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null);
   const [tabOverflow, setTabOverflow] = useState({ left: false, right: false });
+  const [mountedIds, setMountedIds] = useState<Set<string>>(() => new Set());
   const tabMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
 
   const active = openItems.find((i) => i.id === activeId) ?? openItems[0] ?? null;
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+
+  useEffect(() => {
+    setMountedIds(new Set(active ? [active.id] : []));
+  }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (!active) return;
+    setMountedIds((prev) => {
+      if (prev.has(active.id)) return prev;
+      const next = new Set(prev);
+      next.add(active.id);
+      return next;
+    });
+  }, [active]);
 
   useEffect(() => {
     if (!tabMenu) return;
@@ -377,11 +394,11 @@ export function DocumentArea() {
           .sort((a, b) => a.id.localeCompare(b.id))
           .map((item) => {
             const isActive = item.id === active?.id;
+            if (!isActive && !mountedIds.has(item.id)) return null;
             return (
               <div
                 key={item.id}
                 className={`document-area__pane${isActive ? " is-active" : ""}`}
-                // Keep inactive tabs mounted so DiffViewer does not re-fetch on switch.
                 hidden={!isActive}
                 aria-hidden={!isActive}
               >

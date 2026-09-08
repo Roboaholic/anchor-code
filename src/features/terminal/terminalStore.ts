@@ -61,7 +61,19 @@ const SESSION_LIST_KEY_LEGACY = "anchor.terminal.sessionListOpen";
 
 const WORKSPACE_AGENTS_KEY = "anchor.workspace.agents.v1";
 
-type PersistedAgent = { profileId: string; sessionId: string; title: string };
+type PersistedAgent = {
+  profileId: string;
+  sessionId: string;
+  title: string;
+  groupId?: string;
+};
+
+export type ParkedAgent = {
+  profileId: string;
+  sessionId: string;
+  title: string;
+  groupId: string;
+};
 type TerminalWorkspaceView = {
   tabs: TerminalTabInfo[];
   activeByMode: Record<RightTermMode, string | null>;
@@ -72,6 +84,7 @@ type TerminalWorkspaceView = {
   activeGroupId: string;
   tabWorkgroupById: Record<string, string>;
   sessionGroupById: Record<string, string>;
+  parkedAgents: ParkedAgent[];
   workspaceHostProfileId: string | null;
 };
 const terminalWorkspaceViews = new Map<string, TerminalWorkspaceView>();
@@ -141,6 +154,7 @@ function workgroupsSnapshot(state: {
   sessionGroupById: Record<string, string>;
   tabWorkgroupById: Record<string, string>;
   tabs: TerminalTabInfo[];
+  parkedAgents?: ParkedAgent[];
 }): WorkgroupsState {
   const sessionGroupById = { ...state.sessionGroupById };
   for (const tab of state.tabs) {
@@ -148,10 +162,32 @@ function workgroupsSnapshot(state: {
     const groupId = state.tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID;
     if (tab.agentSessionId) sessionGroupById[tab.agentSessionId] = groupId;
   }
+  for (const parked of state.parkedAgents ?? []) {
+    sessionGroupById[parked.sessionId] = parked.groupId;
+  }
   return parseWorkgroupsState({
     groups: state.workgroups,
     activeGroupId: state.activeGroupId,
     sessionGroupById,
+  });
+}
+
+function parkedFromPersisted(
+  agents: PersistedAgent[] | undefined,
+  workgroups: WorkgroupsState,
+  liveSessionIds: Set<string>,
+): ParkedAgent[] {
+  if (!Array.isArray(agents)) return [];
+  const groupIds = new Set(workgroups.groups.map((group) => group.id));
+  return agents.flatMap((saved) => {
+    if (!saved.sessionId || liveSessionIds.has(saved.sessionId)) return [];
+    const mapped = saved.groupId ?? workgroups.sessionGroupById[saved.sessionId];
+    return [{
+      profileId: saved.profileId,
+      sessionId: saved.sessionId,
+      title: saved.title,
+      groupId: mapped && groupIds.has(mapped) ? mapped : DEFAULT_WORKGROUP_ID,
+    }];
   });
 }
 
@@ -250,6 +286,7 @@ export function captureWorkspaceTerminalView(
       ),
     ),
     sessionGroupById: state.sessionGroupById,
+    parkedAgents: state.parkedAgents,
     workspaceHostProfileId: hostProfileId,
   });
 }
@@ -287,6 +324,7 @@ function setTerminalWorkspaceView(view: TerminalWorkspaceView, cwd: string): voi
     activeGroupId: workgroups.activeGroupId,
     tabWorkgroupById: assigned.tabWorkgroupById,
     sessionGroupById: assigned.sessionGroupById,
+    parkedAgents: view.parkedAgents ?? [],
     agentMenuOpen: false,
     error: null,
   });
@@ -300,9 +338,9 @@ export function saveWorkspaceAgents(
     captureWorkspaceTerminalView(cwd, hostProfileId);
     persistCurrentWorkgroups(hostProfileId);
     const saved = readPersistedAgents();
-    saved[workspaceAgentKey(cwd, hostProfileId)] = useTerminalStore
-      .getState()
-      .tabs.filter(
+    const state = useTerminalStore.getState();
+    const live = state.tabs
+      .filter(
         (tab): tab is TerminalTabInfo & { agentId: string; agentSessionId: string } =>
           tab.kind === "agent" &&
           tab.status === "running" &&
@@ -314,98 +352,86 @@ export function saveWorkspaceAgents(
         profileId: tab.agentId,
         sessionId: tab.agentSessionId,
         title: tab.title,
+        groupId: state.tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID,
       }));
+    const bySession = new Map<string, PersistedAgent>();
+    for (const item of state.parkedAgents) {
+      bySession.set(item.sessionId, {
+        profileId: item.profileId,
+        sessionId: item.sessionId,
+        title: item.title,
+        groupId: item.groupId,
+      });
+    }
+    for (const item of live) bySession.set(item.sessionId, item);
+    saved[workspaceAgentKey(cwd, hostProfileId)] = [...bySession.values()];
     localStorage.setItem(WORKSPACE_AGENTS_KEY, JSON.stringify(saved));
   } catch {
     // Persistence must not interrupt workspace switching.
   }
 }
 
-export async function resumeWorkspaceAgents(
+export function restoreParkedWorkspaceAgents(
   cwd: string,
   hostProfileId: string | null,
-): Promise<void> {
-  const agents = readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId)];
-  if (!Array.isArray(agents) || agents.length === 0) return;
-
-  const liveAgentSessionIds = new Set(
+): void {
+  const workgroups = loadWorkgroupsState(cwd, hostProfileId);
+  const liveSessionIds = new Set(
     useTerminalStore
       .getState()
       .tabs.filter(
         (tab) =>
           tab.kind === "agent" &&
-          normalizedCwd(tab.cwd) === normalizedCwd(cwd) &&
           typeof tab.agentSessionId === "string" &&
           tab.agentSessionId.trim().length > 0,
       )
       .map((tab) => tab.agentSessionId!),
   );
-  const missingAgents = agents.filter(
-    (saved) => !liveAgentSessionIds.has(saved.sessionId),
-  );
-  if (missingAgents.length === 0) return;
-  const profiles = await window.anchor.agent.listProfiles();
-  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
-  const results = await Promise.allSettled(
-    missingAgents.map(async (saved) => {
-      const profile = byId.get(saved.profileId);
-      if (!profile || profile.enabled === false) {
-        throw new Error(`Agent profile unavailable: ${saved.profileId}`);
-      }
-      const tab = await window.anchor.agent.createSession({
-        profileId: profile.id,
-        resume: true,
-        sessionId: saved.sessionId,
-        cols: 80,
-        rows: 24,
-      });
-      return saved.title.trim()
-        ? await window.anchor.terminal.rename(tab.id, saved.title)
-        : tab;
-    }),
-  );
-  const restored = results.flatMap((result) =>
-    result.status === "fulfilled" ? [result.value] : [],
-  );
-  if (restored.length === 0) {
-    const reason = results.find((result) => result.status === "rejected");
-    if (reason?.status === "rejected") {
-      setTimeout(() => {
-        useTerminalStore.setState({
-          error: reason.reason instanceof Error
-            ? reason.reason.message
-            : String(reason.reason),
-        });
-      }, 0);
-    }
-    return;
-  }
-  useTerminalStore.setState((state) => {
-    const assigned = assignTabsToWorkgroups(
-      restored,
+  useTerminalStore.setState((state) => ({
+    parkedAgents: parkedFromPersisted(
+      readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId)],
       {
-        groups: state.workgroups,
+        groups: state.workgroups.length > 0 ? state.workgroups : workgroups.groups,
         activeGroupId: state.activeGroupId,
-        sessionGroupById: state.sessionGroupById,
+        sessionGroupById: {
+          ...workgroups.sessionGroupById,
+          ...state.sessionGroupById,
+        },
       },
-      state.tabWorkgroupById,
-    );
-    return {
-      tabs: [
-        ...state.tabs.filter((tab) => !restored.some((item) => item.id === tab.id)),
-        ...restored,
-      ],
-      tabWorkgroupById: assigned.tabWorkgroupById,
-      sessionGroupById: assigned.sessionGroupById,
-      activeByMode: {
-        ...state.activeByMode,
-        agent: restored.at(-1)?.id ?? state.activeByMode.agent,
-      },
-      mode: "agent",
-      error: null,
-    };
+      liveSessionIds,
+    ),
+  }));
+}
+
+export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
+  const parked = useTerminalStore
+    .getState()
+    .parkedAgents.find((item) => item.sessionId === sessionId);
+  if (!parked) return false;
+  const live = useTerminalStore.getState().tabs.find(
+    (tab) =>
+      (tab.kind ?? "shell") === "agent" && tab.agentSessionId === sessionId,
+  );
+  if (live) {
+    useTerminalStore.getState().focusAgentTab(live.id);
+    useTerminalStore.setState((state) => ({
+      parkedAgents: state.parkedAgents.filter((item) => item.sessionId !== sessionId),
+    }));
+    return true;
+  }
+  const profiles = await window.anchor.agent.listProfiles();
+  const profile = profiles.find((item) => item.id === parked.profileId);
+  if (!profile || profile.enabled === false) {
+    useTerminalStore.setState({
+      error: `Agent profile unavailable: ${parked.profileId}`,
+    });
+    return false;
+  }
+  useTerminalStore.getState().setActiveWorkgroup(parked.groupId);
+  return useTerminalStore.getState().createAgentTab(profile, {
+    title: parked.title,
+    resumeSessionId: parked.sessionId,
   });
-  persistCurrentWorkgroups(hostProfileId);
 }
 function readSessionListOpenByMode(): Record<RightTermMode, boolean> {
   try {
@@ -477,6 +503,8 @@ export interface TerminalState {
   tabWorkgroupById: Record<string, string>;
   /** CLI session id → workgroup, kept after the tab closes. */
   sessionGroupById: Record<string, string>;
+  /** Saved conversations shown in the workgroup list until clicked. */
+  parkedAgents: ParkedAgent[];
   agentProfiles: AgentCliProfile[];
   defaultAgentId: string | null;
   agentMenuOpen: boolean;
@@ -520,6 +548,7 @@ export interface TerminalState {
   renameWorkgroup: (id: string, name: string) => void;
   deleteWorkgroup: (id: string) => void;
   focusAgentTab: (id: string) => void;
+  resumeParkedAgent: (sessionId: string) => Promise<boolean>;
 }
 
 function modeOf(tab: TerminalTabInfo): RightTermMode {
@@ -549,6 +578,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activeGroupId: DEFAULT_WORKGROUP_ID,
   tabWorkgroupById: {},
   sessionGroupById: {},
+  parkedAgents: [],
   agentProfiles: [],
   defaultAgentId: null,
   agentMenuOpen: false,
@@ -592,6 +622,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             activeGroupId: workgroups.activeGroupId,
             tabWorkgroupById: assigned.tabWorkgroupById,
             sessionGroupById: assigned.sessionGroupById,
+            parkedAgents: [],
             activeByMode: {
               terminal: shell?.id ?? null,
               agent: agent?.id ?? null,
@@ -617,6 +648,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             activeGroupId: workgroups.activeGroupId,
             tabWorkgroupById: assigned.tabWorkgroupById,
             sessionGroupById: assigned.sessionGroupById,
+            parkedAgents: [],
             activeByMode: { terminal: tab.id, agent: null },
             agentActivity: {},
             mode: "terminal",
@@ -625,6 +657,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             agentMenuIntent: s.agentMenuIntent,
           }));
         }
+        restoreParkedWorkspaceAgents(cwd, hostProfileId ?? null);
         persistCurrentWorkgroups(hostProfileId ?? null);
         void get().loadAgentProfiles();
         void get().detectAgents();
@@ -638,6 +671,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           activeGroupId: workgroups.activeGroupId,
           tabWorkgroupById: {},
           sessionGroupById: workgroups.sessionGroupById,
+          parkedAgents: parkedFromPersisted(
+            readPersistedAgents()[workspaceAgentKey(cwd, hostProfileId ?? null)],
+            workgroups,
+            new Set(),
+          ),
           activeByMode: { terminal: null, agent: null },
           mode: "terminal",
           error: err instanceof Error ? err.message : String(err),
@@ -741,11 +779,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         );
         if (live) {
           get().focusAgentTab(live.id);
-          set({
+          set((s) => ({
+            parkedAgents: s.parkedAgents.filter(
+              (item) => item.sessionId !== resumeSessionId,
+            ),
             agentMenuOpen: false,
             agentMenuIntent: { kind: "new" },
             defaultAgentId: profile.id,
-          });
+          }));
           return true;
         }
       }
@@ -776,6 +817,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           error: null,
           agentMenuOpen: false,
           agentMenuIntent: { kind: "new" },
+          parkedAgents: s.parkedAgents.filter(
+            (item) =>
+              !tab.agentSessionId || item.sessionId !== tab.agentSessionId,
+          ),
           defaultAgentId: profile.id,
         };
       });
@@ -1115,6 +1160,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           id,
           DEFAULT_WORKGROUP_ID,
         ),
+        parkedAgents: s.parkedAgents.map((item) =>
+          item.groupId === id
+            ? { ...item, groupId: DEFAULT_WORKGROUP_ID }
+            : item,
+        ),
       };
     }),
 
@@ -1132,6 +1182,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
     persistCurrentWorkgroups();
   },
+  resumeParkedAgent: (sessionId) => resumeParkedAgent(sessionId),
 }));
 
 // Push title updates from main (agent TUI topic scrape via PTY output).
@@ -1173,13 +1224,7 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onCreated) {
         error: null,
       };
     });
-    if (mode === "agent") {
-      persistCurrentWorkgroups();
-      void import("@/features/shell/shellStore").then(({ useShellStore }) => {
-        const shell = useShellStore.getState();
-        if (shell.leftMode !== "agent") shell.setAgentVisible(true);
-      });
-    }
+    if (mode === "agent") persistCurrentWorkgroups();
   });
 }
 

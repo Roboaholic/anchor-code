@@ -23,7 +23,7 @@ import {
 import {
   captureWorkspaceTerminalView,
   restoreWorkspaceTerminalView,
-  resumeWorkspaceAgents,
+  restoreParkedWorkspaceAgents,
   saveWorkspaceAgents,
   useTerminalStore,
 } from "@/features/terminal/terminalStore";
@@ -113,16 +113,14 @@ export async function activateWorkspace(id: string): Promise<void> {
         workspace.workspaceRoot,
         workspace.hostProfileId,
       );
-      await resumeWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
     }
+    restoreParkedWorkspaceAgents(
+      workspace.workspaceRoot,
+      workspace.hostProfileId,
+    );
 
     const key = workspaceViewKey(workspace.workspaceRoot, workspace.hostProfileId);
-    if (!restoreWorkspaceShellView(key)) {
-      const hasAgents = useTerminalStore
-        .getState()
-        .tabs.some((tab) => tab.kind === "agent");
-      useShellStore.getState().setAgentVisible(hasAgents);
-    }
+    restoreWorkspaceShellView(key);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[shell] activateWorkspace failed:", err);
@@ -148,11 +146,7 @@ async function afterWorkspaceOpened(
   }
   try {
     await useTerminalStore.getState().resetForWorkspace(root, hostProfileId);
-    await resumeWorkspaceAgents(root, hostProfileId);
-    const hasAgents = useTerminalStore
-      .getState()
-      .tabs.some((tab) => tab.kind === "agent");
-    useShellStore.getState().setAgentVisible(hasAgents);
+    restoreParkedWorkspaceAgents(root, hostProfileId);
   } catch (err) {
     console.warn("[shell] terminal workspace restore failed:", err);
   }

@@ -88,6 +88,7 @@ export function TerminalPanel({
     const stored = Number(localStorage.getItem("anchor.terminal.sessionRailWidth"));
     return Number.isFinite(stored) ? Math.min(320, Math.max(96, stored)) : 148;
   });
+  const [mountedTermIds, setMountedTermIds] = useState<Set<string>>(() => new Set());
 
   const beginSessionRailResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -140,7 +141,17 @@ export function TerminalPanel({
     }
   }, [tabsPlacement, panelMode, sessionListOpenByMode]);
   useEffect(() => {
+    setMountedTermIds(new Set(activeTabId ? [activeTabId] : []));
+  }, [workspaceRoot]);
+
+  useEffect(() => {
     if (!activeTabId) return;
+    setMountedTermIds((prev) => {
+      if (prev.has(activeTabId)) return prev;
+      const next = new Set(prev);
+      next.add(activeTabId);
+      return next;
+    });
     let frame = 0;
     let attempts = 0;
     const refit = () => {
@@ -289,7 +300,9 @@ export function TerminalPanel({
             <pre className="terminal-mock">$ # Starting shell…</pre>
           ) : (
             <>
-              {modeTabs.map((t) => (
+              {modeTabs
+                .filter((t) => t.id === activeTabId || mountedTermIds.has(t.id))
+                .map((t) => (
                 <XtermHost
                   key={t.id}
                   id={t.id}

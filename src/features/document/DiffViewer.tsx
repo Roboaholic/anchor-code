@@ -6,6 +6,10 @@ import {
   shortRev,
 } from "@/core/history/diffComment";
 import { joinPath, languageFromPath } from "@/core/workspace/paths";
+import {
+  registerCopyPathActions,
+  repoFileWorkspaceRelativePath,
+} from "@/features/document/copyPath";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
@@ -101,6 +105,12 @@ type BubbleState = {
 type SelectionToolbarState = {
   left: number;
   top: number;
+};
+
+type FileListMenuState = {
+  x: number;
+  y: number;
+  path: string;
 };
 
 const HOVER_OPEN_MS = 420;
@@ -244,6 +254,9 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     side: "old" | "new";
     line: number;
   } | null>(null);
+  const [fileListMenu, setFileListMenu] = useState<FileListMenuState | null>(
+    null,
+  );
   const originalEditorRef =
     useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const modifiedEditorRef =
@@ -358,6 +371,16 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   // they are loaded when opening a compare (reopen must repaint anchors from
   // YAML/cache). item.repoRoot is still used for the diff/blame git operations.
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const copyPathRef = useRef({
+    workspaceRoot,
+    repoRoot: item.repoRoot,
+    activePath,
+  });
+  copyPathRef.current = {
+    workspaceRoot,
+    repoRoot: item.repoRoot,
+    activePath,
+  };
   useEffect(() => {
     if (!workspaceRoot) return;
     const current = useAnnotationsStore.getState().repoRoot;
@@ -814,6 +837,21 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     const modified = editor.getModifiedEditor();
     originalEditorRef.current = original;
     modifiedEditorRef.current = modified;
+    const relativeOfActive = () => {
+      const ctx = copyPathRef.current;
+      if (!ctx.activePath) return "";
+      return repoFileWorkspaceRelativePath(
+        ctx.workspaceRoot,
+        ctx.repoRoot,
+        ctx.activePath,
+      );
+    };
+    disposablesRef.current.push(
+      registerCopyPathActions(original, relativeOfActive, "anchor-diff-original"),
+    );
+    disposablesRef.current.push(
+      registerCopyPathActions(modified, relativeOfActive, "anchor-diff-modified"),
+    );
     decorationsRef.current?.clear();
     decorationsRef.current = modified.createDecorationsCollection();
     decorationsEditorRef.current = modified;
@@ -1080,6 +1118,15 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                       f.path === activePath ? " is-selected" : ""
                     }`}
                     onClick={() => setDiffActiveFile(item.id, f.path)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setFileListMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        path: f.path,
+                      });
+                    }}
                   >
                     <span
                       className={`diff-file-list__status status-${f.status[0] ?? "M"}`}
@@ -1369,6 +1416,44 @@ export function DiffViewer({ item }: { item: DiffItem }) {
           </div>
         ) : null}
       </div>
+      {fileListMenu ? (
+        <>
+          <div
+            className="md-ctx-menu__backdrop"
+            onClick={() => setFileListMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setFileListMenu(null);
+            }}
+          />
+          <div
+            className="file-tree-menu md-ctx-menu"
+            style={{ left: fileListMenu.x, top: fileListMenu.y }}
+            role="menu"
+          >
+            <button
+              type="button"
+              className="file-tree-menu__item"
+              role="menuitem"
+              onClick={() => {
+                const rel = repoFileWorkspaceRelativePath(
+                  workspaceRoot,
+                  item.repoRoot,
+                  fileListMenu.path,
+                );
+                try {
+                  void navigator.clipboard?.writeText?.(rel);
+                } catch {
+                  // ignore
+                }
+                setFileListMenu(null);
+              }}
+            >
+              Copy Relative Path
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -18,7 +18,10 @@ import {
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
 import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
-import { relativeToRoot } from "@/core/workspace/paths";
+import {
+  registerCopyPathActions,
+  workspaceRelativePath,
+} from "@/features/document/copyPath";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
 import { fitBlameText } from "./blameDisplay";
@@ -214,6 +217,8 @@ export function CodeViewer({
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useThemeStore((s) => s.fontSize);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const copyPathRef = useRef({ workspaceRoot, path });
+  copyPathRef.current = { workspaceRoot, path };
   const lineHeight = editorLineHeight(fontSize);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
@@ -859,44 +864,9 @@ export function CodeViewer({
 
     // Context-menu actions: copy relative path, and copy path with cursor line.
     disposablesRef.current.push(
-      ed.addAction({
-        id: "anchor-copy-relative-path",
-        label: "Copy Relative Path",
-        contextMenuGroupId: "9_cutcopypaste",
-        contextMenuOrder: 10,
-        run: () => {
-          const rel = workspaceRoot
-            ? relativeToRoot(workspaceRoot, path)
-            : path;
-          void navigator.clipboard?.writeText?.(rel);
-        },
-      }),
-    );
-    disposablesRef.current.push(
-      ed.addAction({
-        id: "anchor-copy-path-with-line",
-        label: "Copy Path with Line",
-        contextMenuGroupId: "9_cutcopypaste",
-        contextMenuOrder: 11,
-        precondition: undefined,
-        run: (editor) => {
-          const sel = editor.getSelection();
-          const rel = workspaceRoot
-            ? relativeToRoot(workspaceRoot, path)
-            : path;
-          // Use the selection if present, else the cursor position.
-          const start = sel?.startLineNumber;
-          const end = sel?.endLineNumber;
-          // No selection / cursor on one line → "path:line".
-          if (!start || !end || start === end) {
-            void navigator.clipboard?.writeText?.(
-              `${rel}:${start ?? end ?? 1}`,
-            );
-            return;
-          }
-          // Multi-line selection → "path:start-end".
-          void navigator.clipboard?.writeText?.(`${rel}:${start}-${end}`);
-        },
+      registerCopyPathActions(ed, () => {
+        const ctx = copyPathRef.current;
+        return workspaceRelativePath(ctx.workspaceRoot, ctx.path);
       }),
     );
 

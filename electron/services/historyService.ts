@@ -4,7 +4,11 @@ import {
   type DiffFile,
 } from "../../src/core/history/diffParse.js";
 import {
+  isUntrackedDirectoryPath,
+  mergeUntrackedFilePaths,
+  parseLsFilesOthers,
   parsePorcelainStatusDetailed,
+  statusCounts,
   type StatusEntry,
 } from "../../src/core/history/statusParse.js";
 import type { HostSession } from "../host/types.js";
@@ -367,6 +371,7 @@ export async function loadRepoStatus(
 ): Promise<RepoStatus> {
   // badgeOnly: skip untracked walk (huge SDK trees). Full list when expanding Changes.
   // `-b` adds `## branch...upstream [ahead N, behind M]` so we get tracking in one call.
+  // `-uall` lists files inside untracked directories; `normal` collapses them to `?? dir/`.
   const badgeOnly = opts?.badgeOnly === true;
   const result = await host.run(
     repoRoot,
@@ -375,7 +380,7 @@ export async function loadRepoStatus(
       "status",
       "--porcelain",
       "-b",
-      badgeOnly ? "--untracked-files=no" : "--untracked-files=normal",
+      badgeOnly ? "--untracked-files=no" : "--untracked-files=all",
     ],
     { timeoutMs: opts?.timeoutMs ?? (badgeOnly ? 12_000 : 30_000) },
   );
@@ -386,28 +391,44 @@ export async function loadRepoStatus(
       result.stderr || result.stdout,
     );
   }
-  const { entries, tracking } = parsePorcelainStatusDetailed(result.stdout);
-  let modified = 0;
-  let added = 0;
-  let deleted = 0;
-  let untracked = 0;
-  for (const e of entries) {
-    if (e.status === "M" || e.status === "R" || e.status === "C") modified += 1;
-    else if (e.status === "A") added += 1;
-    else if (e.status === "D") deleted += 1;
-    else if (e.status === "?") untracked += 1;
+  const parsed = parsePorcelainStatusDetailed(result.stdout);
+  let entries = parsed.entries;
+  if (
+    !badgeOnly &&
+    parsed.entries.some((e) => isUntrackedDirectoryPath(e.path))
+  ) {
+    const extra = await listUntrackedFiles(host, repoRoot);
+    entries = mergeUntrackedFilePaths(parsed.entries, extra);
   }
+  const counts = statusCounts(entries);
   return {
     repoRoot,
     entries,
-    modified,
-    added,
-    deleted,
-    untracked,
-    branch: tracking.branch,
-    ahead: tracking.ahead,
-    behind: tracking.behind,
+    modified: counts.modified,
+    added: counts.added,
+    deleted: counts.deleted,
+    untracked: counts.untracked,
+    branch: parsed.tracking.branch,
+    ahead: parsed.tracking.ahead,
+    behind: parsed.tracking.behind,
   };
+}
+
+async function listUntrackedFiles(
+  host: HostSession,
+  repoRoot: string,
+): Promise<string[]> {
+  try {
+    const result = await host.run(repoRoot, "git", [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+    ]);
+    if (result.code !== 0) return [];
+    return parseLsFilesOthers(result.stdout);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -436,7 +457,7 @@ export async function loadRepoStatusesBulk(
   ];
   if (roots.length === 0) return [];
   const badgeOnly = opts?.badgeOnly !== false;
-  const untracked = badgeOnly ? "no" : "normal";
+  const untracked = badgeOnly ? "no" : "all";
   const collected: RepoStatus[] = [];
   const seen = new Set<string>();
 
@@ -532,23 +553,14 @@ export async function loadRepoStatusesBulk(
 
 function statusFromPorcelain(repoRoot: string, body: string): RepoStatus {
   const { entries, tracking } = parsePorcelainStatusDetailed(body);
-  let modified = 0;
-  let added = 0;
-  let deleted = 0;
-  let untrackedCount = 0;
-  for (const e of entries) {
-    if (e.status === "M" || e.status === "R" || e.status === "C") modified += 1;
-    else if (e.status === "A") added += 1;
-    else if (e.status === "D") deleted += 1;
-    else if (e.status === "?") untrackedCount += 1;
-  }
+  const counts = statusCounts(entries);
   return {
     repoRoot,
     entries,
-    modified,
-    added,
-    deleted,
-    untracked: untrackedCount,
+    modified: counts.modified,
+    added: counts.added,
+    deleted: counts.deleted,
+    untracked: counts.untracked,
     branch: tracking.branch,
     ahead: tracking.ahead,
     behind: tracking.behind,
@@ -760,7 +772,7 @@ async function untrackedAsAdded(
 ): Promise<DiffFile[]> {
   const st = await loadRepoStatus(host, repoRoot);
   return st.entries
-    .filter((e) => e.status === "?")
+    .filter((e) => e.status === "?" && !isUntrackedDirectoryPath(e.path))
     .map((e) => ({ path: e.path, status: "?" }));
 }
 

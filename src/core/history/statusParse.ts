@@ -150,3 +150,84 @@ export function statusCounts(entries: StatusEntry[]): {
   }
   return { modified, added, deleted, untracked, other };
 }
+
+/** Porcelain `?? dir/` — git collapsed an untracked directory instead of listing files. */
+export function isUntrackedDirectoryPath(path: string): boolean {
+  return path.endsWith("/") || path.endsWith("\\");
+}
+
+/** `git ls-files --others` lines (quoted paths unescaped). */
+export function parseLsFilesOthers(stdout: string): string[] {
+  const out: string[] = [];
+  for (const raw of stdout.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (!line) continue;
+    const path = unquotePath(line.trim());
+    if (path) out.push(path);
+  }
+  return out;
+}
+
+/**
+ * Replace collapsed `?? dir/` rows with individual untracked files from
+ * `git ls-files --others`. Keep the directory row only when no files were found.
+ */
+export function mergeUntrackedFilePaths(
+  entries: StatusEntry[],
+  extraPaths: string[],
+): StatusEntry[] {
+  const tracked = entries.filter((e) => e.status !== "?");
+  const trackedPaths = new Set(tracked.map((e) => e.path));
+  const collapsed = entries.filter(
+    (e) => e.status === "?" && isUntrackedDirectoryPath(e.path),
+  );
+  const untracked = new Map<string, StatusEntry>();
+  for (const e of entries) {
+    if (e.status !== "?") continue;
+    if (isUntrackedDirectoryPath(e.path)) continue;
+    if (trackedPaths.has(e.path)) continue;
+    untracked.set(e.path, e);
+  }
+  for (const raw of extraPaths) {
+    const path = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!path || trackedPaths.has(path)) continue;
+    if (!untracked.has(path)) {
+      untracked.set(path, { path, status: "?", code: "??" });
+    }
+  }
+  if (untracked.size === 0) {
+    for (const e of collapsed) untracked.set(e.path, e);
+  }
+  const out = [...tracked, ...untracked.values()];
+  out.sort((a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code));
+  return out;
+}
+
+/**
+ * Badge-only status omits or collapses untracked files. Keep a richer untracked
+ * file list from a previous full status, and take tracked M/A/D from `next`.
+ */
+export function mergeBadgePorcelain<
+  T extends { entries: StatusEntry[]; untracked: number },
+>(prev: T | null | undefined, next: T): T {
+  if (!prev) return next;
+  const tracked = next.entries.filter((e) => e.status !== "?");
+  const trackedPaths = new Set(tracked.map((e) => e.path));
+  const prevUntracked = prev.entries.filter(
+    (e) => e.status === "?" && !trackedPaths.has(e.path),
+  );
+  const nextUntracked = next.entries.filter((e) => e.status === "?");
+  const usePrev =
+    prevUntracked.length > 0 && prevUntracked.length >= nextUntracked.length;
+  const untrackedEntries = (usePrev ? prevUntracked : nextUntracked).filter(
+    (e) => !trackedPaths.has(e.path),
+  );
+  const entries = [...tracked, ...untrackedEntries].sort(
+    (a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code),
+  );
+  return {
+    ...next,
+    entries,
+    untracked: untrackedEntries.length,
+  };
+}

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { createSearchHitBatcher } from "./searchBatcher.js";
 import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
 import type { RelayConnector } from "../remote/relayConnector.js";
@@ -766,6 +767,50 @@ export function registerIpc(opts: {
     },
   );
 
+  /** One live content search per renderer; a new request cancels the old. */
+  const activeSearches = new Map<number, { requestId: string; ctl: AbortController }>();
+
+  ipcMain.handle(
+    "workspace:searchContent:cancel",
+    (evt, requestId?: string) => {
+      const cur = activeSearches.get(evt.sender.id);
+      if (cur && (!requestId || cur.requestId === requestId)) {
+        cur.ctl.abort();
+        activeSearches.delete(evt.sender.id);
+        return { ok: true };
+      }
+      return { ok: false };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:searchIgnore:read",
+    async (_evt, root?: string) => {
+      try {
+        return await application.review.readSearchIgnore(
+          (typeof root === "string" && root) || undefined,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:searchIgnore:save",
+    async (_evt, args?: { root?: string; patterns?: string[] }) => {
+      try {
+        const patterns = Array.isArray(args?.patterns) ? args.patterns : [];
+        return await application.review.saveSearchExcludes(
+          patterns,
+          (typeof args?.root === "string" && args.root) || undefined,
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
   ipcMain.handle(
     "workspace:searchContent",
     async (
@@ -778,10 +823,30 @@ export function registerIpc(opts: {
         useRegex?: boolean;
         include?: string | string[];
         exclude?: string | string[];
+        respectIgnore?: boolean;
+        defaultExcludes?: string[];
+        excludeRegex?: string;
         /** Correlates progressive hit events with this request. */
         requestId?: string;
       },
     ) => {
+      const senderId = evt.sender.id;
+      const requestId =
+        typeof args?.requestId === "string" && args.requestId
+          ? args.requestId
+          : `s${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // Auto-cancel the previous search from this window (kills its rg).
+      activeSearches.get(senderId)?.ctl.abort();
+      const ctl = new AbortController();
+      activeSearches.set(senderId, { requestId, ctl });
+      const batcher = createSearchHitBatcher((hits) => {
+        if (ctl.signal.aborted) return;
+        try {
+          evt.sender.send("workspace:searchContent:hits", { requestId, hits });
+        } catch {
+          // window closed
+        }
+      });
       try {
         const root =
           (args?.root && typeof args.root === "string" && args.root) ||
@@ -790,26 +855,20 @@ export function registerIpc(opts: {
           throw new HostError("failed", "No workspace open");
         }
         const query = typeof args?.query === "string" ? args.query : "";
-        const requestId =
-          typeof args?.requestId === "string" && args.requestId
-            ? args.requestId
-            : `s${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const result = await application.review.search(query, {
           maxResults: args?.maxResults,
           caseSensitive: args?.caseSensitive,
           useRegex: args?.useRegex,
           include: args?.include,
           exclude: args?.exclude,
-          onHits: (hits) => {
-            try {
-              evt.sender.send("workspace:searchContent:hits", {
-                requestId,
-                hits,
-              });
-            } catch {
-              // window closed
-            }
-          },
+          respectIgnore: args?.respectIgnore,
+          defaultExcludes: Array.isArray(args?.defaultExcludes)
+            ? args.defaultExcludes.filter((x) => typeof x === "string")
+            : undefined,
+          excludeRegex:
+            typeof args?.excludeRegex === "string" ? args.excludeRegex : undefined,
+          signal: ctl.signal,
+          onHits: (hits) => batcher.push(hits),
           onSource: (source) => {
             try {
               evt.sender.send("workspace:searchContent:meta", {
@@ -821,10 +880,16 @@ export function registerIpc(opts: {
             }
           },
         }, root);
+        batcher.flush();
         return { ...result, requestId };
       } catch (err) {
         console.error("[ipc] workspace:searchContent failed:", err);
         rethrowIpc(err);
+      } finally {
+        batcher.dispose();
+        if (activeSearches.get(senderId)?.ctl === ctl) {
+          activeSearches.delete(senderId);
+        }
       }
     },
   );

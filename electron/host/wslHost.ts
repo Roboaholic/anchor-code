@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type {
   DirEntry,
   HostSession,
@@ -14,6 +15,16 @@ import type {
 import { HostError } from "./types.js";
 import { hostNormalize } from "./paths.js";
 import { spawnLocalPty } from "./localPty.js";
+import {
+  WslSearchHelperClient,
+  buildWslExecArgs,
+  buildWslGroupExecArgs,
+  buildWslInstallScript,
+  buildWslKillGroupArgs,
+  parseWslInstallOutput,
+  takePgidMarker,
+  type WslSearchTools,
+} from "./wslSearchTools.js";
 
 export interface WslHostOptions {
   profileId?: string;
@@ -218,7 +229,126 @@ export class WslHostSession implements HostSession {
       opts?.stdin,
       opts?.earlyExit,
       opts?.onStdoutChunk,
+      opts?.signal,
     );
+  }
+
+  private searchToolsPromise: Promise<WslSearchTools> | null = null;
+  private helper: WslSearchHelperClient | null = null;
+  private helperFailed = false;
+
+  /**
+   * Install rg + runner/helper scripts under ~/.cache/anchor once per session
+   * (replaces the old per-search `chmod +x /mnt/c/…/rg`).
+   * A failed install is not cached so a later search can retry.
+   */
+  ensureSearchTools(bundledRg: string | null): Promise<WslSearchTools> {
+    if (!this.searchToolsPromise) {
+      this.searchToolsPromise = (async () => {
+        const r = await this.run("/", "bash", ["-s"], {
+          stdin: buildWslInstallScript(bundledRg),
+          timeoutMs: 30_000,
+        });
+        return parseWslInstallOutput(r.stdout);
+      })();
+      this.searchToolsPromise.catch(() => {
+        this.searchToolsPromise = null;
+      });
+    }
+    return this.searchToolsPromise;
+  }
+
+  /**
+   * Run a search command with no login shell. Uses the persistent helper when
+   * available (zero wsl.exe spawns per search), else `wsl.exe --exec setsid`
+   * with process-group kill on cancel / early exit / timeout.
+   */
+  async runSearch(
+    cwd: string,
+    command: string,
+    args: string[],
+    opts?: RunOptions,
+  ): Promise<RunResult> {
+    const tools = await this.ensureSearchTools(null).catch(() => null);
+    const safeCwd = hostNormalize("wsl", cwd || "/");
+    const helper = tools ? await this.getHelper(tools) : null;
+    if (helper) {
+      try {
+        return await helper.run(safeCwd, command, args, opts);
+      } catch (err) {
+        if (err instanceof HostError && err.code === "timeout") throw err;
+        // Helper died mid-run — fall through to the spawn path.
+      }
+    }
+    const base = this.wslBaseArgs();
+    const wsl = this.resolveWslExe();
+    const argv = tools
+      ? buildWslGroupExecArgs(base, safeCwd, tools.runner, command, args)
+      : buildWslExecArgs(base, safeCwd, command, args);
+    let pgid: number | null = null;
+    const killGroup = () => {
+      if (pgid == null) return;
+      try {
+        spawn(wsl, buildWslKillGroupArgs(base, pgid), {
+          shell: false,
+          windowsHide: true,
+          stdio: "ignore",
+        }).on("error", () => {});
+      } catch {
+        // ignore
+      }
+    };
+    const r = await spawnCapture(
+      wsl,
+      argv,
+      opts?.timeoutMs ?? 45_000,
+      opts?.stdin,
+      opts?.earlyExit,
+      opts?.onStdoutChunk,
+      opts?.signal,
+      (stderr) => {
+        if (pgid == null) pgid = takePgidMarker(stderr).pgid;
+      },
+      killGroup,
+    ).catch((err) => {
+      killGroup();
+      throw err;
+    });
+    const { rest } = takePgidMarker(r.stderr);
+    return { ...r, stderr: rest };
+  }
+
+  private async getHelper(tools: WslSearchTools): Promise<WslSearchHelperClient | null> {
+    if (this.helperFailed || !tools.helper || !tools.python) return null;
+    if (this.helper?.alive) return this.helper;
+    try {
+      const child = spawn(
+        this.resolveWslExe(),
+        buildWslExecArgs(this.wslBaseArgs(), "/", tools.python, ["-u", tools.helper]),
+        { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      const client = new WslSearchHelperClient(child);
+      const ok = await Promise.race([
+        client.ready.then(() => true),
+        new Promise<boolean>((res) => setTimeout(() => res(false), 8_000)),
+      ]);
+      if (!ok || !client.alive) {
+        client.dispose();
+        this.helperFailed = true;
+        return null;
+      }
+      this.helper = client;
+      return client;
+    } catch {
+      this.helperFailed = true;
+      return null;
+    }
+  }
+
+  /** Stop the persistent helper (workspace switch / app quit). */
+  disposeSearchHelper(): void {
+    this.helper?.dispose();
+    this.helper = null;
   }
 
   async readFile(filePath: string): Promise<string> {
@@ -550,6 +680,11 @@ function spawnCapture(
   stdin?: string,
   earlyExit?: (stdout: string, stderr: string) => boolean,
   onStdoutChunk?: (chunk: string, stdout: string) => void,
+  signal?: AbortSignal,
+  /** Sees cumulative stderr after each chunk (e.g. PGID marker). */
+  onStderr?: (stderr: string) => void,
+  /** Extra teardown when the run is cut short (abort / early exit / timeout). */
+  onKill?: () => void,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -562,39 +697,62 @@ function spawnCapture(
     let settled = false;
     let early = false;
     let timer: NodeJS.Timeout | undefined;
+    let aborted = false;
+    const outDec = new StringDecoder("utf8");
+    const errDec = new StringDecoder("utf8");
 
     const finish = (code: number) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolve({
         stdout,
         stderr,
         code,
         earlyExit: early || undefined,
+        aborted: aborted || undefined,
       });
     };
 
-    const requestEarlyExit = () => {
-      if (settled || early) return;
-      early = true;
+    const killAll = () => {
+      try {
+        onKill?.();
+      } catch {
+        // ignore
+      }
       try {
         child.kill();
       } catch {
         // ignore
       }
+    };
+
+    const requestEarlyExit = () => {
+      if (settled || early) return;
+      early = true;
+      killAll();
       finish(0);
     };
+
+    function onAbort() {
+      if (settled) return;
+      aborted = true;
+      killAll();
+      finish(0);
+    }
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
+        signal?.removeEventListener("abort", onAbort);
+        killAll();
         reject(
           new HostError(
             "timeout",
@@ -613,7 +771,8 @@ function spawnCapture(
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (settled) return;
-      const text = chunk.toString("utf8");
+      const text = outDec.write(chunk);
+      if (!text) return;
       stdout += text;
       try {
         onStdoutChunk?.(text, stdout);
@@ -626,7 +785,12 @@ function spawnCapture(
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       if (settled) return;
-      stderr += chunk.toString("utf8");
+      stderr += errDec.write(chunk);
+      try {
+        onStderr?.(stderr);
+      } catch {
+        // ignore
+      }
     });
     child.on("error", (err) => {
       if (settled) return;
@@ -638,6 +802,8 @@ function spawnCapture(
     });
     child.on("close", (code) => {
       if (settled) return;
+      stdout += outDec.end();
+      stderr += errDec.end();
       finish(code ?? 1);
     });
   });

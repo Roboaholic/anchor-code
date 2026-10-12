@@ -1,4 +1,5 @@
 import type { HostSession, RunResult } from "../host/types.js";
+import { HostError } from "../host/types.js";
 import { LocalHostSession } from "../host/localHost.js";
 import { WslHostSession } from "../host/wslHost.js";
 import { hostJoin } from "../host/paths.js";
@@ -38,6 +39,22 @@ export interface ContentSearchOptions {
   onHits?: (hits: ContentSearchHit[]) => void;
   /** Fired once when the engine is chosen (rg / git-grep / scan). */
   onSource?: (source: ContentSearchResult["source"]) => void;
+  /** Cancel the search: kills the running engine and skips fallbacks. */
+  signal?: AbortSignal;
+  /**
+   * Respect .gitignore / hidden-file rules and the built-in default excludes
+   * (default true). false → rg `--no-ignore --hidden`, no default excludes.
+   */
+  respectIgnore?: boolean;
+  /** Replace the built-in default exclude list (workspace setting). */
+  defaultExcludes?: string[];
+  /** Honor `<root>/.anchorignore` (gitignore syntax). Default true. */
+  useAnchorIgnore?: boolean;
+  /**
+   * Regex matched against the relative path; matching hits are dropped AFTER
+   * the engine reports them. Display-only: does not make the search faster.
+   */
+  excludeRegex?: string;
 }
 
 export interface ContentSearchResult {
@@ -46,9 +63,16 @@ export interface ContentSearchResult {
   hits: ContentSearchHit[];
   truncated: boolean;
   source: "git-grep" | "rg" | "scan";
+  /** True when the search was cancelled (hits are partial). */
+  aborted?: boolean;
 }
 
+/** Workspace-level ignore file (gitignore syntax), passed to rg via --ignore-file. */
+export const ANCHOR_IGNORE_FILE = ".anchorignore";
+
 const DEFAULT_MAX_RESULTS = 200;
+/** Hard ceiling so a runaway request cannot flood IPC / renderer memory. */
+export const MAX_RESULTS_CEILING = 20_000;
 const SCAN_MAX_FILES = 2_000;
 const SCAN_MAX_FILE_BYTES = 256 * 1024;
 const SCAN_CONCURRENCY = 24;
@@ -57,7 +81,7 @@ const SCAN_CONCURRENCY = 24;
  * Built-in excludes (language/tooling conventions — not project-specific names).
  * Users can still search excluded trees via explicit include, or workspace filters.
  */
-const DEFAULT_EXCLUDES = [
+export const DEFAULT_EXCLUDES = [
   "node_modules",
   ".git",
   "dist",
@@ -304,6 +328,8 @@ export function createGrepHitStreamer(
   include: string[],
   exclude: string[],
   onHits?: (hits: ContentSearchHit[]) => void,
+  /** Extra path predicate (regex exclude, .anchorignore post-filter). */
+  accept?: (relPath: string) => boolean,
 ): {
   feed: (stdout: string) => boolean;
   hits: () => ContentSearchHit[];
@@ -325,6 +351,7 @@ export function createGrepHitStreamer(
         const hit = parseGrepLine(line);
         if (!hit) continue;
         if (!pathMatchesGlobs(hit.path, include, exclude)) continue;
+        if (accept && !accept(hit.path)) continue;
         all.push(hit);
         batch.push(hit);
       }
@@ -340,6 +367,7 @@ function attachGrepStream(
   timeoutMs: number,
   /** Shared stop for parallel workers (global hit budget reached). */
   shouldStop?: () => boolean,
+  engine: "rg" | "other" = "rg",
 ): {
   runOpts: import("../host/types.js").RunOptions;
   streamer: ReturnType<typeof createGrepHitStreamer>;
@@ -349,10 +377,12 @@ function attachGrepStream(
     o.include,
     o.exclude,
     onHits,
+    (p) => o.accept(p, engine),
   );
   return {
     streamer,
     runOpts: {
+      signal: o.signal,
       timeoutMs,
       earlyExit: (stdout) => {
         const full = streamer.feed(stdout);
@@ -362,25 +392,133 @@ function attachGrepStream(
   };
 }
 
-function normalizeOpts(opts?: ContentSearchOptions): {
+/**
+ * Turn `.anchorignore` text into simple exclude patterns for engines that
+ * cannot read ignore files (git grep / scan). Negations (`!x`) are skipped —
+ * only rg (`--ignore-file`) honors full gitignore semantics.
+ */
+export function anchorIgnoreToPatterns(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+    out.push(line.replace(/^\/+/, "").replace(/\/+$/, ""));
+  }
+  return out.filter(Boolean);
+}
+
+/** Merge exclude patterns into existing .anchorignore text (no duplicates). */
+export function mergeAnchorIgnore(existing: string, patterns: string[]): string {
+  const have = new Set(
+    existing.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+  );
+  const add = patterns.map((p) => p.trim()).filter((p) => p && !have.has(p));
+  if (add.length === 0) return existing;
+  let base = existing;
+  if (!base.trim()) {
+    base = "# Anchor Code search excludes (gitignore syntax)\n";
+  } else if (!base.endsWith("\n")) {
+    base += "\n";
+  }
+  return `${base}${add.join("\n")}\n`;
+}
+
+type NormalizedOpts = ReturnType<typeof normalizeOpts>;
+
+function normalizeOpts(
+  opts?: ContentSearchOptions,
+  anchorIgnore: string[] = [],
+): {
   maxResults: number;
   caseSensitive: boolean;
   useRegex: boolean;
   include: string[];
   exclude: string[];
   userExclude: string[];
+  respectIgnore: boolean;
+  /** Relative ignore-file path for rg, when present. */
+  ignoreFile: string | null;
+  anchorIgnore: string[];
+  signal?: AbortSignal;
+  accept: (relPath: string, engine: "rg" | "other") => boolean;
 } {
   const include = splitPatterns(opts?.include);
   const userExclude = splitPatterns(opts?.exclude);
-  const exclude = [...DEFAULT_EXCLUDES, ...userExclude];
+  const respectIgnore = opts?.respectIgnore !== false;
+  const defaults = respectIgnore
+    ? (opts?.defaultExcludes ?? DEFAULT_EXCLUDES)
+    : [];
+  const exclude = [...defaults, ...userExclude];
+  let re: RegExp | null = null;
+  const rawRe = opts?.excludeRegex?.trim();
+  if (rawRe) {
+    try {
+      re = new RegExp(rawRe);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? `Invalid exclude regex: ${err.message}`
+          : "Invalid exclude regex",
+      );
+    }
+  }
+  const accept = (relPath: string, engine: "rg" | "other") => {
+    if (re && re.test(relPath)) return false;
+    // rg already applied .anchorignore natively (with negations).
+    if (engine !== "rg" && anchorIgnore.length > 0) {
+      if (!pathMatchesGlobs(relPath, [], anchorIgnore)) return false;
+    }
+    return true;
+  };
   return {
-    maxResults: opts?.maxResults ?? DEFAULT_MAX_RESULTS,
+    maxResults: Math.min(
+      Math.max(1, opts?.maxResults ?? DEFAULT_MAX_RESULTS),
+      MAX_RESULTS_CEILING,
+    ),
     caseSensitive: opts?.caseSensitive === true,
     useRegex: opts?.useRegex === true,
     include,
     exclude,
     userExclude,
+    respectIgnore,
+    ignoreFile: anchorIgnore.length > 0 ? ANCHOR_IGNORE_FILE : null,
+    anchorIgnore,
+    signal: opts?.signal,
+    accept,
   };
+}
+
+/** Short-lived cache so typing does not re-read .anchorignore per keystroke. */
+const anchorIgnoreCache = new Map<string, { at: number; patterns: string[] }>();
+const ANCHOR_IGNORE_TTL_MS = 3_000;
+
+async function loadAnchorIgnore(host: HostSession, root: string): Promise<string[]> {
+  const key = `${host.id}:${root}`;
+  const hit = anchorIgnoreCache.get(key);
+  if (hit && Date.now() - hit.at < ANCHOR_IGNORE_TTL_MS) return hit.patterns;
+  let patterns: string[] = [];
+  try {
+    const text = await host.readFile(hostJoin(host.kind, root, ANCHOR_IGNORE_FILE));
+    patterns = anchorIgnoreToPatterns(text);
+  } catch {
+    // missing file is the normal case
+  }
+  anchorIgnoreCache.set(key, { at: Date.now(), patterns });
+  return patterns;
+}
+
+/** Test / write-path helper: forget cached .anchorignore contents. */
+export function invalidateAnchorIgnoreCache(): void {
+  anchorIgnoreCache.clear();
+}
+
+function abortedResult(
+  root: string,
+  query: string,
+  hits: ContentSearchHit[],
+  source: ContentSearchResult["source"],
+): ContentSearchResult {
+  return { root, query, hits, truncated: true, source, aborted: true };
 }
 
 /**
@@ -395,7 +533,10 @@ export async function searchWorkspaceContent(
   opts?: ContentSearchOptions,
 ): Promise<ContentSearchResult> {
   const q = query.trim();
-  const o = normalizeOpts(opts);
+  normalizeOpts(opts); // validate regex options before any I/O
+  const anchorIgnore =
+    opts?.useAnchorIgnore === false ? [] : await loadAnchorIgnore(host, root);
+  const o = normalizeOpts(opts, anchorIgnore);
   const onHits = opts?.onHits;
   const onSource = opts?.onSource;
   if (!q) {
@@ -415,10 +556,13 @@ export async function searchWorkspaceContent(
   // ripgrep first — bundled binary on local / Windows-rg over WSL UNC.
   const viaRg = await tryRipgrep(host, root, q, o, onHits, onSource);
   if (viaRg) return viaRg;
+  if (o.signal?.aborted) return abortedResult(root, q, [], "rg");
 
   const gitState = gitCache.get(root);
-  if (gitState !== false) {
+  // git grep only sees tracked files — unusable when ignore rules are off.
+  if (gitState !== false && o.respectIgnore) {
     const viaGit = await tryGitGrep(host, root, q, o, onHits, onSource);
+    if (viaGit?.aborted) return viaGit;
     if (viaGit) {
       gitCache.set(root, true);
       return viaGit;
@@ -426,6 +570,7 @@ export async function searchWorkspaceContent(
     gitCache.set(root, false);
   }
 
+  if (o.signal?.aborted) return abortedResult(root, q, [], "git-grep");
   onSource?.("scan");
   return scanFiles(host, root, q, o, onHits);
 }
@@ -460,8 +605,11 @@ async function tryGitGrep(
     }
 
     onSource?.("git-grep");
-    const { runOpts, streamer } = attachGrepStream(o, onHits, 20_000);
+    const { runOpts, streamer } = attachGrepStream(o, onHits, 20_000, undefined, "other");
     const r = await host.run(root, "git", args, runOpts);
+    if (r.aborted) {
+      return abortedResult(root, query, streamer.hits(), "git-grep");
+    }
     if (r.code !== 0 && r.code !== 1 && !r.earlyExit) return null;
     // Final parse catches any trailing incomplete line after kill.
     streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
@@ -531,6 +679,8 @@ function buildRgArgs(
       args.push("--glob", g);
     }
   }
+  if (!o.respectIgnore) args.push("--no-ignore", "--hidden");
+  if (o.ignoreFile) args.push("--ignore-file", o.ignoreFile);
   if (!o.useRegex) args.push("-F");
   if (!o.caseSensitive) args.push("-i");
   for (const ex of o.exclude) {
@@ -557,6 +707,7 @@ function finishGrepStream(
   streamer: ReturnType<typeof createGrepHitStreamer>,
   source: ContentSearchResult["source"],
 ): ContentSearchResult {
+  if (r.aborted) return abortedResult(root, query, streamer.hits(), source);
   // Flush trailing partial line after process exit.
   streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
   const hits = streamer.hits();
@@ -569,79 +720,94 @@ function finishGrepStream(
   };
 }
 
+/** Optional WSL search surface (WslHostSession; mockable in tests). */
+interface WslSearchCapable {
+  ensureSearchTools(bundledRg: string | null): Promise<{ rg: string | null }>;
+  runSearch(
+    cwd: string,
+    command: string,
+    args: string[],
+    opts?: import("../host/types.js").RunOptions,
+  ): Promise<RunResult>;
+}
+
+function asWslSearch(host: HostSession): (HostSession & WslSearchCapable) | null {
+  const h = host as HostSession & Partial<WslSearchCapable>;
+  return typeof h.ensureSearchTools === "function" &&
+    typeof h.runSearch === "function"
+    ? (h as HostSession & WslSearchCapable)
+    : null;
+}
+
 /**
  * WSL: run a *Linux* rg binary *inside* the distro (native FS).
- * Prefer bundled linux-x64 rg exposed via /mnt/c/…; fall back to PATH `rg`.
- * This is dramatically faster than Windows rg over \\wsl$\ (9P).
+ * The bundled linux rg is copied to ~/.cache/anchor once (no per-search
+ * chmod), then run without a login shell — via the persistent helper when
+ * possible. Dramatically faster than Windows rg over \\wsl$\ (9P).
+ * Only "rg missing" disables this path; timeouts/cancel never do.
  */
 async function tryRipgrepWslNative(
   host: HostSession,
   root: string,
   query: string,
-  o: ReturnType<typeof normalizeOpts>,
+  o: NormalizedOpts,
   onHits?: (hits: ContentSearchHit[]) => void,
   onSource?: (source: ContentSearchResult["source"]) => void,
   searchPaths: string[] = ["."],
   shouldStop?: () => boolean,
 ): Promise<ContentSearchResult | null> {
   if (host.kind !== "wsl") return null;
+  const wsl = asWslSearch(host);
+  if (!wsl) return null;
 
   const cacheKey = `wsl-native:${host.id}`;
   if (rgCmdCache.get(cacheKey) === false) return null;
 
-  const bundled = process.platform === "win32" ? resolveWslLinuxRgPath() : null;
-  // Bundled path first; then PATH inside the distro.
-  const candidates = bundled ? [bundled, "rg"] : ["rg"];
-
-  for (const rgCmd of candidates) {
-    try {
-      // Ensure execute bit when invoking a /mnt/c binary (drvfs often drops +x).
-      if (rgCmd.startsWith("/mnt/")) {
-        await host.run(root, "chmod", ["+x", rgCmd], { timeoutMs: 5_000 }).catch(
-          () => null,
-        );
-      }
-      onSource?.("rg");
-      const { runOpts, streamer } = attachGrepStream(
-        o,
-        onHits,
-        45_000,
-        shouldStop,
-      );
-      const r = await host.run(
-        root,
-        rgCmd,
-        buildRgArgs(query, o, false, searchPaths),
-        runOpts,
-      );
-      if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
-        const again = attachGrepStream(o, onHits, 45_000, shouldStop);
-        const r2 = await host.run(
-          root,
-          rgCmd,
-          buildRgArgs(query, o, true, searchPaths),
-          again.runOpts,
-        );
-        if (r2.code === 0 || r2.code === 1 || r2.earlyExit) {
-          rgCmdCache.set(cacheKey, rgCmd);
-          return finishGrepStream(root, query, r2, o, again.streamer, "rg");
-        }
-        continue;
-      }
-      if (r.code === 0 || r.code === 1 || r.earlyExit) {
-        rgCmdCache.set(cacheKey, rgCmd);
-        return finishGrepStream(root, query, r, o, streamer, "rg");
-      }
-      // 127 = command not found; try next candidate
-      if (r.code === 127 || /not found|No such file/i.test(r.stderr)) {
-        continue;
-      }
-    } catch {
-      continue;
-    }
+  let rgCmd: string | null;
+  try {
+    const bundled = process.platform === "win32" ? resolveWslLinuxRgPath() : null;
+    rgCmd = (await wsl.ensureSearchTools(bundled)).rg;
+  } catch {
+    // Install hiccup (e.g. distro starting) — retry next search, try PATH now.
+    rgCmd = "rg";
+  }
+  if (!rgCmd) {
+    rgCmdCache.set(cacheKey, false);
+    return null;
   }
 
-  rgCmdCache.set(cacheKey, false);
+  for (const minimal of [false, true]) {
+    onSource?.("rg");
+    const { runOpts, streamer } = attachGrepStream(o, onHits, 45_000, shouldStop);
+    let r: RunResult;
+    try {
+      r = await wsl.runSearch(root, rgCmd, buildRgArgs(query, o, minimal, searchPaths), runOpts);
+    } catch (err) {
+      if (err instanceof HostError && err.code === "timeout") {
+        // Slow tree, not a broken rg: keep native path enabled, return partial.
+        return {
+          root,
+          query,
+          hits: streamer.hits(),
+          truncated: true,
+          source: "rg",
+        };
+      }
+      return null;
+    }
+    if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
+    if (!minimal && r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
+      continue;
+    }
+    if (r.code === 0 || r.code === 1 || r.earlyExit) {
+      rgCmdCache.set(cacheKey, rgCmd);
+      return finishGrepStream(root, query, r, o, streamer, "rg");
+    }
+    if (r.code === 127 || /not found|No such file/i.test(r.stderr)) {
+      rgCmdCache.set(cacheKey, false);
+    }
+    return null;
+  }
   return null;
 }
 
@@ -693,9 +859,10 @@ async function tryRipgrepWslUnc(
         stream.runOpts,
       );
     }
+    if (r.aborted) return abortedResult(root, query, stream.streamer.hits(), "rg");
     if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
       if (
-        /cannot find|ENOENT|not supported|network path|timed out/i.test(
+        /cannot find|ENOENT|not supported|network path/i.test(
           r.stderr || r.stdout,
         )
       ) {
@@ -705,8 +872,11 @@ async function tryRipgrepWslUnc(
     }
     rgCmdCache.set(cacheKey, rgCmd);
     return finishGrepStream(root, query, r, o, stream.streamer, "rg");
-  } catch {
-    rgCmdCache.set(cacheKey, false);
+  } catch (err) {
+    // Timeouts are slowness, not unavailability.
+    if (!(err instanceof HostError && err.code === "timeout")) {
+      rgCmdCache.set(cacheKey, false);
+    }
     return null;
   }
 }
@@ -783,6 +953,7 @@ async function runRipgrepOnce(
       buildRgArgs(query, o, false, searchPaths),
       runOpts,
     );
+    if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
     // 0 match, 1 no match, 2 error — also accept if stderr only complains about unknown flags
     if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
       return tryRipgrepMinimal(
@@ -809,7 +980,8 @@ async function runRipgrepOnce(
     }
     markRgOk(host, rgCmd);
     return finishGrepStream(root, query, r, o, streamer, "rg");
-  } catch {
+  } catch (err) {
+    if (err instanceof HostError && err.code === "timeout") return null;
     // spawn ENOENT etc.
     markRgUnavailable(host);
     return null;
@@ -914,6 +1086,7 @@ async function scanFiles(
     .filter(
       (norm) =>
         pathMatchesGlobs(norm, o.include, o.exclude) &&
+        o.accept(norm, "other") &&
         !isProbablyBinaryPath(norm),
     );
 
@@ -923,6 +1096,7 @@ async function scanFiles(
 
   async function worker() {
     while (hits.length < o.maxResults) {
+      if (o.signal?.aborted) return;
       const i = next++;
       if (i >= candidates.length) return;
       const norm = candidates[i]!;
@@ -975,6 +1149,7 @@ async function scanFiles(
   // stable-ish order by path then line
   hits.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 
+  if (o.signal?.aborted) return abortedResult(root, query, hits, "scan");
   return { root, query, hits, truncated, source: "scan" };
 }
 

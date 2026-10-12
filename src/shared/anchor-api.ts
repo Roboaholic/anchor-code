@@ -512,6 +512,12 @@ export interface AnchorApi {
       useRegex?: boolean;
       include?: string | string[];
       exclude?: string | string[];
+      /** false → also search gitignored/hidden files, no default excludes. */
+      respectIgnore?: boolean;
+      /** Workspace-edited default exclude list (replaces built-ins). */
+      defaultExcludes?: string[];
+      /** Path regex post-filter (display only, no speedup). */
+      excludeRegex?: string;
       requestId?: string;
     }) => Promise<{
       root: string;
@@ -520,7 +526,16 @@ export interface AnchorApi {
       truncated: boolean;
       source: "git-grep" | "rg" | "scan";
       requestId: string;
+      aborted?: boolean;
     }>;
+    cancelSearch: (requestId?: string) => Promise<{ ok: boolean }>;
+    readSearchIgnore: (
+      root?: string,
+    ) => Promise<{ path: string; text: string; defaultExcludes: string[] }>;
+    saveSearchExcludes: (args: {
+      root?: string;
+      patterns: string[];
+    }) => Promise<{ path: string; text: string; changed: boolean }>;
     /** Streamed hits while searchContent is still running. */
     onSearchHits: (
       cb: (payload: {

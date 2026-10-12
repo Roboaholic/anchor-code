@@ -352,6 +352,12 @@ const anchor = {
       useRegex?: boolean;
       include?: string | string[];
       exclude?: string | string[];
+      /** false → also search gitignored/hidden files, no default excludes. */
+      respectIgnore?: boolean;
+      /** Workspace-edited default exclude list (replaces built-ins). */
+      defaultExcludes?: string[];
+      /** Path regex post-filter (display only, no speedup). */
+      excludeRegex?: string;
       requestId?: string;
     }): Promise<{
       root: string;
@@ -360,7 +366,22 @@ const anchor = {
       truncated: boolean;
       source: "git-grep" | "rg" | "scan";
       requestId: string;
+      aborted?: boolean;
     }> => ipcRenderer.invoke("workspace:searchContent", args),
+    /** Cancel a running content search (kills rg, incl. WSL-side). */
+    cancelSearch: (requestId?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("workspace:searchContent:cancel", requestId),
+    /** Read `<root>/.anchorignore` and the built-in default excludes. */
+    readSearchIgnore: (
+      root?: string,
+    ): Promise<{ path: string; text: string; defaultExcludes: string[] }> =>
+      ipcRenderer.invoke("workspace:searchIgnore:read", root),
+    /** Append exclude patterns to `<root>/.anchorignore`. */
+    saveSearchExcludes: (args: {
+      root?: string;
+      patterns: string[];
+    }): Promise<{ path: string; text: string; changed: boolean }> =>
+      ipcRenderer.invoke("workspace:searchIgnore:save", args),
     /** Progressive search hits (same requestId as searchContent). */
     onSearchHits: (
       cb: (payload: {

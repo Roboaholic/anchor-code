@@ -1,7 +1,14 @@
 import type { HostManager } from "../host/hostManager.js";
 import { HostError } from "../host/types.js";
 import { findWorkspaceFiles } from "../services/fileIndex.js";
-import { searchWorkspaceContent } from "../services/contentSearch.js";
+import {
+  ANCHOR_IGNORE_FILE,
+  DEFAULT_EXCLUDES,
+  invalidateAnchorIgnoreCache,
+  mergeAnchorIgnore,
+  searchWorkspaceContent,
+} from "../services/contentSearch.js";
+import { hostJoin } from "../host/paths.js";
 import {
   checkoutBranch,
   commitChanges,
@@ -55,6 +62,33 @@ export class ReviewFacade {
     root = this.workspace.root(),
   ) {
     return searchWorkspaceContent(this.hosts.session, root, query, options);
+  }
+
+  /** Current `<root>/.anchorignore` text ("" when missing) + built-in defaults. */
+  async readSearchIgnore(root = this.workspace.root()) {
+    const safeRoot = this.workspace.safePath(root);
+    const file = hostJoin(this.hosts.session.kind, safeRoot, ANCHOR_IGNORE_FILE);
+    let text = "";
+    try {
+      text = await this.hosts.session.readFile(file);
+    } catch {
+      // missing is fine
+    }
+    return { path: file, text, defaultExcludes: [...DEFAULT_EXCLUDES] };
+  }
+
+  /** Append exclude patterns to `<root>/.anchorignore` (deduplicated). */
+  async saveSearchExcludes(patterns: string[], root = this.workspace.root()) {
+    const current = await this.readSearchIgnore(root);
+    const next = mergeAnchorIgnore(
+      current.text,
+      patterns.filter((p) => typeof p === "string"),
+    );
+    if (next !== current.text) {
+      await this.hosts.session.writeFile(current.path, next);
+    }
+    invalidateAnchorIgnoreCache();
+    return { path: current.path, text: next, changed: next !== current.text };
   }
 
   repos(root = this.workspace.root()) {

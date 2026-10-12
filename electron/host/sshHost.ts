@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { Client, type ClientChannel, type SFTPWrapper } from "ssh2";
@@ -181,18 +182,37 @@ export class SshHostSession implements HostSession {
       let stream: ClientChannel | null = null;
       let stdout = "";
       let stderr = "";
+      let aborted = false;
+      const outDec = new StringDecoder("utf8");
+      const errDec = new StringDecoder("utf8");
+      const signal = opts?.signal;
+      const onAbort = () => {
+        if (settled) return;
+        aborted = true;
+        try {
+          // Ask sshd to TERM the remote process, then drop the channel.
+          (stream as (ClientChannel & { signal?: (s: string) => void }) | null)?.signal?.("TERM");
+          stream?.close();
+        } catch {
+          // ignore
+        }
+        finish(0);
+      };
 
       const finish = (code: number) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve({
           stdout,
           stderr,
           code,
           earlyExit: early || undefined,
+          aborted: aborted || undefined,
         });
       };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       const timer =
         timeoutMs > 0
@@ -227,6 +247,10 @@ export class SshHostSession implements HostSession {
           return;
         }
         stream = s;
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
         const requestEarlyExit = () => {
           if (settled || early) return;
           early = true;
@@ -239,7 +263,8 @@ export class SshHostSession implements HostSession {
         };
         s.on("data", (chunk: Buffer) => {
           if (settled) return;
-          const text = chunk.toString("utf8");
+          const text = outDec.write(chunk);
+          if (!text) return;
           stdout += text;
           try {
             opts?.onStdoutChunk?.(text, stdout);
@@ -251,10 +276,12 @@ export class SshHostSession implements HostSession {
           }
         }).stderr.on("data", (chunk: Buffer) => {
           if (settled) return;
-          stderr += chunk.toString("utf8");
+          stderr += errDec.write(chunk);
         });
         s.on("close", (code: number | null) => {
           if (settled) return;
+          stdout += outDec.end();
+          stderr += errDec.end();
           finish(code ?? 1);
         });
         s.on("error", (e: Error) => {

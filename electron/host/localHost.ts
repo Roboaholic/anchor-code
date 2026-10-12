@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -63,18 +64,40 @@ export class LocalHostSession implements HostSession {
       let settled = false;
       let early = false;
       let timer: NodeJS.Timeout | undefined;
+      let aborted = false;
+      // Decoders keep multi-byte UTF-8 sequences intact across chunk edges.
+      const outDec = new StringDecoder("utf8");
+      const errDec = new StringDecoder("utf8");
+      const signal = opts?.signal;
+      const onAbort = () => {
+        if (settled) return;
+        aborted = true;
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
+        finish(0);
+      };
 
       const finish = (code: number) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve({
           stdout,
           stderr,
           code,
           earlyExit: early || undefined,
+          aborted: aborted || undefined,
         });
       };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       const requestEarlyExit = () => {
         if (settled || early) return;
@@ -113,7 +136,8 @@ export class LocalHostSession implements HostSession {
       }
       child.stdout?.on("data", (chunk: Buffer) => {
         if (settled) return;
-        const text = chunk.toString("utf8");
+        const text = outDec.write(chunk);
+        if (!text) return;
         stdout += text;
         try {
           opts?.onStdoutChunk?.(text, stdout);
@@ -126,12 +150,13 @@ export class LocalHostSession implements HostSession {
       });
       child.stderr?.on("data", (chunk: Buffer) => {
         if (settled) return;
-        stderr += chunk.toString("utf8");
+        stderr += errDec.write(chunk);
       });
       child.on("error", (err) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         reject(
           new HostError(
             "failed",
@@ -142,6 +167,8 @@ export class LocalHostSession implements HostSession {
       });
       child.on("close", (code) => {
         if (settled) return;
+        stdout += outDec.end();
+        stderr += errDec.end();
         finish(code ?? 1);
       });
     });

@@ -40,6 +40,8 @@ export interface RunResult {
   code: number;
   /** True when the process was stopped early via `earlyExit` (still a successful capture). */
   earlyExit?: boolean;
+  /** True when the run was cancelled via `RunOptions.signal` (partial output). */
+  aborted?: boolean;
 }
 
 export interface RunOptions {
@@ -56,6 +58,11 @@ export interface RunOptions {
    * Used to stream search hits to the UI without waiting for process exit.
    */
   onStdoutChunk?: (chunk: string, stdout: string) => void;
+  /**
+   * Cancel the run: the process is killed and the promise resolves with
+   * `aborted: true` and whatever output arrived so far.
+   */
+  signal?: AbortSignal;
 }
 
 export interface DirEntry {

@@ -24,28 +24,24 @@ import { joinPath, relativeToRoot } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 
-type SearchHit = { path: string; line: number; text: string };
+import {
+  appendHitsToGroups,
+  computeVirtualWindow,
+  countHits,
+  excludeRegexError,
+  flattenSearchRows,
+  groupHitsByFile,
+  loadSearchSettings,
+  parseExcludeList,
+  saveSearchSettings,
+  type SearchFileGroup,
+  type SearchHit,
+} from "./searchResults";
 
-type SearchFileGroup = {
-  path: string;
-  hits: SearchHit[];
-};
-
-/** Group hits by file path (preserve first-seen order). */
-function groupHitsByFile(hits: SearchHit[]): SearchFileGroup[] {
-  const map = new Map<string, SearchHit[]>();
-  const order: string[] = [];
-  for (const hit of hits) {
-    const list = map.get(hit.path);
-    if (!list) {
-      map.set(hit.path, [hit]);
-      order.push(hit.path);
-    } else {
-      list.push(hit);
-    }
-  }
-  return order.map((path) => ({ path, hits: map.get(path)! }));
-}
+/** Results page size; "Show more" raises the cap by this much. */
+const SEARCH_PAGE = 2_000;
+/** Fixed row height (px) for the virtualized results list. */
+const SEARCH_ROW_HEIGHT = 22;
 
 /** Collapse noisy whitespace for preview rows. */
 function previewLine(text: string): string {
@@ -104,6 +100,18 @@ export function FileTree() {
   const [query, setQuery] = useState("");
   const [include, setInclude] = useState("");
   const [exclude, setExclude] = useState("");
+  /** Respect .gitignore / hidden rules + default excludes. */
+  const [respectIgnore, setRespectIgnore] = useState(true);
+  /** Display-only path regex filter (does not speed up search). */
+  const [excludeRegex, setExcludeRegex] = useState("");
+  /** Workspace-edited default excludes; null = built-ins. */
+  const [defaultExcludes, setDefaultExcludes] = useState<string[] | null>(null);
+  const [builtinExcludes, setBuiltinExcludes] = useState<string[]>([]);
+  const [defaultsEditorOpen, setDefaultsEditorOpen] = useState(false);
+  const [defaultsDraft, setDefaultsDraft] = useState("");
+  const [ignoreNotice, setIgnoreNotice] = useState<string | null>(null);
+  const [maxResults, setMaxResults] = useState(SEARCH_PAGE);
+  const settingsLoadedFor = useRef<string | null>(null);
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -361,7 +369,9 @@ export function FileTree() {
   });
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [groups, setGroups] = useState<SearchFileGroup[]>([]);
+  const hitCount = useMemo(() => countHits(groups), [groups]);
+  const activeRequestId = useRef<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [searchSource, setSearchSource] = useState<string | null>(null);
   const searchGen = useRef(0);
@@ -369,6 +379,52 @@ export function FileTree() {
   const resizeDrag = useRef<{ startY: number; startH: number } | null>(null);
   const resultsHeightRef = useRef(resultsHeight);
   resultsHeightRef.current = resultsHeight;
+
+  // Load per-workspace search filters (include/exclude/toggles) once per root.
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    const st = loadSearchSettings(workspaceRoot);
+    setInclude(st.include);
+    setExclude(st.exclude);
+    setRespectIgnore(st.respectIgnore);
+    setExcludeRegex(st.excludeRegex);
+    setDefaultExcludes(st.defaultExcludes);
+    settingsLoadedFor.current = workspaceRoot;
+    let cancelled = false;
+    void window.anchor.workspace
+      .readSearchIgnore?.(workspaceRoot)
+      .then((r) => {
+        if (!cancelled) setBuiltinExcludes(r.defaultExcludes);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot || settingsLoadedFor.current !== workspaceRoot) return;
+    saveSearchSettings(workspaceRoot, {
+      include,
+      exclude,
+      respectIgnore,
+      excludeRegex,
+      defaultExcludes,
+    });
+  }, [workspaceRoot, include, exclude, respectIgnore, excludeRegex, defaultExcludes]);
+
+  const excludeRegexProblem = useMemo(
+    () => excludeRegexError(excludeRegex),
+    [excludeRegex],
+  );
+
+  const resetResults = useCallback(() => {
+    setGroups([]);
+    setTruncated(false);
+    setSearchError(null);
+    setSearching(false);
+    setSearchSource(null);
+  }, []);
 
   const runSearch = useCallback(
     async (
@@ -378,76 +434,71 @@ export function FileTree() {
         exclude: string;
         useRegex: boolean;
         caseSensitive: boolean;
+        respectIgnore: boolean;
+        excludeRegex: string;
+        defaultExcludes: string[] | null;
+        maxResults: number;
       },
     ) => {
       const q = raw.trim();
       const gen = ++searchGen.current;
+      // Cancel the previous backend search right away (main also auto-cancels).
+      if (activeRequestId.current) {
+        void window.anchor.workspace.cancelSearch?.(activeRequestId.current);
+        activeRequestId.current = null;
+      }
       if (!workspaceRoot || q.length < 1) {
-        setHits([]);
-        setTruncated(false);
-        setSearchError(null);
-        setSearching(false);
-        setSearchSource(null);
+        resetResults();
         return;
       }
       // Fixed-string: require 2 chars; regex may be short (e.g. `\d`)
       if (!opts.useRegex && q.length < 2) {
-        setHits([]);
-        setTruncated(false);
-        setSearchError(null);
-        setSearching(false);
-        setSearchSource(null);
+        resetResults();
         return;
       }
       setSearching(true);
       setSearchError(null);
       // Clear previous results immediately so streaming replaces, not appends.
-      setHits([]);
+      setGroups([]);
       setTruncated(false);
       setSearchSource(null);
       setCollapsedFiles(new Set());
 
       const requestId = `ui-${gen}-${Date.now()}`;
-      const maxResults = 200;
-      // Stream hits ASAP: first hit paints immediately; further hits coalesce on rAF.
+      activeRequestId.current = requestId;
+      const maxResults = opts.maxResults;
+      // Main batches hits (~30ms); coalesce further on rAF and append per group.
       let pending: SearchHit[] = [];
+      let streamed = 0;
       let raf = 0;
-      let paintedAny = false;
       const flushPending = () => {
         raf = 0;
         if (gen !== searchGen.current || pending.length === 0) {
           pending = [];
           return;
         }
-        const batch = pending;
+        let batch = pending;
         pending = [];
-        setHits((prev) => {
-          if (prev.length >= maxResults) return prev;
-          const next = [...prev, ...batch];
-          return next.length > maxResults ? next.slice(0, maxResults) : next;
-        });
-        paintedAny = true;
+        if (streamed + batch.length > maxResults) {
+          batch = batch.slice(0, Math.max(0, maxResults - streamed));
+        }
+        if (batch.length === 0) return;
+        streamed += batch.length;
+        setGroups((prev) => appendHitsToGroups(prev, batch));
       };
 
       const offHits = window.anchor.workspace.onSearchHits?.((payload) => {
         if (payload.requestId !== requestId) return;
         if (gen !== searchGen.current) return;
-        for (const h of payload.hits) {
-          pending.push(h);
-        }
+        for (const h of payload.hits) pending.push(h);
         if (pending.length === 0) return;
-        // First hit(s): paint this frame without waiting for more chunks.
-        if (!paintedAny) {
-          if (raf) {
-            window.cancelAnimationFrame(raf);
-            raf = 0;
-          }
+        if (streamed === 0) {
+          // First hits paint this frame.
+          if (raf) window.cancelAnimationFrame(raf);
           flushPending();
           return;
         }
-        if (!raf) {
-          raf = window.requestAnimationFrame(flushPending);
-        }
+        if (!raf) raf = window.requestAnimationFrame(flushPending);
       });
       const offMeta = window.anchor.workspace.onSearchMeta?.((payload) => {
         if (payload.requestId !== requestId) return;
@@ -467,6 +518,12 @@ export function FileTree() {
           exclude: excludeList,
           useRegex: opts.useRegex,
           caseSensitive: opts.caseSensitive,
+          respectIgnore: opts.respectIgnore,
+          defaultExcludes: opts.defaultExcludes ?? undefined,
+          excludeRegex:
+            opts.excludeRegex.trim() && !excludeRegexError(opts.excludeRegex)
+              ? opts.excludeRegex
+              : undefined,
           requestId,
         });
         if (gen !== searchGen.current) return;
@@ -474,14 +531,16 @@ export function FileTree() {
           window.cancelAnimationFrame(raf);
           raf = 0;
         }
-        // Final authoritative set (covers any miss/race in streaming).
-        const finalHits = result.hits;
-        setHits(finalHits);
+        flushPending();
+        // Streaming is authoritative; the final set only repairs a lost batch.
+        if (result.hits.length > streamed) {
+          setGroups(groupHitsByFile(result.hits.slice(0, maxResults)));
+        }
         setTruncated(result.truncated);
         setSearchSource(result.source);
       } catch (err) {
         if (gen !== searchGen.current) return;
-        setHits([]);
+        setGroups([]);
         setTruncated(false);
         setSearchSource(null);
         setSearchError(err instanceof Error ? err.message : String(err));
@@ -489,26 +548,47 @@ export function FileTree() {
         offHits?.();
         offMeta?.();
         if (raf) window.cancelAnimationFrame(raf);
+        if (activeRequestId.current === requestId) activeRequestId.current = null;
         if (gen === searchGen.current) setSearching(false);
       }
     },
-    [workspaceRoot],
+    [workspaceRoot, resetResults],
   );
+
+  const cancelSearch = useCallback(() => {
+    const id = activeRequestId.current;
+    if (!id) return;
+    // Keep the hits found so far; just stop the engine.
+    searchGen.current += 1;
+    activeRequestId.current = null;
+    void window.anchor.workspace.cancelSearch?.(id);
+    setSearching(false);
+    setTruncated(true);
+  }, []);
+
+  // A new query / filter set starts again from the first page.
+  useEffect(() => {
+    setMaxResults(SEARCH_PAGE);
+  }, [query, include, exclude, useRegex, caseSensitive, respectIgnore, excludeRegex, defaultExcludes, workspaceRoot]);
 
   useEffect(() => {
     if (!workspaceRoot) {
       setQuery("");
-      setHits([]);
+      setGroups([]);
       setSearchError(null);
       return;
     }
-    // Short debounce; in-flight work is cancelled via searchGen on retype.
+    // Short debounce; the previous backend search is cancelled on retype.
     const t = window.setTimeout(() => {
       void runSearch(query, {
         include,
         exclude,
         useRegex,
         caseSensitive,
+        respectIgnore,
+        excludeRegex,
+        defaultExcludes,
+        maxResults,
       });
     }, 100);
     return () => window.clearTimeout(t);
@@ -518,9 +598,48 @@ export function FileTree() {
     exclude,
     useRegex,
     caseSensitive,
+    respectIgnore,
+    excludeRegex,
+    defaultExcludes,
+    maxResults,
     workspaceRoot,
     runSearch,
   ]);
+
+  // Stop any in-flight search when the pane unmounts.
+  useEffect(
+    () => () => {
+      if (activeRequestId.current) {
+        void window.anchor.workspace.cancelSearch?.(activeRequestId.current);
+      }
+    },
+    [],
+  );
+
+  const saveExcludesToAnchorIgnore = useCallback(async () => {
+    if (!workspaceRoot) return;
+    const patterns = parseExcludeList(exclude.replace(/;/g, ","));
+    if (patterns.length === 0) {
+      setIgnoreNotice("Nothing to save — the exclude field is empty.");
+      return;
+    }
+    try {
+      const r = await window.anchor.workspace.saveSearchExcludes({
+        root: workspaceRoot,
+        patterns,
+      });
+      setIgnoreNotice(
+        r.changed
+          ? `Saved to ${r.path}`
+          : "Already in .anchorignore — nothing changed.",
+      );
+      if (r.changed) setExclude("");
+    } catch (err) {
+      setIgnoreNotice(err instanceof Error ? err.message : String(err));
+    }
+  }, [workspaceRoot, exclude]);
+
+  const effectiveDefaults = defaultExcludes ?? builtinExcludes;
 
   const openHit = (hit: SearchHit) => {
     if (!workspaceRoot) return;
@@ -536,7 +655,28 @@ export function FileTree() {
     });
   };
 
-  const fileGroups = useMemo(() => groupHitsByFile(hits), [hits]);
+  const fileGroups = groups;
+  const searchRows = useMemo(
+    () => flattenSearchRows(fileGroups, collapsedFiles),
+    [fileGroups, collapsedFiles],
+  );
+  const [resultsScrollTop, setResultsScrollTop] = useState(0);
+  const [resultsViewportH, setResultsViewportH] = useState(400);
+  const resultsBodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = resultsBodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setResultsViewportH(el.clientHeight));
+    ro.observe(el);
+    setResultsViewportH(el.clientHeight);
+    return () => ro.disconnect();
+  });
+  const virtualWindow = computeVirtualWindow(
+    searchRows.length,
+    SEARCH_ROW_HEIGHT,
+    resultsScrollTop,
+    resultsViewportH,
+  );
 
   const allFilesExpanded =
     fileGroups.length > 0 &&
@@ -687,12 +827,14 @@ export function FileTree() {
     qTrim.length >= 1 && (useRegex || qTrim.length >= 2);
 
   const resultsMeta = searching
-    ? "Searching…"
+    ? hitCount > 0
+      ? `Found ${hitCount} in ${fileGroups.length} file${fileGroups.length === 1 ? "" : "s"}, searching…`
+      : "Searching…"
     : searchError
       ? "Search failed"
-      : hits.length === 0
+      : hitCount === 0
         ? "No matches"
-        : `${hits.length} result${hits.length === 1 ? "" : "s"}${
+        : `${hitCount} result${hitCount === 1 ? "" : "s"} in ${fileGroups.length} file${fileGroups.length === 1 ? "" : "s"}${
             truncated ? "+" : ""
           }${searchSource ? ` · ${searchSource}` : ""}`;
 
@@ -917,7 +1059,7 @@ export function FileTree() {
         </button>
         <button
           type="button"
-          className={`icon-btn files-search__toggle${filtersOpen || include || exclude ? " is-active" : ""}`}
+          className={`icon-btn files-search__toggle${filtersOpen || include || exclude || excludeRegex || !respectIgnore ? " is-active" : ""}`}
           title="Include / exclude files"
           aria-label="Include and exclude filters"
           aria-pressed={filtersOpen}
@@ -957,6 +1099,96 @@ export function FileTree() {
               autoComplete="off"
             />
           </label>
+          <div className="files-search-filters__actions">
+            <button
+              type="button"
+              className="btn btn--small"
+              title="Append these exclude patterns to .anchorignore in the workspace root (gitignore syntax, applied to every search)"
+              onClick={() => void saveExcludesToAnchorIgnore()}
+              disabled={!exclude.trim()}
+            >
+              Save as workspace default (.anchorignore)
+            </button>
+          </div>
+          <label className="files-search-filters__check">
+            <input
+              type="checkbox"
+              checked={respectIgnore}
+              onChange={(e) => setRespectIgnore(e.target.checked)}
+            />
+            <span>Use .gitignore, hidden-file rules and default excludes</span>
+          </label>
+          <div className="files-search-filters__defaults">
+            <button
+              type="button"
+              className="files-search-filters__link"
+              onClick={() => {
+                setDefaultsDraft(effectiveDefaults.join("\n"));
+                setDefaultsEditorOpen((v) => !v);
+              }}
+              aria-expanded={defaultsEditorOpen}
+            >
+              Default excludes ({effectiveDefaults.length})
+              {defaultExcludes ? " · customized" : ""}
+            </button>
+            {defaultsEditorOpen ? (
+              <div className="files-search-filters__defaults-editor">
+                <textarea
+                  className="files-search-filters__textarea"
+                  rows={6}
+                  value={defaultsDraft}
+                  onChange={(e) => setDefaultsDraft(e.target.value)}
+                  spellCheck={false}
+                  aria-label="Default exclude patterns, one per line"
+                />
+                <div className="files-search-filters__actions">
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    onClick={() => {
+                      setDefaultExcludes(parseExcludeList(defaultsDraft));
+                      setDefaultsEditorOpen(false);
+                    }}
+                  >
+                    Save for this workspace
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    onClick={() => {
+                      setDefaultExcludes(null);
+                      setDefaultsDraft(builtinExcludes.join("\n"));
+                    }}
+                  >
+                    Reset to built-in
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <label className="files-search-filters__row">
+            <span className="files-search-filters__label">
+              exclude paths matching regex (advanced · display only)
+            </span>
+            <input
+              type="text"
+              className={`files-search-filters__input${excludeRegexProblem ? " is-invalid" : ""}`}
+              placeholder="e.g. (^|/)generated/|\\.snap$"
+              value={excludeRegex}
+              onChange={(e) => setExcludeRegex(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              title="Filters results after the search engine returns them. It hides matches but does NOT make the search faster — prefer glob excludes or .anchorignore for speed."
+            />
+            <span className="files-search-filters__hint">
+              {excludeRegexProblem
+                ? `Invalid regex: ${excludeRegexProblem}`
+                : "Hides matching results only — no speedup. Use globs / .anchorignore to skip files."}
+            </span>
+          </label>
+          {ignoreNotice ? (
+            <span className="files-search-filters__hint">{ignoreNotice}</span>
+          ) : null}
         </div>
       ) : null}
 
@@ -988,6 +1220,19 @@ export function FileTree() {
                 <span className="files-section__label">RESULTS</span>
                 <span className="files-section__meta">{resultsMeta}</span>
               </button>
+              {searching ? (
+                <div className="files-section__head-actions">
+                  <button
+                    type="button"
+                    className="icon-btn files-section__bulk"
+                    title="Stop search (keep results found so far)"
+                    aria-label="Stop search"
+                    onClick={cancelSearch}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ) : null}
               {resultsOpen && fileGroups.length > 0 ? (
                 <div className="files-section__head-actions">
                   <button
@@ -1013,76 +1258,112 @@ export function FileTree() {
               ) : null}
             </div>
             {resultsOpen ? (
-              <div className="files-search-results__body">
+              <div
+                className="files-search-results__body"
+                ref={resultsBodyRef}
+                onScroll={(e) => setResultsScrollTop(e.currentTarget.scrollTop)}
+              >
                 {searchError ? (
                   <p className="pane-hint pane-hint--error">{searchError}</p>
                 ) : null}
-                <ul className="files-search-results__list">
-                  {fileGroups.map((group) => {
-                    const dir = fileDirname(group.path);
-                    const collapsed = collapsedFiles.has(group.path);
-                    return (
-                      <li
-                        key={group.path}
-                        className={`files-search-group${collapsed ? " is-collapsed" : ""}`}
-                      >
-                        <button
-                          type="button"
-                          className="files-search-group__head"
-                          title={
-                            collapsed
-                              ? `Expand ${group.path}`
-                              : `Collapse ${group.path}`
-                          }
-                          aria-expanded={!collapsed}
-                          onClick={() => toggleFileGroup(group.path)}
+                <div
+                  className="files-search-results__virtual"
+                  style={{ height: searchRows.length * SEARCH_ROW_HEIGHT }}
+                  role="list"
+                >
+                  {searchRows
+                    .slice(virtualWindow.start, virtualWindow.end)
+                    .map((row, i) => {
+                      const top = (virtualWindow.start + i) * SEARCH_ROW_HEIGHT;
+                      const style = {
+                        position: "absolute" as const,
+                        top,
+                        left: 0,
+                        right: 0,
+                        height: SEARCH_ROW_HEIGHT,
+                      };
+                      if (row.kind === "file") {
+                        const group = row.group;
+                        const dir = fileDirname(group.path);
+                        const collapsed = row.collapsed;
+                        return (
+                          <div
+                            key={row.key}
+                            role="listitem"
+                            style={style}
+                            className={`files-search-group${collapsed ? " is-collapsed" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              className="files-search-group__head"
+                              title={
+                                collapsed
+                                  ? `Expand ${group.path}`
+                                  : `Collapse ${group.path}`
+                              }
+                              aria-expanded={!collapsed}
+                              onClick={() => toggleFileGroup(group.path)}
+                            >
+                              <Icon
+                                name={collapsed ? "chevron-right" : "chevron-down"}
+                                className="files-search-group__chevron"
+                              />
+                              <span className="files-search-group__file">
+                                {fileBasename(group.path)}
+                              </span>
+                              {dir ? (
+                                <span className="files-search-group__dir">
+                                  {dir}
+                                </span>
+                              ) : null}
+                              <span className="files-search-group__count">
+                                {group.hits.length}
+                              </span>
+                            </button>
+                          </div>
+                        );
+                      }
+                      const hit = row.hit;
+                      return (
+                        <div
+                          key={row.key}
+                          role="listitem"
+                          style={style}
+                          className="files-search-group__hits"
                         >
-                          <Icon
-                            name={collapsed ? "chevron-right" : "chevron-down"}
-                            className="files-search-group__chevron"
-                          />
-                          <span className="files-search-group__file">
-                            {fileBasename(group.path)}
-                          </span>
-                          {dir ? (
-                            <span className="files-search-group__dir">
-                              {dir}
+                          <button
+                            type="button"
+                            className="files-search-hit"
+                            title={`${hit.path}:${hit.line}`}
+                            onClick={() => openHit(hit)}
+                          >
+                            <span className="files-search-hit__line">
+                              {hit.line}
                             </span>
-                          ) : null}
-                          <span className="files-search-group__count">
-                            {group.hits.length}
-                          </span>
-                        </button>
-                        {!collapsed ? (
-                          <ul className="files-search-group__hits">
-                            {group.hits.map((hit, i) => (
-                              <li key={`${hit.line}:${i}`}>
-                                <button
-                                  type="button"
-                                  className="files-search-hit"
-                                  title={`${hit.path}:${hit.line}`}
-                                  onClick={() => openHit(hit)}
-                                >
-                                  <span className="files-search-hit__line">
-                                    {hit.line}
-                                  </span>
-                                  <span className="files-search-hit__text">
-                                    {highlightPreview(
-                                      hit.text,
-                                      query,
-                                      useRegex,
-                                      caseSensitive,
-                                    )}
-                                  </span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
+                            <span className="files-search-hit__text">
+                              {highlightPreview(
+                                hit.text,
+                                query,
+                                useRegex,
+                                caseSensitive,
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+                {!searching && truncated && hitCount >= maxResults ? (
+                  <div className="files-search-results__more">
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      onClick={() => setMaxResults((n) => n + SEARCH_PAGE)}
+                    >
+                      Show more (+{SEARCH_PAGE})
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

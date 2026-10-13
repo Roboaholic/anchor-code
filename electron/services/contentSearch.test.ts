@@ -164,3 +164,34 @@ describe("rgPath", () => {
     }
   });
 });
+
+describe("createGrepHitStreamer skipHits", () => {
+  it("skips the first N hits then collects maxResults", async () => {
+    const { createGrepHitStreamer } = await import("./contentSearch.js");
+    const seen: string[] = [];
+    const s = createGrepHitStreamer(
+      2,
+      [],
+      [],
+      (hits) => {
+        for (const h of hits) seen.push(`${h.path}:${h.line}`);
+      },
+      undefined,
+      2,
+    );
+    const stdout = [
+      "a.ts:1:one",
+      "a.ts:2:two",
+      "b.ts:1:three",
+      "b.ts:2:four",
+      "c.ts:1:five",
+      "",
+    ].join("\n");
+    expect(s.feed(stdout)).toBe(true);
+    expect(s.hits().map((h) => `${h.path}:${h.line}`)).toEqual([
+      "b.ts:1",
+      "b.ts:2",
+    ]);
+    expect(seen).toEqual(["b.ts:1", "b.ts:2"]);
+  });
+});

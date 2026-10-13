@@ -46,9 +46,14 @@ function findFilesArgs(root: string, extra?: { query?: string }) {
 
 
 async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
+  const hostKind = useWorkspaceStore.getState().hostKind;
+  // Local can trust the in-memory index (watch deltas keep it fresh).
+  // WSL/SSH always revalidate via IPC so disk-cache fingerprints can run.
+  const trustMemory = hostKind === "local" || hostKind == null;
   const cached = fileIndexCache.get(root);
   if (
     !force &&
+    trustMemory &&
     cached &&
     cached.files.length > 0 &&
     Date.now() - cached.at < FILE_INDEX_CACHE_TTL_MS
@@ -95,6 +100,37 @@ export function invalidateFileIndexCache(root?: string): void {
   }
   fileIndexCache.clear();
   fileIndexInflight.clear();
+}
+
+/** Path-level add/remove for Local file-watch deltas (avoids full rebuild). */
+export function applyFileIndexDelta(
+  root: string,
+  changes: { rel: string; exists: boolean }[],
+): void {
+  const cached = fileIndexCache.get(root);
+  if (!cached || changes.length === 0) return;
+  const set = new Set(cached.files);
+  let dirty = false;
+  for (const c of changes) {
+    const rel = c.rel.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!rel || rel.endsWith("/")) continue;
+    // Ignore noise / VCS internals.
+    if (rel.split("/").some((p) => p === "node_modules" || p === ".git")) continue;
+    if (c.exists) {
+      if (!set.has(rel)) {
+        set.add(rel);
+        dirty = true;
+      }
+    } else if (set.delete(rel)) {
+      dirty = true;
+    }
+  }
+  if (!dirty) return;
+  fileIndexCache.set(root, {
+    ...cached,
+    files: [...set].sort((a, b) => a.localeCompare(b)),
+    at: Date.now(),
+  });
 }
 
 /** Background warm so the first Ctrl+P is not a cold multi-repo scan. */
@@ -385,7 +421,9 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
                     {highlightText(m.name, m.indices)}
                   </span>
                   {dir ? (
-                    <span className="quick-open__item-path">{dir}</span>
+                    <span className="quick-open__item-path">
+                      {highlightText(dir, m.pathIndices ?? [])}
+                    </span>
                   ) : null}
                 </span>
               </button>

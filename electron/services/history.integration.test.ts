@@ -78,10 +78,11 @@ describe("historyService (integration, temp git repo)", () => {
   });
 
   it("loads commit log with subjects", async () => {
-    const commits = await loadLog(host, root);
+    const { commits, hasMore } = await loadLog(host, root);
     expect(commits.length).toBeGreaterThanOrEqual(2);
     expect(commits.some((c) => c.subject === "second")).toBe(true);
     expect(commits.some((c) => c.hash === hashB)).toBe(true);
+    expect(typeof hasMore).toBe("boolean");
   });
 
   it("loads line attribution for a tracked file", async () => {

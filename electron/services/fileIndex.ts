@@ -126,13 +126,13 @@ export async function findWorkspaceFiles(
   const workspace = hostNormalize(host.kind, root);
   const skipDirs = pruneSet(opts?.pruneDirNames);
 
-  const cached = query ? null : await readDiskCache(host.kind, workspace, maxFiles);
+  const cached = query ? null : await readDiskCache(host, workspace, maxFiles);
   if (cached) return cached;
 
   if (await isUsableGitRoot(host, workspace)) {
     const viaGit = await tryGitLsFiles(host, workspace, maxFiles, "", true, query);
     if (viaGit) {
-      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, viaGit);
+      if (!query) await writeDiskCache(host, workspace, maxFiles, viaGit);
       return { ...viaGit, source: "git" };
     }
   }
@@ -146,7 +146,7 @@ export async function findWorkspaceFiles(
       skipDirs,
     );
     if (oneShot && oneShot.files.length > 0) {
-      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, oneShot);
+      if (!query) await writeDiskCache(host, workspace, maxFiles, oneShot);
       return oneShot;
     }
   }
@@ -155,7 +155,7 @@ export async function findWorkspaceFiles(
   if (nested.length > 0) {
     const multi = await mergeGitRepos(host, workspace, nested, maxFiles, query);
     if (multi.files.length > 0) {
-      if (!query) await writeDiskCache(host.kind, workspace, maxFiles, multi);
+      if (!query) await writeDiskCache(host, workspace, maxFiles, multi);
       return multi;
     }
   }
@@ -168,7 +168,7 @@ export async function findWorkspaceFiles(
     query,
     skipDirs,
   );
-  if (!query) await writeDiskCache(host.kind, workspace, maxFiles, walked);
+  if (!query) await writeDiskCache(host, workspace, maxFiles, walked);
   return walked;
 }
 
@@ -178,19 +178,73 @@ function cacheDir(): string {
 
 function cacheKey(hostKind: string, workspace: string, maxFiles: number): string {
   return createHash("sha1")
-    .update(`${hostKind}\0${workspace}\0${maxFiles}\0v4-index`)
+    .update(`${hostKind}\0${workspace}\0${maxFiles}\0v5-fp`)
     .digest("hex");
 }
 
+/**
+ * Fingerprint for disk-cache freshness: prefer `git rev-parse HEAD`, else root mtime.
+ * Cheap on Local; on WSL uses readRun/helper when available.
+ */
+export async function computeIndexFingerprint(
+  host: HostSession,
+  workspace: string,
+): Promise<string> {
+  try {
+    const r = await hostRun(host, workspace, "git", ["rev-parse", "HEAD"], {
+      timeoutMs: 8_000,
+    });
+    const head = r.stdout.trim();
+    if (r.code === 0 && /^[0-9a-f]{7,40}$/i.test(head)) {
+      // Light dirtiness (WSL/Local): status -z so adds/removes invalidate without new commits.
+      let dirt = "";
+      try {
+        const st = await hostRun(
+          host,
+          workspace,
+          "git",
+          ["status", "-z", "--untracked-files=normal"],
+          { timeoutMs: 8_000 },
+        );
+        if (st.code === 0 && st.stdout) {
+          dirt = createHash("sha1").update(st.stdout).digest("hex").slice(0, 12);
+        }
+      } catch {
+        // ignore — HEAD alone is still useful
+      }
+      return dirt ? `git:${head}:${dirt}` : `git:${head}`;
+    }
+  } catch {
+    // not a git root or helper failed
+  }
+  try {
+    const st = await host.stat(workspace);
+    return `mtime:${Math.floor(st.mtimeMs)}`;
+  } catch {
+    return `none:${Date.now()}`;
+  }
+}
+
+/** True when live fingerprint matches the cached one (or cache has no fp → stale). */
+export async function isIndexFingerprintCurrent(
+  host: HostSession,
+  workspace: string,
+  cachedFp: string | undefined | null,
+): Promise<boolean> {
+  if (!cachedFp) return false;
+  const live = await computeIndexFingerprint(host, workspace);
+  return live === cachedFp;
+}
+
 async function readDiskCache(
-  hostKind: string,
+  host: HostSession,
   workspace: string,
   maxFiles: number,
 ): Promise<FindFilesResult | null> {
   try {
     const file = path.join(
       cacheDir(),
-      `${cacheKey(hostKind, workspace, maxFiles)}.json`,
+      `${cacheKey(host.kind, workspace, maxFiles)}.json`,
     );
     const raw = await fs.readFile(file, "utf8");
     const data = JSON.parse(raw) as {
@@ -199,10 +253,13 @@ async function readDiskCache(
       files: string[];
       truncated: boolean;
       source: FindFilesResult["source"];
+      fingerprint?: string;
     };
     if (!data?.files?.length) return null;
     if (Date.now() - data.at > DISK_CACHE_TTL_MS) return null;
     if (data.root !== workspace) return null;
+    const ok = await isIndexFingerprintCurrent(host, workspace, data.fingerprint);
+    if (!ok) return null;
     return {
       root: data.root,
       files: data.files,
@@ -215,7 +272,7 @@ async function readDiskCache(
 }
 
 async function writeDiskCache(
-  hostKind: string,
+  host: HostSession,
   workspace: string,
   maxFiles: number,
   result: FindFilesResult,
@@ -226,8 +283,9 @@ async function writeDiskCache(
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(
       dir,
-      `${cacheKey(hostKind, workspace, maxFiles)}.json`,
+      `${cacheKey(host.kind, workspace, maxFiles)}.json`,
     );
+    const fingerprint = await computeIndexFingerprint(host, workspace);
     await fs.writeFile(
       file,
       JSON.stringify({
@@ -236,6 +294,7 @@ async function writeDiskCache(
         files: result.files,
         truncated: result.truncated,
         source: result.source,
+        fingerprint,
       }),
     );
   } catch {

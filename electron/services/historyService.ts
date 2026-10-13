@@ -300,16 +300,57 @@ export async function discoverRepos(
   }));
 }
 
+export interface LoadLogOptions {
+  /** Max commits to return (default LOG_LIMIT). */
+  limit?: number;
+  /** git log --skip=N */
+  skip?: number;
+  /**
+   * When set, return only commits newer than this hash:
+   * `git log <since>..HEAD`. Used for incremental refresh.
+   */
+  since?: string;
+}
+
+export interface LoadLogResult {
+  commits: CommitRow[];
+  /** True when we filled the page — caller may request skip+=limit. */
+  hasMore: boolean;
+}
+
+function parseLogLines(stdout: string): CommitRow[] {
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, shortHash, subject, author, dateIso] = line.split("\t");
+      return {
+        hash: hash ?? "",
+        shortHash: shortHash ?? "",
+        subject: subject ?? "",
+        author: author ?? "",
+        dateIso: dateIso ?? "",
+      };
+    });
+}
+
 export async function loadLog(
   host: HostSession,
   repoRoot: string,
-): Promise<CommitRow[]> {
-  const result = await readRun(host, repoRoot, "git", [
+  opts?: LoadLogOptions,
+): Promise<LoadLogResult> {
+  const limit = Math.max(1, Math.min(opts?.limit ?? LOG_LIMIT, 500));
+  const skip = Math.max(0, opts?.skip ?? 0);
+  const since = opts?.since?.trim();
+  const args = [
     "log",
     "--date-order",
-    `-n${LOG_LIMIT}`,
+    `-n${limit}`,
     "--format=%H%x09%h%x09%s%x09%an%x09%aI",
-  ]);
+  ];
+  if (skip > 0) args.push(`--skip=${skip}`);
+  if (since) args.push(`${since}..HEAD`);
+  const result = await readRun(host, repoRoot, "git", args);
   if (result.code !== 0) {
     throw new HostError(
       "failed",
@@ -317,17 +358,110 @@ export async function loadLog(
       result.stderr || result.stdout,
     );
   }
-  const lines = result.stdout.split("\n").filter(Boolean);
-  return lines.map((line) => {
-    const [hash, shortHash, subject, author, dateIso] = line.split("\t");
-    return {
-      hash: hash ?? "",
-      shortHash: shortHash ?? "",
-      subject: subject ?? "",
-      author: author ?? "",
-      dateIso: dateIso ?? "",
+  const commits = parseLogLines(result.stdout);
+  return { commits, hasMore: !since && commits.length >= limit };
+}
+
+export interface RepoExpandBundle {
+  head: string;
+  commits: CommitRow[];
+  hasMore: boolean;
+  status: RepoStatus;
+  branches: BranchInfo[];
+}
+
+/**
+ * First expand of a repo: one host process returns HEAD + log page + full
+ * status + local branches (History plan B). WSL/SSH use a single bash -s.
+ */
+export async function loadRepoExpandBundle(
+  host: HostSession,
+  repoRoot: string,
+  opts?: { logLimit?: number },
+): Promise<RepoExpandBundle> {
+  const limit = Math.max(1, Math.min(opts?.logLimit ?? LOG_LIMIT, 500));
+
+  if (host.kind === "wsl" || host.kind === "ssh") {
+    const rootQ = repoRoot.replace(/'/g, `'\\''`);
+    const script = [
+      `root='${rootQ}'`,
+      "printf '__AC_HEAD__\\n'",
+      'git -C "$root" rev-parse HEAD 2>/dev/null || true',
+      "printf '__AC_LOG__\\n'",
+      `git -C "$root" log --date-order -n${limit} --format=%H%x09%h%x09%s%x09%an%x09%aI 2>/dev/null || true`,
+      "printf '__AC_STATUS__\\n'",
+      'git -C "$root" status --porcelain -b --untracked-files=all 2>/dev/null || true',
+      "printf '__AC_BRANCH__\\n'",
+      'git -C "$root" branch --format=%(refname:short)%09%(HEAD) 2>/dev/null || true',
+      "printf '__AC_END__\\n'",
+    ].join("\n");
+    const result = await readRun(host, repoRoot, "bash", ["-s"], {
+      stdin: script,
+      timeoutMs: 90_000,
+    });
+    const sections: Record<string, string[]> = {
+      HEAD: [],
+      LOG: [],
+      STATUS: [],
+      BRANCH: [],
     };
-  });
+    let cur: keyof typeof sections | null = null;
+    for (const line of result.stdout.split("\n")) {
+      if (line === "__AC_HEAD__") {
+        cur = "HEAD";
+        continue;
+      }
+      if (line === "__AC_LOG__") {
+        cur = "LOG";
+        continue;
+      }
+      if (line === "__AC_STATUS__") {
+        cur = "STATUS";
+        continue;
+      }
+      if (line === "__AC_BRANCH__") {
+        cur = "BRANCH";
+        continue;
+      }
+      if (line === "__AC_END__") break;
+      if (cur) sections[cur].push(line);
+    }
+    const head = (sections.HEAD[0] ?? "").trim();
+    const commits = parseLogLines(sections.LOG.join("\n"));
+    const status = statusFromPorcelain(repoRoot, sections.STATUS.join("\n"));
+    const branches = parseBranchFormat(sections.BRANCH.join("\n"));
+    return {
+      head,
+      commits,
+      hasMore: commits.length >= limit,
+      status,
+      branches,
+    };
+  }
+
+  const headR = await readRun(host, repoRoot, "git", ["rev-parse", "HEAD"]);
+  const head = headR.code === 0 ? headR.stdout.trim() : "";
+  const log = await loadLog(host, repoRoot, { limit });
+  const status = await loadRepoStatus(host, repoRoot, { badgeOnly: false });
+  const branches = await listBranches(host, repoRoot);
+  return {
+    head,
+    commits: log.commits,
+    hasMore: log.hasMore,
+    status,
+    branches,
+  };
+}
+
+function parseBranchFormat(stdout: string): BranchInfo[] {
+  const out: BranchInfo[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const [name, headMark] = line.split("\t");
+    if (!name) continue;
+    out.push({ name, current: headMark === "*" });
+  }
+  return out;
 }
 
 /** Load commit attribution for a tracked file at worktree or a revision. */

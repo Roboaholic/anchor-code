@@ -526,6 +526,8 @@ export interface AnchorApi {
       defaultExcludes?: string[];
       /** Path regex post-filter (display only, no speedup). */
       excludeRegex?: string;
+      /** Skip first N hits then collect maxResults (Show more). */
+      skipHits?: number;
       requestId?: string;
     }) => Promise<{
       root: string;
@@ -561,7 +563,10 @@ export interface AnchorApi {
     watchStart: (root?: string) => Promise<{ ok: boolean }>;
     watchStop: () => Promise<{ ok: boolean }>;
     /** A directory's contents changed (debounced by the main process). */
-    onFileChange: (cb: (payload: { dir: string }) => void) => () => void;
+    onFileChange: (cb: (payload: {
+      dir: string;
+      changes?: { path: string; rel: string; eventType: string }[];
+    }) => void) => () => void;
     deletePath: (path: string) => Promise<{ ok: boolean }>;
     renamePath: (oldPath: string, newPath: string) => Promise<{ ok: boolean }>;
     copyPath: (src: string, dst: string) => Promise<{ ok: boolean }>;
@@ -574,7 +579,20 @@ export interface AnchorApi {
   history: {
     /** Cached per workspace in main; `force` = Rescan. */
     discover: (workspaceRoot: string, opts?: { force?: boolean }) => Promise<RepoInfo[]>;
-    loadLog: (repoRoot: string) => Promise<CommitRow[]>;
+    loadLog: (
+      repoRoot: string,
+      opts?: { limit?: number; skip?: number; since?: string },
+    ) => Promise<{ commits: CommitRow[]; hasMore: boolean }>;
+    expandBundle: (
+      repoRoot: string,
+      opts?: { logLimit?: number },
+    ) => Promise<{
+      head: string;
+      commits: CommitRow[];
+      hasMore: boolean;
+      status: RepoStatus;
+      branches: BranchInfo[];
+    }>;
     fileBlame: (args: {
       repoRoot: string;
       filePath: string;

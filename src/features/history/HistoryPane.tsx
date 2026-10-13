@@ -202,6 +202,7 @@ function RepoCard({
   const toggleChanges = useHistoryStore((s) => s.toggleChanges);
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
   const refreshLog = useHistoryStore((s) => s.refreshLog);
+  const loadMoreLog = useHistoryStore((s) => s.loadMoreLog);
   const toggleCompares = useHistoryStore((s) => s.toggleCompares);
   const toggleCommit = useHistoryStore((s) => s.toggleCommit);
   const refreshStatus = useHistoryStore((s) => s.refreshStatus);
@@ -690,6 +691,20 @@ function RepoCard({
                     );
                   })}
                 </ul>
+                {card.logHasMore ? (
+                  <div className="history-pane__actions">
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      disabled={card.logStatus === "loading"}
+                      onClick={() => void loadMoreLog(card.root)}
+                    >
+                      {card.logStatus === "loading"
+                        ? "Loading…"
+                        : "Load more commits"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

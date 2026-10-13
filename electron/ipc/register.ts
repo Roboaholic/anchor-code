@@ -850,6 +850,7 @@ export function registerIpc(opts: {
         respectIgnore?: boolean;
         defaultExcludes?: string[];
         excludeRegex?: string;
+        skipHits?: number;
         /** Correlates progressive hit events with this request. */
         requestId?: string;
       },
@@ -891,6 +892,10 @@ export function registerIpc(opts: {
             : undefined,
           excludeRegex:
             typeof args?.excludeRegex === "string" ? args.excludeRegex : undefined,
+          skipHits:
+            typeof args?.skipHits === "number" && args.skipHits > 0
+              ? Math.floor(args.skipHits)
+              : undefined,
           signal: ctl.signal,
           onHits: (hits) => batcher.push(hits),
           onSource: (source) => {
@@ -965,13 +970,31 @@ export function registerIpc(opts: {
     },
   );
 
-  ipcMain.handle("history:loadLog", async (_evt, repoRoot: string) => {
-    try {
-      return await application.review.log(repoRoot);
-    } catch (err) {
-      rethrowIpc(err);
-    }
-  });
+  ipcMain.handle(
+    "history:loadLog",
+    async (
+      _evt,
+      repoRoot: string,
+      opts?: { limit?: number; skip?: number; since?: string },
+    ) => {
+      try {
+        return await application.review.log(repoRoot, opts);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "history:expandBundle",
+    async (_evt, repoRoot: string, opts?: { logLimit?: number }) => {
+      try {
+        return await application.review.expandBundle(repoRoot, opts);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
   ipcMain.handle(
     "history:fileBlame",
     async (

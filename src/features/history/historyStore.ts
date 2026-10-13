@@ -34,6 +34,8 @@ export interface RepoCardState {
   historyOpen: boolean;
   comparesOpen: boolean;
   commits: CommitRow[];
+  /** More pages available via loadMoreLog. */
+  logHasMore: boolean;
   logStatus: RepoLogStatus;
   logError: string | null;
   selectedHashes: string[];
@@ -76,8 +78,12 @@ export interface HistoryState {
   toggleExpanded: (repoRoot: string) => void;
   toggleChanges: (repoRoot: string) => void;
   toggleHistory: (repoRoot: string) => Promise<void>;
-  /** Reload commit log for an open History section. */
+  /** Reload commit log for an open History section (incremental when possible). */
   refreshLog: (repoRoot: string) => Promise<void>;
+  /** Fetch next page of commits (--skip). */
+  loadMoreLog: (repoRoot: string) => Promise<void>;
+  /** One-shot first expand: log + status + branches. */
+  expandRepo: (repoRoot: string) => Promise<void>;
   toggleCompares: (repoRoot: string) => void;
   toggleCommit: (repoRoot: string, hash: string) => void;
   loadBranches: (repoRoot: string) => Promise<void>;
@@ -145,6 +151,7 @@ function emptyCard(repo: RepoInfo): RepoCardState {
     historyOpen: false,
     comparesOpen: false,
     commits: [],
+    logHasMore: false,
     logStatus: "idle",
     logError: null,
     selectedHashes: [],
@@ -470,10 +477,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     set((s) => ({
       repos: mapCard(s.repos, repoRoot, { expanded: next }),
     }));
-    // Opening a repo: full status (file list) for Changes.
-    // Collapsed repos only get quiet badge polls from HistoryPane.
+    // Opening a repo: one-shot bundle on first expand, else full status.
     if (next) {
-      void get().refreshStatus(repoRoot, { badgeOnly: false });
+      if (!card.status && card.commits.length === 0) {
+        void get().expandRepo(repoRoot);
+      } else {
+        void get().refreshStatus(repoRoot, { badgeOnly: false });
+      }
     }
   },
 
@@ -514,17 +524,64 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       }));
       return;
     }
-    // Open + load log (lazy)
     set((s) => ({
       repos: mapCard(s.repos, repoRoot, {
         historyOpen: true,
         expanded: true,
       }),
     }));
-    await get().refreshLog(repoRoot);
+    if (card.commits.length === 0) {
+      await get().expandRepo(repoRoot);
+    } else {
+      await get().refreshLog(repoRoot);
+    }
+  },
+
+  expandRepo: async (repoRoot) => {
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, {
+        logStatus: "loading",
+        logError: null,
+        statusState: "loading",
+        branchesStatus: "loading",
+      }),
+    }));
+    try {
+      const bundle = await window.anchor.history.expandBundle(repoRoot);
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
+          commits: bundle.commits,
+          logHasMore: bundle.hasMore,
+          logStatus: "idle",
+          logError: null,
+          status: bundle.status,
+          statusState: "idle",
+          statusError: null,
+          branches: bundle.branches,
+          branchesStatus: "idle",
+          branchesError: null,
+          expanded: true,
+        }),
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
+          logStatus: "error",
+          logError: msg,
+          statusState: "error",
+          statusError: msg,
+          branchesStatus: "error",
+          branchesError: msg,
+        }),
+      }));
+    }
   },
 
   refreshLog: async (repoRoot) => {
+    const card = findCard(get().repos, repoRoot);
+    const since =
+      card && card.commits.length > 0 ? card.commits[0]?.hash : undefined;
     set((s) => ({
       repos: mapCard(s.repos, repoRoot, {
         logStatus: "loading",
@@ -532,18 +589,77 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       }),
     }));
     try {
-      const commits = await window.anchor.history.loadLog(repoRoot);
-      set((s) => ({
-        repos: mapCard(s.repos, repoRoot, {
-          commits,
-          logStatus: "idle",
-          logError: null,
-        }),
-      }));
+      if (since) {
+        // Incremental: only commits newer than the tip we already have.
+        const { commits: newer } = await window.anchor.history.loadLog(
+          repoRoot,
+          { since, limit: 200 },
+        );
+        set((s) => {
+          const cur = findCard(s.repos, repoRoot);
+          const existing = cur?.commits ?? [];
+          const have = new Set(existing.map((c) => c.hash));
+          const prepend = newer.filter((c) => !have.has(c.hash));
+          return {
+            repos: mapCard(s.repos, repoRoot, {
+              commits: [...prepend, ...existing],
+              logStatus: "idle",
+              logError: null,
+            }),
+          };
+        });
+      } else {
+        const { commits, hasMore } = await window.anchor.history.loadLog(
+          repoRoot,
+          { limit: 200 },
+        );
+        set((s) => ({
+          repos: mapCard(s.repos, repoRoot, {
+            commits,
+            logHasMore: hasMore,
+            logStatus: "idle",
+            logError: null,
+          }),
+        }));
+      }
     } catch (err) {
       set((s) => ({
         repos: mapCard(s.repos, repoRoot, {
-          commits: [],
+          logStatus: "error",
+          logError: err instanceof Error ? err.message : String(err),
+        }),
+      }));
+    }
+  },
+
+  loadMoreLog: async (repoRoot) => {
+    const card = findCard(get().repos, repoRoot);
+    if (!card || !card.logHasMore || card.logStatus === "loading") return;
+    set((s) => ({
+      repos: mapCard(s.repos, repoRoot, { logStatus: "loading", logError: null }),
+    }));
+    try {
+      const { commits, hasMore } = await window.anchor.history.loadLog(
+        repoRoot,
+        { skip: card.commits.length, limit: 200 },
+      );
+      set((s) => {
+        const cur = findCard(s.repos, repoRoot);
+        const existing = cur?.commits ?? [];
+        const have = new Set(existing.map((c) => c.hash));
+        const appended = commits.filter((c) => !have.has(c.hash));
+        return {
+          repos: mapCard(s.repos, repoRoot, {
+            commits: [...existing, ...appended],
+            logHasMore: hasMore,
+            logStatus: "idle",
+            logError: null,
+          }),
+        };
+      });
+    } catch (err) {
+      set((s) => ({
+        repos: mapCard(s.repos, repoRoot, {
           logStatus: "error",
           logError: err instanceof Error ? err.message : String(err),
         }),
@@ -617,6 +733,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           switchingBranch: false,
           // Invalidate log so next History open reloads for the new branch tip.
           commits: [],
+          logHasMore: false,
           logStatus: "idle",
           logError: null,
           selectedHashes: [],
@@ -634,10 +751,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           }),
         }));
         try {
-          const commits = await window.anchor.history.loadLog(repoRoot);
+          const { commits, hasMore } = await window.anchor.history.loadLog(repoRoot);
           set((s) => ({
             repos: mapCard(s.repos, repoRoot, {
               commits,
+              logHasMore: hasMore,
               logStatus: "idle",
               logError: null,
             }),
@@ -646,6 +764,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           set((s) => ({
             repos: mapCard(s.repos, repoRoot, {
               commits: [],
+              logHasMore: false,
               logStatus: "error",
               logError: err instanceof Error ? err.message : String(err),
             }),
@@ -702,10 +821,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       const next = findCard(get().repos, repoRoot);
       if (next?.historyOpen) {
         try {
-          const commits = await window.anchor.history.loadLog(repoRoot);
+          const { commits, hasMore } = await window.anchor.history.loadLog(repoRoot);
           set((s) => ({
             repos: mapCard(s.repos, repoRoot, {
               commits,
+              logHasMore: hasMore,
               logStatus: "idle",
               logError: null,
             }),

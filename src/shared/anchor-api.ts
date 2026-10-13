@@ -572,7 +572,8 @@ export interface AnchorApi {
     ) => Promise<{ ok: boolean; path?: string }>;
   };
   history: {
-    discover: (workspaceRoot: string) => Promise<RepoInfo[]>;
+    /** Cached per workspace in main; `force` = Rescan. */
+    discover: (workspaceRoot: string, opts?: { force?: boolean }) => Promise<RepoInfo[]>;
     loadLog: (repoRoot: string) => Promise<CommitRow[]>;
     fileBlame: (args: {
       repoRoot: string;

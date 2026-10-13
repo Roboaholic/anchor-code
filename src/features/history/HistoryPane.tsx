@@ -23,6 +23,11 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { isUntrackedDirectoryPath } from "@/core/history/statusParse";
 import type { HistoryCompareEntry } from "@/shared/anchor-api";
 
+/** Quiet status poll while HISTORY is visible. */
+export const HISTORY_POLL_MS = 30_000;
+/** Module-level so effect re-runs (repo count changes) cannot overlap rounds. */
+let historyPollInFlight = false;
+
 export function HistoryPane() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const repos = useHistoryStore((s) => s.repos);
@@ -52,14 +57,14 @@ export function HistoryPane() {
     if (discoverStatus === "loading") return;
 
     let cancelled = false;
-    let inFlight = false;
     const tick = () => {
-      if (cancelled || inFlight) return;
+      // Pane is only mounted while HISTORY is the visible left mode.
+      if (cancelled || historyPollInFlight) return;
       if (document.visibilityState !== "visible") return;
-      inFlight = true;
+      historyPollInFlight = true;
       // Quiet badge refresh only — no commit logs, no loading flicker.
       void softRefreshStatuses().finally(() => {
-        inFlight = false;
+        historyPollInFlight = false;
       });
     };
 
@@ -71,7 +76,7 @@ export function HistoryPane() {
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVis);
-    const interval = window.setInterval(tick, 12_000);
+    const interval = window.setInterval(tick, HISTORY_POLL_MS);
 
     return () => {
       cancelled = true;
@@ -109,7 +114,7 @@ export function HistoryPane() {
         <button
           type="button"
           className="icon-btn"
-          onClick={() => void discover(workspaceRoot)}
+          onClick={() => void discover(workspaceRoot, { force: true })}
           title="Rescan for git roots"
           aria-label="Rescan for git roots"
         >
@@ -129,7 +134,7 @@ export function HistoryPane() {
         <button
           type="button"
           className="icon-btn"
-          onClick={() => void discover(workspaceRoot)}
+          onClick={() => void discover(workspaceRoot, { force: true })}
           title="Rescan for git roots"
           aria-label="Rescan for git roots"
         >

@@ -58,7 +58,8 @@ export interface HistoryState {
   recentCompares: HistoryCompareEntry[];
   toast: string | null;
 
-  discover: (workspaceRoot: string) => Promise<void>;
+  /** Uses the main-process repo cache unless `force` (Rescan). */
+  discover: (workspaceRoot: string, opts?: { force?: boolean }) => Promise<void>;
   refreshStatus: (
     repoRoot: string,
     opts?: { quiet?: boolean; badgeOnly?: boolean },
@@ -227,7 +228,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
   },
 
-  discover: async (workspaceRoot) => {
+  discover: async (workspaceRoot, opts) => {
     set({
       workspaceRoot,
       discoverStatus: "loading",
@@ -238,7 +239,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // Host discovery owns command timeouts. A renderer-side 20s race reported
       // failure while a cold WSL scan was still running, then Rescan started a
       // second overlapping scan. Await the original IPC request to completion.
-      const found = await window.anchor.history.discover(workspaceRoot);
+      const found = opts?.force
+        ? await window.anchor.history.discover(workspaceRoot, { force: true })
+        : await window.anchor.history.discover(workspaceRoot);
       // Keep prior status/branch/UI expand state for roots that still exist.
       // Replacing with emptyCard made every row flash "detached" until status returned.
       const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));

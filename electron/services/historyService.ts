@@ -11,7 +11,7 @@ import {
   statusCounts,
   type StatusEntry,
 } from "../../src/core/history/statusParse.js";
-import type { HostSession } from "../host/types.js";
+import type { HostSession, RunOptions, RunResult } from "../host/types.js";
 import {
   hostBasename,
   hostJoin,
@@ -109,6 +109,33 @@ export interface CommitResult {
   shortHash: string;
   subject: string;
 }
+/**
+ * Run a READ-ONLY command. On WSL prefer `runSearch` (persistent helper /
+ * `wsl.exe --exec`, no login shell); fall back to `host.run` when the helper
+ * path throws or cannot find the command. Writes (checkout/commit/add) must
+ * keep using `host.run`.
+ */
+export async function readRun(
+  host: HostSession,
+  cwd: string,
+  command: string,
+  args: string[],
+  opts?: RunOptions,
+): Promise<RunResult> {
+  const h = host as HostSession & {
+    runSearch?: (c: string, cmd: string, a: string[], o?: RunOptions) => Promise<RunResult>;
+  };
+  if (host.kind === "wsl" && typeof h.runSearch === "function") {
+    try {
+      const r = await h.runSearch(cwd, command, args, opts);
+      if (r.code !== 127) return r;
+    } catch (err) {
+      if (err instanceof HostError && err.code === "timeout") throw err;
+    }
+  }
+  return host.run(cwd, command, args, opts);
+}
+
 async function isGitRoot(host: HostSession, dir: string): Promise<boolean> {
   const gitPath = hostJoin(host.kind, dir, ".git");
   let st: StatLike;
@@ -161,7 +188,7 @@ async function discoverViaFind(
     `done`,
   ].join("\n");
 
-  const result = await host.run(workspaceRoot, "bash", ["-s"], { stdin: script });
+  const result = await readRun(host, workspaceRoot, "bash", ["-s"], { stdin: script });
   // find often exits 0; treat empty+error as failure so caller can decide
   if (!result.stdout.trim() && result.code !== 0) {
     return null;
@@ -277,7 +304,7 @@ export async function loadLog(
   host: HostSession,
   repoRoot: string,
 ): Promise<CommitRow[]> {
-  const result = await host.run(repoRoot, "git", [
+  const result = await readRun(host, repoRoot, "git", [
     "log",
     "--date-order",
     `-n${LOG_LIMIT}`,
@@ -322,7 +349,7 @@ export async function loadFileBlame(
   const args = ["blame", "--line-porcelain"];
   if (revision?.trim() && revision !== "worktree") args.push(revision.trim());
   args.push("--", relativePath);
-  const result = await host.run(root, "git", args);
+  const result = await readRun(host, root, "git", args);
   if (result.code !== 0) return [];
   return parseBlamePorcelain(result.stdout);
 }
@@ -373,7 +400,7 @@ export async function loadRepoStatus(
   // `-b` adds `## branch...upstream [ahead N, behind M]` so we get tracking in one call.
   // `-uall` lists files inside untracked directories; `normal` collapses them to `?? dir/`.
   const badgeOnly = opts?.badgeOnly === true;
-  const result = await host.run(
+  const result = await readRun(host, 
     repoRoot,
     "git",
     [
@@ -419,7 +446,7 @@ async function listUntrackedFiles(
   repoRoot: string,
 ): Promise<string[]> {
   try {
-    const result = await host.run(repoRoot, "git", [
+    const result = await readRun(host, repoRoot, "git", [
       "ls-files",
       "--others",
       "--exclude-standard",
@@ -521,7 +548,7 @@ export async function loadRepoStatusesBulk(
       if (currentRoot) buf.push(line);
     };
 
-    await host.run(roots[0]!, "bash", ["-s"], {
+    await readRun(host, roots[0]!, "bash", ["-s"], {
       stdin: script,
       timeoutMs: opts?.timeoutMs ?? Math.max(45_000, roots.length * 500),
       onStdoutChunk: (chunk) => {
@@ -575,7 +602,7 @@ export async function listBranches(
   host: HostSession,
   repoRoot: string,
 ): Promise<BranchInfo[]> {
-  const result = await host.run(repoRoot, "git", [
+  const result = await readRun(host, repoRoot, "git", [
     "branch",
     "--format=%(refname:short)%09%(HEAD)",
   ]);
@@ -662,7 +689,7 @@ export async function commitChanges(
         add.stderr || add.stdout,
       );
     }
-    const cached = await host.run(repoRoot, "git", [
+    const cached = await readRun(host, repoRoot, "git", [
       "diff",
       "--cached",
       "--quiet",
@@ -707,7 +734,7 @@ export async function commitChanges(
     );
   }
 
-  const rev = await host.run(repoRoot, "git", [
+  const rev = await readRun(host, repoRoot, "git", [
     "log",
     "-1",
     "--format=%H%x09%h%x09%s",
@@ -729,7 +756,7 @@ async function resolveBranch(
   repoRoot: string,
 ): Promise<string | null> {
   try {
-    const r = await host.run(repoRoot, "git", [
+    const r = await readRun(host, repoRoot, "git", [
       "rev-parse",
       "--abbrev-ref",
       "HEAD",
@@ -782,7 +809,7 @@ export async function compareCommits(
   base: string,
   head: string,
 ): Promise<DiffOpenPayload> {
-  const result = await host.run(repoRoot, "git", [
+  const result = await readRun(host, repoRoot, "git", [
     "diff",
     "--name-status",
     base,
@@ -816,7 +843,7 @@ export async function compareToWorktree(
   repoRoot: string,
   base: string,
 ): Promise<DiffOpenPayload> {
-  const result = await host.run(repoRoot, "git", [
+  const result = await readRun(host, repoRoot, "git", [
     "diff",
     "--name-status",
     base,
@@ -851,7 +878,7 @@ async function gitShow(
   repoRoot: string,
   revPath: string,
 ): Promise<string> {
-  const result = await host.run(repoRoot, "git", ["show", revPath]);
+  const result = await readRun(host, repoRoot, "git", ["show", revPath]);
   if (result.code !== 0) {
     return "";
   }
@@ -961,7 +988,7 @@ async function loadBothSidesOnce(
     "",
   ].join("\n");
 
-  const result = await host.run(repoRoot, "bash", ["-s"], {
+  const result = await readRun(host, repoRoot, "bash", ["-s"], {
     stdin: script,
     timeoutMs: 45_000,
   });

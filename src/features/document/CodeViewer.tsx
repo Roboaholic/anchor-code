@@ -26,6 +26,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
+import { openAsk } from "@/features/ask/askStore";
 
 type BubbleState = {
   commentId: string;
@@ -973,6 +974,36 @@ export function CodeViewer({
             }}
           >
             <Icon name="comment" />
+          </button>
+        ) : null}
+        {selToolbar && !composer ? (
+          <button
+            type="button"
+            className="anno-sel-chip anno-sel-chip--ask"
+            style={{ left: selToolbar.left + 32, top: selToolbar.top }}
+            title="Ask agent about selection"
+            aria-label="Ask agent about selection"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const ed = editorRef.current;
+              const sel = ed?.getSelection();
+              const model = ed?.getModel();
+              if (!sel || !model || sel.isEmpty()) return;
+              setSelToolbar(null);
+              openAsk({
+                path,
+                startLine: sel.startLineNumber,
+                endLine: sel.endLineNumber,
+                snippet: model.getValueInRange(sel),
+              });
+            }}
+          >
+            <Icon name="question" />
           </button>
         ) : null}
         {bubble && bubbleComment ? (

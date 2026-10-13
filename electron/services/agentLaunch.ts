@@ -152,12 +152,26 @@ export async function discoverAgentLaunchOptions(
   return result;
 }
 
+/**
+ * CLI flags that keep a session read-only (Ask). Unknown CLIs → [] (prompt-only).
+ * - claude: `--permission-mode plan`
+ * - codex: `--sandbox read-only`
+ * - gemini: `--approval-mode plan`
+ */
+export function agentReadOnlyArgs(profileId: string): string[] {
+  const id = profileId.trim().toLowerCase();
+  if (id === "claude") return ["--permission-mode", "plan"];
+  if (id === "codex") return ["--sandbox", "read-only"];
+  if (id === "gemini") return ["--approval-mode", "plan"];
+  return [];
+}
+
 export function buildAgentLaunchArgs(
   profileId: string,
-  opts: { model?: string; effort?: string; prompt?: string },
+  opts: { model?: string; effort?: string; prompt?: string; readOnly?: boolean },
 ): string[] {
   const id = profileId.trim().toLowerCase();
-  const args: string[] = [];
+  const args: string[] = opts.readOnly ? agentReadOnlyArgs(id) : [];
   const prompt = opts.prompt?.trim();
 
   if (id === "codex") {

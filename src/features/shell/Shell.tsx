@@ -29,6 +29,7 @@ import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
 import { openWorkspaceWithHost } from "./orchestrate";
 import { saveWorkspaceAgents } from "@/features/terminal/terminalStore";
+import { AskDialog } from "@/features/ask/AskDialog";
 
 /**
  * Drive collapsible panel open/closed without remounting siblings.
@@ -644,6 +645,7 @@ export function Shell() {
       <QuickOpenPalette />
 
       <NewAgentDialogHost />
+      <AskDialog />
 
       {/* Floating overlay — not a center tab */}
       <SettingsPanel />

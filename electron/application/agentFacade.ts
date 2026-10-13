@@ -111,6 +111,7 @@ export class AgentFacade {
           model: input.model,
           effort: input.effort,
           prompt: prompt || undefined,
+          readOnly: input.readOnly,
         });
     if (!extra) {
       throw new HostError(

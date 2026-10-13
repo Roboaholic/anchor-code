@@ -1322,8 +1322,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   type="button"
                   className="anno-sel-chip anno-sel-chip--ask"
                   style={{ left: selToolbar.left + 32, top: selToolbar.top }}
-                  title="Ask agent about selection"
-                  aria-label="Ask agent about selection"
+                  title="Ask agent"
+                  aria-label="Ask agent"
                   onMouseDown={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

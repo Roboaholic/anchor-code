@@ -1420,6 +1420,15 @@ body.files-split-resizing .monaco-editor {
   background: var(--bg-panel);
 }
 
+.files-section--tree.is-compact {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.files-section--tree.is-compact .files-tree-scroll {
+  display: none;
+}
+
 .files-section__head {
   display: flex;
   align-items: center;
@@ -8279,9 +8288,7 @@ select.field__input {
 }
 
 /* Ask agent (one-off question about a selection) */
-.anno-sel-chip--ask {
-  color: var(--text);
-}
+/* Ask chip shares .anno-sel-chip styling with the comment chip. */
 .modal--ask {
   width: min(640px, calc(100vw - 48px));
 }

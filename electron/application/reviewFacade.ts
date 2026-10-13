@@ -20,6 +20,7 @@ import {
   compareCommits,
   compareToWorktree,
   discoverRepos,
+  readRun,
   getFileDiff,
   listBranches,
   loadFileBlame,
@@ -124,8 +125,21 @@ export class ReviewFacade {
     return { path: current.path, text: next, changed: next !== current.text };
   }
 
-  repos(root = this.workspace.root()) {
-    return discoverRepos(this.hosts.session, this.workspace.safePath(root));
+  /** Discovered git roots per host session + workspace root (Rescan forces). */
+  private readonly repoCache = new Map<string, Promise<Awaited<ReturnType<typeof discoverRepos>>>>();
+
+  repos(root = this.workspace.root(), opts?: { force?: boolean }) {
+    const host = this.hosts.session;
+    const safe = this.workspace.safePath(root);
+    const key = `${host.id}\0${this.pathKey(safe)}`;
+    const hit = this.repoCache.get(key);
+    if (hit && !opts?.force) return hit;
+    const run = discoverRepos(host, safe);
+    this.repoCache.set(key, run);
+    run.catch(() => {
+      if (this.repoCache.get(key) === run) this.repoCache.delete(key);
+    });
+    return run;
   }
   async log(repoRoot: string) {
     return loadLog(this.hosts.session, await this.approvedRepoRoot(repoRoot));
@@ -202,7 +216,7 @@ export class ReviewFacade {
     const cacheKey = `${this.hosts.session.id}\0${this.pathKey(this.workspace.root())}\0${this.pathKey(candidate)}`;
     if (this.approvedRepoCache.has(cacheKey)) return;
 
-    const result = await this.hosts.session.run(candidate, "git", [
+    const result = await readRun(this.hosts.session, candidate, "git", [
       "rev-parse",
       "--show-toplevel",
     ], { timeoutMs: 10_000 });

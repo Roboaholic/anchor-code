@@ -954,9 +954,11 @@ export function registerIpc(opts: {
   // ── history ────────────────────────────────────────
   ipcMain.handle(
     "history:discover",
-    async (_evt, workspaceRoot: string) => {
+    async (_evt, workspaceRoot: string, opts?: { force?: boolean }) => {
       try {
-        return await application.review.repos(workspaceRoot);
+        return await application.review.repos(workspaceRoot, {
+          force: opts?.force === true,
+        });
       } catch (err) {
         rethrowIpc(err);
       }

@@ -455,8 +455,8 @@ const anchor = {
       ipcRenderer.invoke("workspace:newEntry", { parentDir, name, type }),
   },
   history: {
-    discover: (workspaceRoot: string): Promise<RepoInfo[]> =>
-      ipcRenderer.invoke("history:discover", workspaceRoot),
+    discover: (workspaceRoot: string, opts?: { force?: boolean }): Promise<RepoInfo[]> =>
+      ipcRenderer.invoke("history:discover", workspaceRoot, opts ?? {}),
     loadLog: (repoRoot: string): Promise<CommitRow[]> =>
       ipcRenderer.invoke("history:loadLog", repoRoot),
     fileBlame: (args: {

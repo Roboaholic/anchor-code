@@ -868,8 +868,13 @@ export function FileTree() {
             truncated ? "+" : ""
           }${searchSource ? ` · ${searchSource}` : ""}`;
 
+  /** Filters + open results: Explorer shrinks to its header so results get the space. */
+  const explorerCompact = hasSearchQuery && resultsOpen && filtersOpen;
+
   const explorer = (
-    <section className="files-section files-section--tree">
+    <section
+      className={`files-section files-section--tree${explorerCompact ? " is-compact" : ""}`}
+    >
       <div className="files-section__head-row files-section__head-row--static">
         <div className="files-section__head files-section__head--static">
           <span className="files-section__label">EXPLORER</span>
@@ -1233,8 +1238,8 @@ export function FileTree() {
             style={
               resultsOpen
                 ? filtersOpen
-                  ? // Filters eat vertical space — let results fill what's left.
-                    { height: resultsHeight, flex: "1 1 auto", minHeight: 200 }
+                  ? // Filters eat vertical space — results fill what's left (Explorer collapses).
+                    { flex: "1 1 auto", minHeight: 200 }
                   : { height: resultsHeight, flex: "0 0 auto" }
                 : undefined
             }
@@ -1414,7 +1419,7 @@ export function FileTree() {
             ) : null}
           </div>
 
-          {resultsOpen ? (
+          {resultsOpen && !explorerCompact ? (
             <div
               className="files-split-sash"
               role="separator"

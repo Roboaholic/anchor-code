@@ -483,6 +483,8 @@ export type AgentLaunchOptions = {
   title?: string;
   /** Hidden CLI first-message; preferred over title for agent launch args. */
   prompt?: string;
+  /** Ask: launch with read-only / plan CLI flags when supported. */
+  readOnly?: boolean;
   resumeSessionId?: string;
 };
 
@@ -796,6 +798,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         model: launch?.model,
         effort: launch?.effort,
         prompt: launch?.prompt?.trim() || taskTitle,
+        readOnly: launch?.readOnly,
         resume: Boolean(launch?.resumeSessionId),
         sessionId: launch?.resumeSessionId,
         cols: 80,

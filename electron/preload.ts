@@ -834,6 +834,7 @@ const anchor = {
       model?: string;
       effort?: string;
       prompt?: string;
+      readOnly?: boolean;
       resume?: boolean;
       sessionId?: string;
       cols?: number;

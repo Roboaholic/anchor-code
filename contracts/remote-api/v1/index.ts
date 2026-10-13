@@ -186,6 +186,8 @@ export interface CreateAgentSessionInput {
   model?: string;
   effort?: string;
   prompt?: string;
+  /** Ask: launch with the CLI's read-only / plan flags when supported. */
+  readOnly?: boolean;
   resume?: boolean;
   sessionId?: string;
   cols?: number;

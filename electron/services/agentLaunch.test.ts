@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentReadOnlyArgs,
   bareModelId,
   buildAgentLaunchArgs,
   buildAgentResumeArgs,
@@ -361,5 +362,32 @@ providers:
     expect(models.find((m) => m.id === "sudocode/gpt-5.5")!.efforts).toEqual(
       [],
     );
+  });
+});
+
+describe("read-only launch args (Ask)", () => {
+  it("maps known CLIs to their read-only / plan flags", () => {
+    expect(agentReadOnlyArgs("claude")).toEqual(["--permission-mode", "plan"]);
+    expect(agentReadOnlyArgs("codex")).toEqual(["--sandbox", "read-only"]);
+    expect(agentReadOnlyArgs("gemini")).toEqual(["--approval-mode", "plan"]);
+    expect(agentReadOnlyArgs("grok")).toEqual([]);
+    expect(agentReadOnlyArgs("aider")).toEqual([]);
+  });
+
+  it("puts flags before the prompt only when readOnly", () => {
+    expect(buildAgentLaunchArgs("claude", { prompt: "q", readOnly: true })).toEqual([
+      "--permission-mode",
+      "plan",
+      "q",
+    ]);
+    expect(buildAgentLaunchArgs("codex", { model: "m", prompt: "q", readOnly: true })).toEqual([
+      "--sandbox",
+      "read-only",
+      "-m",
+      "m",
+      "q",
+    ]);
+    expect(buildAgentLaunchArgs("claude", { prompt: "q" })).toEqual(["q"]);
+    expect(buildAgentLaunchArgs("omp", { prompt: "q", readOnly: true })).toEqual(["q"]);
   });
 });

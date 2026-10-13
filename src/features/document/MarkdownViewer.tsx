@@ -30,6 +30,7 @@ import { relativeToRoot } from "@/core/workspace/paths";
 import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
+import { openAsk } from "@/features/ask/askStore";
 
 type ComposerState = MarkdownSourceAnchor & {
   forceNewSession: boolean;
@@ -664,6 +665,39 @@ function RenderedMarkdownPane({
             }}
           >
             <Icon name="comment" />
+          </button>
+        ) : null}
+        {selToolbar && !composer ? (
+          <button
+            type="button"
+            className="anno-sel-chip anno-sel-chip--ask"
+            style={{ left: selToolbar.left + 32, top: selToolbar.top }}
+            title="Ask agent about selection"
+            aria-label="Ask agent about selection"
+            onMouseDown={(e) => {
+              // Same as comment chip: use cached selection before focus collapses it.
+              e.preventDefault();
+              e.stopPropagation();
+              const text = (
+                pendingSelectionTextRef.current ?? selToolbar.text ?? ""
+              ).trim();
+              if (!text) return;
+              const anchor = locateSelectionInMarkdown(content, text);
+              pendingSelectionTextRef.current = null;
+              setSelToolbar(null);
+              openAsk({
+                path,
+                startLine: anchor?.startLine ?? 1,
+                endLine: anchor?.endLine ?? anchor?.startLine ?? 1,
+                snippet: anchor?.selectedText ?? text,
+              });
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <Icon name="question" />
           </button>
         ) : null}
 

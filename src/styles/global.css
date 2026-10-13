@@ -8277,3 +8277,64 @@ select.field__input {
 .files-search-filters__input.is-invalid {
   border-color: var(--danger, #d9534f);
 }
+
+/* Ask agent (one-off question about a selection) */
+.anno-sel-chip--ask {
+  color: var(--text);
+}
+.modal--ask {
+  width: min(640px, calc(100vw - 48px));
+}
+.ask__context {
+  margin: 0 16px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  overflow: hidden;
+}
+.ask__context-meta {
+  display: flex;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.ask__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask__snippet {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre;
+}
+.ask__question {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 32px);
+  margin: 0 16px 10px;
+  padding: 8px 10px;
+  resize: vertical;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.ask__target {
+  max-width: 260px;
+}
+.ask__readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}

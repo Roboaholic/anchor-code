@@ -105,6 +105,25 @@ describe("WslSearchHelperClient (mock protocol)", () => {
     expect(chunks).toEqual(["a:1:x\n"]);
   });
 
+  it("forwards stdin to the helper run payload", async () => {
+    const p = new FakeProc();
+    const c = new WslSearchHelperClient(p);
+    p.reply({ ev: "ready" });
+    await c.ready;
+    const run = c.run("/r", "bash", ["-s"], { stdin: "echo hi\n" });
+    expect(p.sent()[0]).toEqual({
+      op: "run",
+      id: "r1",
+      cwd: "/r",
+      cmd: "bash",
+      args: ["-s"],
+      stdin: "echo hi\n",
+    });
+    p.reply({ id: "r1", ev: "out", data: "hi\n" });
+    p.reply({ id: "r1", ev: "exit", code: 0 });
+    await expect(run).resolves.toEqual({ stdout: "hi\n", stderr: "", code: 0 });
+  });
+
   it("handles JSON lines split across chunks with multi-byte UTF-8", async () => {
     const p = new FakeProc();
     const c = new WslSearchHelperClient(p);
@@ -163,6 +182,9 @@ describe.skipIf(!hasPy)("search helper script (real python3, Linux)", () => {
       await c.ready;
       const r = await c.run(dir, "sh", ["-c", "printf 'héllo\\n'; exit 3"]);
       expect(r).toMatchObject({ stdout: "héllo\n", code: 3 });
+
+      const viaStdin = await c.run(dir, "bash", ["-s"], { stdin: "printf 'from-stdin\\n'" });
+      expect(viaStdin).toMatchObject({ stdout: "from-stdin\n", code: 0 });
 
       const pidFile = path.join(dir, "pid");
       const ctl = new AbortController();

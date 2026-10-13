@@ -260,7 +260,7 @@ export class RemoteRequestHandler {
     }
 
     if (method === "GET" && path === "/api/v1/file-index") {
-      return ok(toRemoteFileIndex(await this.opts.application.review.fileIndex(numberValue(query("maxFiles"), 5000))));
+      return ok(toRemoteFileIndex(await this.opts.application.review.fileIndex(numberValue(query("maxFiles"), 200_000))));
     }
 
     if (method === "GET" && path === "/api/v1/search") {

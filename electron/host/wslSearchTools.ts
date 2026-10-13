@@ -58,13 +58,24 @@ def pump(rid, stream, ev):
         emit({"id": rid, "ev": ev, "data": tail})
 def run(msg):
     rid = msg["id"]
+    raw_in = msg.get("stdin")
     try:
         p = subprocess.Popen([msg["cmd"]] + list(msg.get("args") or []), cwd=msg.get("cwd") or "/",
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            stdin=subprocess.PIPE if raw_in is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     except OSError as e:
         emit({"id": rid, "ev": "err", "data": str(e)})
         emit({"id": rid, "ev": "exit", "code": 127})
         return
+    if raw_in is not None and p.stdin is not None:
+        try:
+            p.stdin.write(raw_in.encode("utf-8") if isinstance(raw_in, str) else raw_in)
+        except OSError:
+            pass
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
     procs[rid] = p
     t1 = threading.Thread(target=pump, args=(rid, p.stdout, "out"), daemon=True)
     t2 = threading.Thread(target=pump, args=(rid, p.stderr, "err"), daemon=True)
@@ -347,7 +358,16 @@ export class WslSearchHelperClient {
           );
         }, timeoutMs);
       }
-      this.send({ op: "run", id, cwd, cmd: command, args });
+      const payload: {
+        op: string;
+        id: string;
+        cwd: string;
+        cmd: string;
+        args: string[];
+        stdin?: string;
+      } = { op: "run", id, cwd, cmd: command, args };
+      if (opts?.stdin != null) payload.stdin = opts.stdin;
+      this.send(payload);
     });
   }
 }

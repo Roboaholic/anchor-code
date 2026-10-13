@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type { HostSession } from "../host/types.js";
+import type { HostSession, RunOptions, RunResult } from "../host/types.js";
 import {
   hostBasename,
   hostJoin,
@@ -41,7 +41,7 @@ const SKIP_DIR_NAMES = new Set([
   "external",
 ]);
 
-const DEFAULT_MAX_FILES = 200_000;
+export const DEFAULT_MAX_FILES = 200_000;
 const DEFAULT_MAX_DEPTH = 32;
 const WALK_CONCURRENCY = 8;
 const GIT_SCAN_DEPTH = 8;
@@ -63,15 +63,68 @@ export interface FindFilesResult {
  * 2) multi-repo one-shot discover+ls-files (WSL/SSH), with disk cache
  * Fall back to concurrent listDir walk.
  */
+export interface FindFilesOptions {
+  maxFiles?: number;
+  maxDepth?: number;
+  query?: string;
+  /**
+   * Extra directory names to prune during walk / find (merged with SKIP_DIR_NAMES).
+   * Plain names only — no globs. Used to honor workspace defaults / .anchorignore.
+   */
+  pruneDirNames?: string[];
+}
+
+/**
+ * Prefer WSL `runSearch` (persistent helper / no login shell) when available;
+ * otherwise `host.run`. Keeps Local/SSH behavior unchanged.
+ */
+async function hostRun(
+  host: HostSession,
+  cwd: string,
+  command: string,
+  args: string[],
+  opts?: RunOptions,
+): Promise<RunResult> {
+  const h = host as HostSession & {
+    runSearch?: (
+      cwd: string,
+      command: string,
+      args: string[],
+      opts?: RunOptions,
+    ) => Promise<RunResult>;
+  };
+  if (typeof h.runSearch === "function") {
+    try {
+      return await h.runSearch(cwd, command, args, opts);
+    } catch {
+      // Helper died or unavailable — fall back to login-shell run.
+    }
+  }
+  return host.run(cwd, command, args, opts);
+}
+
+function pruneSet(extra?: string[]): Set<string> {
+  const set = new Set(SKIP_DIR_NAMES);
+  if (extra) {
+    for (const raw of extra) {
+      const name = raw.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+      if (!name || name.includes("/") || /[*?[\]{}]/.test(name)) continue;
+      set.add(name);
+    }
+  }
+  return set;
+}
+
 export async function findWorkspaceFiles(
   host: HostSession,
   root: string,
-  opts?: { maxFiles?: number; maxDepth?: number; query?: string },
+  opts?: FindFilesOptions,
 ): Promise<FindFilesResult> {
   const maxFiles = opts?.maxFiles ?? DEFAULT_MAX_FILES;
   const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_DEPTH;
   const query = opts?.query?.trim().toLowerCase() || undefined;
   const workspace = hostNormalize(host.kind, root);
+  const skipDirs = pruneSet(opts?.pruneDirNames);
 
   const cached = query ? null : await readDiskCache(host.kind, workspace, maxFiles);
   if (cached) return cached;
@@ -85,14 +138,20 @@ export async function findWorkspaceFiles(
   }
 
   if (host.kind === "wsl" || host.kind === "ssh") {
-    const oneShot = await multiRepoIndexOneShot(host, workspace, maxFiles, query);
+    const oneShot = await multiRepoIndexOneShot(
+      host,
+      workspace,
+      maxFiles,
+      query,
+      skipDirs,
+    );
     if (oneShot && oneShot.files.length > 0) {
       if (!query) await writeDiskCache(host.kind, workspace, maxFiles, oneShot);
       return oneShot;
     }
   }
 
-  const nested = await discoverNestedGitRoots(host, workspace);
+  const nested = await discoverNestedGitRoots(host, workspace, skipDirs);
   if (nested.length > 0) {
     const multi = await mergeGitRepos(host, workspace, nested, maxFiles, query);
     if (multi.files.length > 0) {
@@ -101,7 +160,14 @@ export async function findWorkspaceFiles(
     }
   }
 
-  const walked = await walkFiles(host, workspace, maxFiles, maxDepth, query);
+  const walked = await walkFiles(
+    host,
+    workspace,
+    maxFiles,
+    maxDepth,
+    query,
+    skipDirs,
+  );
   if (!query) await writeDiskCache(host.kind, workspace, maxFiles, walked);
   return walked;
 }
@@ -112,7 +178,7 @@ function cacheDir(): string {
 
 function cacheKey(hostKind: string, workspace: string, maxFiles: number): string {
   return createHash("sha1")
-    .update(`${hostKind}\0${workspace}\0${maxFiles}\0v3-cached`)
+    .update(`${hostKind}\0${workspace}\0${maxFiles}\0v4-index`)
     .digest("hex");
 }
 
@@ -214,10 +280,11 @@ async function multiRepoIndexOneShot(
   workspaceRoot: string,
   maxFiles: number,
   query?: string,
+  skipDirs: Set<string> = SKIP_DIR_NAMES,
 ): Promise<FindFilesResult | null> {
   const maxdepth = String(GIT_SCAN_DEPTH + 1);
   const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
-  const pruneNames = [...SKIP_DIR_NAMES].filter((d) => d !== ".git");
+  const pruneNames = [...skipDirs].filter((d) => d !== ".git");
   const pruneExpr = pruneNames.map((d) => `-name ${d}`).join(" -o ");
   const script = [
     `ws='${rootQ}'`,
@@ -239,7 +306,7 @@ async function multiRepoIndexOneShot(
 
   try {
     const t0 = Date.now();
-    const result = await host.run(workspaceRoot, "bash", ["-s"], {
+    const result = await hostRun(host, workspaceRoot, "bash", ["-s"], {
       stdin: script,
       timeoutMs: 90_000,
     });
@@ -298,21 +365,23 @@ function parsePrefixedLsFiles(
 async function discoverNestedGitRoots(
   host: HostSession,
   workspaceRoot: string,
+  skipDirs: Set<string> = SKIP_DIR_NAMES,
 ): Promise<string[]> {
   if (host.kind === "wsl" || host.kind === "ssh") {
-    const viaFind = await discoverGitRootsViaFind(host, workspaceRoot);
+    const viaFind = await discoverGitRootsViaFind(host, workspaceRoot, skipDirs);
     if (viaFind) return viaFind;
   }
-  return walkDiscoverGitRoots(host, workspaceRoot);
+  return walkDiscoverGitRoots(host, workspaceRoot, skipDirs);
 }
 
 async function discoverGitRootsViaFind(
   host: HostSession,
   workspaceRoot: string,
+  skipDirs: Set<string> = SKIP_DIR_NAMES,
 ): Promise<string[] | null> {
   const maxdepth = String(GIT_SCAN_DEPTH + 1);
   const rootQ = workspaceRoot.replace(/'/g, `'\\''`);
-  const pruneNames = [...SKIP_DIR_NAMES].filter((d) => d !== ".git");
+  const pruneNames = [...skipDirs].filter((d) => d !== ".git");
   const pruneExpr = pruneNames.map((d) => `-name ${d}`).join(" -o ");
   const script = [
     `root='${rootQ}'`,
@@ -323,7 +392,7 @@ async function discoverGitRootsViaFind(
   ].join("\n");
 
   try {
-    const result = await host.run(workspaceRoot, "bash", ["-s"], {
+    const result = await hostRun(host, workspaceRoot, "bash", ["-s"], {
       stdin: script,
       timeoutMs: 60_000,
     });
@@ -349,6 +418,7 @@ async function discoverGitRootsViaFind(
 async function walkDiscoverGitRoots(
   host: HostSession,
   workspaceRoot: string,
+  skipDirs: Set<string> = SKIP_DIR_NAMES,
 ): Promise<string[]> {
   const roots: string[] = [];
   type Job = { dir: string; depth: number };
@@ -364,7 +434,7 @@ async function walkDiscoverGitRoots(
     }
     for (const e of entries) {
       if (e.type !== "dir") continue;
-      if (SKIP_DIR_NAMES.has(e.name)) continue;
+      if (skipDirs.has(e.name)) continue;
       if (e.name.startsWith(".") && e.name !== ".git") continue;
       const child = hostJoin(host.kind, job.dir, e.name);
       if (await isUsableGitRoot(host, child)) {
@@ -408,7 +478,7 @@ async function tryGitLsFiles(
     const args = includeUntracked
       ? ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
       : ["ls-files", "-z", "--cached"];
-    const r = await host.run(repoRoot, "git", args);
+    const r = await hostRun(host, repoRoot, "git", args);
     if (r.code !== 0) return null;
     const raw = r.stdout;
     if (!raw) {
@@ -523,7 +593,7 @@ async function bulkGitLsFiles(
   ].join("\n");
 
   try {
-    const result = await host.run(workspaceRoot, "bash", ["-s"], {
+    const result = await hostRun(host, workspaceRoot, "bash", ["-s"], {
       stdin: script,
       timeoutMs: Math.max(60_000, orderedRoots.length * 400),
     });
@@ -540,6 +610,7 @@ async function walkFiles(
   maxFiles: number,
   maxDepth: number,
   query?: string,
+  skipDirs: Set<string> = SKIP_DIR_NAMES,
 ): Promise<FindFilesResult> {
   const files: string[] = [];
   let truncated = false;
@@ -574,7 +645,7 @@ async function walkFiles(
       const abs = hostJoin(host.kind, job.abs, ent.name);
       const rel = job.rel ? `${job.rel}/${ent.name}` : ent.name;
       if (ent.type === "dir") {
-        if (SKIP_DIR_NAMES.has(ent.name)) continue;
+        if (skipDirs.has(ent.name)) continue;
         dirs.push({ abs, rel, depth: job.depth + 1 });
       } else if (ent.type === "file") {
         const normalizedRel = rel.replace(/\\/g, "/");

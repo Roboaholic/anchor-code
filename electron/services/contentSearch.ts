@@ -492,7 +492,7 @@ function normalizeOpts(
 const anchorIgnoreCache = new Map<string, { at: number; patterns: string[] }>();
 const ANCHOR_IGNORE_TTL_MS = 3_000;
 
-async function loadAnchorIgnore(host: HostSession, root: string): Promise<string[]> {
+export async function loadAnchorIgnore(host: HostSession, root: string): Promise<string[]> {
   const key = `${host.id}:${root}`;
   const hit = anchorIgnoreCache.get(key);
   if (hit && Date.now() - hit.at < ANCHOR_IGNORE_TTL_MS) return hit.patterns;

@@ -1,11 +1,16 @@
 import type { HostManager } from "../host/hostManager.js";
 import { HostError } from "../host/types.js";
-import { findWorkspaceFiles } from "../services/fileIndex.js";
+import {
+  DEFAULT_MAX_FILES,
+  findWorkspaceFiles,
+} from "../services/fileIndex.js";
 import {
   ANCHOR_IGNORE_FILE,
   DEFAULT_EXCLUDES,
   invalidateAnchorIgnoreCache,
+  loadAnchorIgnore,
   mergeAnchorIgnore,
+  pathMatchesGlobs,
   searchWorkspaceContent,
 } from "../services/contentSearch.js";
 import { hostJoin } from "../host/paths.js";
@@ -52,8 +57,36 @@ export class ReviewFacade {
     };
   }
 
-  fileIndex(maxFiles = 5000, root = this.workspace.root(), query?: string) {
-    return findWorkspaceFiles(this.hosts.session, root, { maxFiles, query });
+  async fileIndex(
+    maxFiles = DEFAULT_MAX_FILES,
+    root = this.workspace.root(),
+    query?: string,
+    opts?: {
+      defaultExcludes?: string[];
+      respectIgnore?: boolean;
+    },
+  ) {
+    const respectIgnore = opts?.respectIgnore !== false;
+    const defaults = respectIgnore
+      ? (opts?.defaultExcludes ?? DEFAULT_EXCLUDES)
+      : [];
+    const anchorIgnore = respectIgnore
+      ? await loadAnchorIgnore(this.hosts.session, root)
+      : [];
+    const exclude = [...defaults, ...anchorIgnore];
+    const pruneDirNames = exclude.filter(
+      (p) => p && !p.includes("/") && !/[*?[\]{}]/.test(p),
+    );
+    const result = await findWorkspaceFiles(this.hosts.session, root, {
+      maxFiles,
+      query,
+      pruneDirNames,
+    });
+    if (exclude.length === 0) return result;
+    const files = result.files.filter((f) =>
+      pathMatchesGlobs(f.replace(/\\/g, "/"), [], exclude),
+    );
+    return { ...result, files };
   }
 
   search(

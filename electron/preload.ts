@@ -338,6 +338,8 @@ const anchor = {
       root?: string;
       maxFiles?: number;
       query?: string;
+      defaultExcludes?: string[];
+      respectIgnore?: boolean;
     }): Promise<{
       root: string;
       files: string[];

@@ -11,8 +11,14 @@ import { joinPath } from "@/core/workspace/paths";
 import { rankFuzzyPaths, type FuzzyMatch } from "@/core/workspace/fuzzy";
 import { Icon } from "@/shared/Icon";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import {
+  loadSearchSettings,
+} from "@/features/files/searchResults";
 import { openFileFromTree } from "./orchestrate";
 import { useShellStore, type PaletteMode } from "./shellStore";
+
+/** Keep in sync with electron/services/fileIndex.ts DEFAULT_MAX_FILES. */
+const FILE_INDEX_MAX_FILES = 200_000;
 const FILE_INDEX_CACHE_TTL_MS = 5 * 60_000;
 
 type IndexCache = {
@@ -26,6 +32,18 @@ type IndexCache = {
 const fileIndexCache = new Map<string, IndexCache>();
 /** In-flight warm so open-workspace + first Ctrl+P share one findFiles. */
 const fileIndexInflight = new Map<string, Promise<IndexCache>>();
+
+function findFilesArgs(root: string, extra?: { query?: string }) {
+  const st = loadSearchSettings(root);
+  return {
+    root,
+    maxFiles: FILE_INDEX_MAX_FILES,
+    query: extra?.query,
+    respectIgnore: st.respectIgnore,
+    defaultExcludes: st.defaultExcludes ?? undefined,
+  };
+}
+
 
 async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
   const cached = fileIndexCache.get(root);
@@ -49,7 +67,7 @@ async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
   }
 
   const run = (async (): Promise<IndexCache> => {
-    const result = await window.anchor.workspace.findFiles({ root });
+    const result = await window.anchor.workspace.findFiles(findFilesArgs(root));
     const next: IndexCache = {
       root: result.root,
       files: result.files,
@@ -231,7 +249,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
     const timer = window.setTimeout(() => {
       setQueryLoading(true);
       void window.anchor.workspace
-        .findFiles({ root: workspaceRoot, query: normalizedQuery })
+        .findFiles(findFilesArgs(workspaceRoot, { query: normalizedQuery }))
         .then((result) => {
           if (!cancelled) setQueryFiles(result.files);
         })
@@ -338,6 +356,9 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
           {indexMs != null ? ` · ${indexMs}ms` : ""}
           {truncated && !query.trim() ? " · index truncated" : ""}
           {queryLoading ? " · searching full index" : ""}
+          {loadSearchSettings(workspaceRoot).respectIgnore
+            ? " · excludes via .anchorignore / workspace defaults"
+            : ""}
         </p>
       ) : null}
 

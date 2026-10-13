@@ -13,6 +13,7 @@ import {
   openWorkspacePath,
 } from "@/features/shell/orchestrate";
 import {
+  applyFileIndexDelta,
   invalidateFileIndexCache,
   warmFileIndexCache,
 } from "@/features/shell/QuickOpen";
@@ -38,7 +39,7 @@ import {
   type SearchHit,
 } from "./searchResults";
 
-/** Results page size; "Show more" raises the cap by this much. */
+/** Results page size; "Show more" fetches the next page via skipHits. */
 const SEARCH_PAGE = 2_000;
 /** Fixed row height (px) for the virtualized results list. */
 const SEARCH_ROW_HEIGHT = 22;
@@ -110,7 +111,6 @@ export function FileTree() {
   const [defaultsEditorOpen, setDefaultsEditorOpen] = useState(false);
   const [defaultsDraft, setDefaultsDraft] = useState("");
   const [ignoreNotice, setIgnoreNotice] = useState<string | null>(null);
-  const [maxResults, setMaxResults] = useState(SEARCH_PAGE);
   const settingsLoadedFor = useRef<string | null>(null);
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -176,10 +176,34 @@ export function FileTree() {
   useEffect(() => {
     if (!workspaceRoot) return;
     const off =
-      window.anchor?.workspace?.onFileChange?.(({ dir }) => {
+      window.anchor?.workspace?.onFileChange?.(({ dir, changes }) => {
         void refreshDir(dir);
-        invalidateFileIndexCache(workspaceRoot);
-        warmFileIndexCache(workspaceRoot);
+        if (changes && changes.length > 0) {
+          void (async () => {
+            const deltas: { rel: string; exists: boolean }[] = [];
+            for (const c of changes) {
+              let exists = false;
+              try {
+                const st = await window.anchor.workspace.stat(c.path);
+                exists = st.isFile;
+              } catch {
+                exists = false;
+              }
+              // Directories: ignore for the file index (listing is files only).
+              if (exists || c.eventType === "rename") {
+                deltas.push({ rel: c.rel, exists });
+              }
+            }
+            if (deltas.length) applyFileIndexDelta(workspaceRoot, deltas);
+            else {
+              invalidateFileIndexCache(workspaceRoot);
+              warmFileIndexCache(workspaceRoot);
+            }
+          })();
+        } else {
+          invalidateFileIndexCache(workspaceRoot);
+          warmFileIndexCache(workspaceRoot);
+        }
       }) ?? (() => undefined);
     return off;
   }, [workspaceRoot, refreshDir]);
@@ -438,9 +462,14 @@ export function FileTree() {
         excludeRegex: string;
         defaultExcludes: string[] | null;
         maxResults: number;
+        /** When set, keep existing hits and only stream the next page. */
+        skipHits?: number;
+        append?: boolean;
       },
     ) => {
       const q = raw.trim();
+      const append = opts.append === true;
+      const skipHits = Math.max(0, opts.skipHits ?? 0);
       const gen = ++searchGen.current;
       // Cancel the previous backend search right away (main also auto-cancels).
       if (activeRequestId.current) {
@@ -458,11 +487,13 @@ export function FileTree() {
       }
       setSearching(true);
       setSearchError(null);
-      // Clear previous results immediately so streaming replaces, not appends.
-      setGroups([]);
-      setTruncated(false);
-      setSearchSource(null);
-      setCollapsedFiles(new Set());
+      if (!append) {
+        // Clear previous results immediately so streaming replaces, not appends.
+        setGroups([]);
+        setTruncated(false);
+        setSearchSource(null);
+        setCollapsedFiles(new Set());
+      }
 
       const requestId = `ui-${gen}-${Date.now()}`;
       activeRequestId.current = requestId;
@@ -514,6 +545,7 @@ export function FileTree() {
           root: workspaceRoot,
           query: q,
           maxResults,
+          skipHits: skipHits || undefined,
           include: opts.include,
           exclude: excludeList,
           useRegex: opts.useRegex,
@@ -533,8 +565,12 @@ export function FileTree() {
         }
         flushPending();
         // Streaming is authoritative; the final set only repairs a lost batch.
-        if (result.hits.length > streamed) {
+        if (!append && result.hits.length > streamed) {
           setGroups(groupHitsByFile(result.hits.slice(0, maxResults)));
+        } else if (append && result.hits.length > streamed) {
+          setGroups((prev) =>
+            appendHitsToGroups(prev, result.hits.slice(streamed, maxResults)),
+          );
         }
         setTruncated(result.truncated);
         setSearchSource(result.source);
@@ -566,11 +602,6 @@ export function FileTree() {
     setTruncated(true);
   }, []);
 
-  // A new query / filter set starts again from the first page.
-  useEffect(() => {
-    setMaxResults(SEARCH_PAGE);
-  }, [query, include, exclude, useRegex, caseSensitive, respectIgnore, excludeRegex, defaultExcludes, workspaceRoot]);
-
   useEffect(() => {
     if (!workspaceRoot) {
       setQuery("");
@@ -588,7 +619,7 @@ export function FileTree() {
         respectIgnore,
         excludeRegex,
         defaultExcludes,
-        maxResults,
+        maxResults: SEARCH_PAGE,
       });
     }, 100);
     return () => window.clearTimeout(t);
@@ -601,7 +632,6 @@ export function FileTree() {
     respectIgnore,
     excludeRegex,
     defaultExcludes,
-    maxResults,
     workspaceRoot,
     runSearch,
   ]);
@@ -1353,12 +1383,25 @@ export function FileTree() {
                       );
                     })}
                 </div>
-                {!searching && truncated && hitCount >= maxResults ? (
+                {!searching && truncated ? (
                   <div className="files-search-results__more">
                     <button
                       type="button"
                       className="btn btn--small"
-                      onClick={() => setMaxResults((n) => n + SEARCH_PAGE)}
+                      onClick={() => {
+                        void runSearch(query, {
+                          include,
+                          exclude,
+                          useRegex,
+                          caseSensitive,
+                          respectIgnore,
+                          excludeRegex,
+                          defaultExcludes,
+                          maxResults: SEARCH_PAGE,
+                          skipHits: hitCount,
+                          append: true,
+                        });
+                      }}
                     >
                       Show more (+{SEARCH_PAGE})
                     </button>

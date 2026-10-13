@@ -24,6 +24,8 @@ export interface ContentSearchHit {
 }
 
 export interface ContentSearchOptions {
+  /** Skip the first N matching hits (Show more / pagination). */
+  skipHits?: number;
   maxResults?: number;
   caseSensitive?: boolean;
   /** Use regular expression instead of fixed-string match. */
@@ -330,13 +332,17 @@ export function createGrepHitStreamer(
   onHits?: (hits: ContentSearchHit[]) => void,
   /** Extra path predicate (regex exclude, .anchorignore post-filter). */
   accept?: (relPath: string) => boolean,
+  /** Skip the first N matching hits before collecting (Show more). */
+  skipHits = 0,
 ): {
   feed: (stdout: string) => boolean;
   hits: () => ContentSearchHit[];
 } {
   let processedLen = 0;
   let carry = "";
+  let skipped = 0;
   const all: ContentSearchHit[] = [];
+  const skip = Math.max(0, skipHits | 0);
   return {
     hits: () => all,
     feed: (stdout: string) => {
@@ -352,6 +358,10 @@ export function createGrepHitStreamer(
         if (!hit) continue;
         if (!pathMatchesGlobs(hit.path, include, exclude)) continue;
         if (accept && !accept(hit.path)) continue;
+        if (skipped < skip) {
+          skipped += 1;
+          continue;
+        }
         all.push(hit);
         batch.push(hit);
       }
@@ -378,6 +388,7 @@ function attachGrepStream(
     o.exclude,
     onHits,
     (p) => o.accept(p, engine),
+    o.skipHits,
   );
   return {
     streamer,
@@ -440,6 +451,7 @@ function normalizeOpts(
   ignoreFile: string | null;
   anchorIgnore: string[];
   signal?: AbortSignal;
+  skipHits: number;
   accept: (relPath: string, engine: "rg" | "other") => boolean;
 } {
   const include = splitPatterns(opts?.include);
@@ -484,6 +496,7 @@ function normalizeOpts(
     ignoreFile: anchorIgnore.length > 0 ? ANCHOR_IGNORE_FILE : null,
     anchorIgnore,
     signal: opts?.signal,
+    skipHits: Math.max(0, Math.floor(opts?.skipHits ?? 0)),
     accept,
   };
 }
@@ -1093,6 +1106,8 @@ async function scanFiles(
   const hits: ContentSearchHit[] = [];
   let truncated = index.truncated;
   let next = 0;
+  let skipped = 0;
+  const skipNeed = o.skipHits;
 
   async function worker() {
     while (hits.length < o.maxResults) {
@@ -1124,6 +1139,10 @@ async function scanFiles(
           }
           const line = lines[li] ?? "";
           if (!matcher(line)) continue;
+          if (skipped < skipNeed) {
+            skipped += 1;
+            continue;
+          }
           const hit: ContentSearchHit = {
             path: norm,
             line: li + 1,

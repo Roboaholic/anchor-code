@@ -25,6 +25,7 @@ import {
   listBranches,
   loadFileBlame,
   loadLog,
+  loadRepoExpandBundle,
   loadRepoStatus,
   loadRepoStatusesBulk,
 } from "../services/historyService.js";
@@ -141,8 +142,18 @@ export class ReviewFacade {
     });
     return run;
   }
-  async log(repoRoot: string) {
-    return loadLog(this.hosts.session, await this.approvedRepoRoot(repoRoot));
+  async log(
+    repoRoot: string,
+    opts?: { limit?: number; skip?: number; since?: string },
+  ) {
+    return loadLog(this.hosts.session, await this.approvedRepoRoot(repoRoot), opts);
+  }
+  async expandBundle(repoRoot: string, opts?: { logLimit?: number }) {
+    return loadRepoExpandBundle(
+      this.hosts.session,
+      await this.approvedRepoRoot(repoRoot),
+      opts,
+    );
   }
   async blame(repoRoot: string, filePath: string, revision?: string) {
     const root = await this.approvedRepoRoot(repoRoot);

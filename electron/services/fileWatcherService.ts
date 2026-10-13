@@ -20,6 +20,8 @@ export class FileWatcherService {
   private root: string | null = null;
   /** Per-directory debounce timers so a burst of events coalesces into one dir change. */
   private pending = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Pending path deltas coalesced with the directory refresh. */
+  private pendingDelta = new Map<string, { rel: string; abs: string; eventType: string }>();
   /** True after stop(); suppresses the self-rebuild after an error. */
   private disposed = false;
 
@@ -68,10 +70,12 @@ export class FileWatcherService {
       this.watcher = watch(
         root,
         { recursive: true },
-        (_eventType, filename) => {
+        (eventType, filename) => {
           if (!filename) return;
-          const dir = path.dirname(path.join(root, filename));
-          this.schedule(dir);
+          const abs = path.join(root, filename);
+          const dir = path.dirname(abs);
+          const rel = filename.replace(/\\/g, "/");
+          this.schedule(dir, { rel, abs, eventType: eventType === "rename" ? "rename" : "change" });
         },
       );
     } catch (err) {
@@ -99,12 +103,34 @@ export class FileWatcherService {
   }
 
   /** Debounce a directory change: coalesce burst events, then notify once. */
-  private schedule(dir: string): void {
+  private schedule(
+    dir: string,
+    delta?: { rel: string; abs: string; eventType: string },
+  ): void {
+    if (delta?.rel) this.pendingDelta.set(delta.rel, delta);
     const existing = this.pending.get(dir);
     if (existing) clearTimeout(existing);
     const t = setTimeout(() => {
       this.pending.delete(dir);
-      this.send("fileWatcher:change", { dir });
+      const changes: { rel: string; abs: string; eventType: string }[] = [];
+      for (const [rel, d] of [...this.pendingDelta.entries()]) {
+        // Flush deltas under this directory (or any if single root watch).
+        if (
+          path.dirname(path.join(this.root ?? "", rel)) === dir ||
+          path.normalize(path.dirname(d.abs)) === path.normalize(dir)
+        ) {
+          changes.push(d);
+          this.pendingDelta.delete(rel);
+        }
+      }
+      this.send("fileWatcher:change", {
+        dir,
+        changes: changes.map((c) => ({
+          path: c.abs,
+          rel: c.rel,
+          eventType: c.eventType,
+        })),
+      });
     }, 300);
     this.pending.set(dir, t);
   }
@@ -113,6 +139,7 @@ export class FileWatcherService {
     this.disposed = true;
     for (const t of this.pending.values()) clearTimeout(t);
     this.pending.clear();
+    this.pendingDelta.clear();
     if (this.watcher) {
       try {
         this.watcher.close();

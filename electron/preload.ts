@@ -365,6 +365,8 @@ const anchor = {
       defaultExcludes?: string[];
       /** Path regex post-filter (display only, no speedup). */
       excludeRegex?: string;
+      /** Skip first N hits then collect maxResults (Show more). */
+      skipHits?: number;
       requestId?: string;
     }): Promise<{
       root: string;
@@ -431,7 +433,10 @@ const anchor = {
       ipcRenderer.invoke("fileWatcher:stop"),
     /** A directory's contents changed (debounced by the main process). */
     onFileChange: (
-      cb: (payload: { dir: string }) => void,
+      cb: (payload: {
+        dir: string;
+        changes?: { path: string; rel: string; eventType: string }[];
+      }) => void,
     ): (() => void) => {
       const listener = (_e: IpcRendererEvent, payload: { dir: string }) =>
         cb(payload);
@@ -457,8 +462,31 @@ const anchor = {
   history: {
     discover: (workspaceRoot: string, opts?: { force?: boolean }): Promise<RepoInfo[]> =>
       ipcRenderer.invoke("history:discover", workspaceRoot, opts ?? {}),
-    loadLog: (repoRoot: string): Promise<CommitRow[]> =>
-      ipcRenderer.invoke("history:loadLog", repoRoot),
+    loadLog: (
+      repoRoot: string,
+      opts?: { limit?: number; skip?: number; since?: string },
+    ): Promise<{ commits: CommitRow[]; hasMore: boolean }> =>
+      ipcRenderer.invoke("history:loadLog", repoRoot, opts ?? {}),
+    expandBundle: (
+      repoRoot: string,
+      opts?: { logLimit?: number },
+    ): Promise<{
+      head: string;
+      commits: CommitRow[];
+      hasMore: boolean;
+      status: {
+        repoRoot: string;
+        entries: { path: string; status: string; code: string }[];
+        modified: number;
+        added: number;
+        deleted: number;
+        untracked: number;
+        branch: string | null;
+        ahead: number | null;
+        behind: number | null;
+      };
+      branches: Array<{ name: string; current: boolean }>;
+    }> => ipcRenderer.invoke("history:expandBundle", repoRoot, opts ?? {}),
     fileBlame: (args: {
       repoRoot: string;
       filePath: string;

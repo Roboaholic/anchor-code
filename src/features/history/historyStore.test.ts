@@ -86,7 +86,14 @@ function mockAnchor(opts?: {
     anchor: {
       history: {
         discover: vi.fn(async () => discover),
-        loadLog: vi.fn(async () => log),
+        loadLog: vi.fn(async () => ({ commits: log, hasMore: false })),
+        expandBundle: vi.fn(async (root: string) => ({
+          head: log[0]?.hash ?? "",
+          commits: log,
+          hasMore: false,
+          status: { ...status, repoRoot: root },
+          branches,
+        })),
         status: vi.fn(async (root: string) => ({ ...status, repoRoot: root })),
         listBranches: vi.fn(async () => branches),
         checkout: vi.fn(async ({ branch }: { branch: string }) => {

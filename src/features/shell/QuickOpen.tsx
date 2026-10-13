@@ -386,8 +386,9 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
       ) : null}
       {!loading && !error && workspaceRoot ? (
         <p className="quick-open__status">
-          {matches.length} match{matches.length === 1 ? "" : "es"}
-          {query.trim() ? "" : ` · ${files.length.toLocaleString()} files`}
+          {query.trim()
+            ? `${matches.length} match${matches.length === 1 ? "" : "es"}`
+            : `Showing ${matches.length.toLocaleString()} of ${files.length.toLocaleString()} files`}
           {source ? ` · via ${source}` : ""}
           {indexMs != null ? ` · ${indexMs}ms` : ""}
           {truncated && !query.trim() ? " · index truncated" : ""}

@@ -250,7 +250,11 @@ export function TopBar() {
 
   const closeWorkspaceEntry = async (workspace: WorkspaceInstance) => {
     const { closeWorkspace } = await import("./orchestrate");
-    await closeWorkspace(workspace.id);
+    try {
+      await closeWorkspace(workspace.id);
+    } finally {
+      setWorkspaceMenuOpen(false);
+    }
   };
 
   const openWorkspaceEntry = async (workspace: WorkspaceInstance) => {

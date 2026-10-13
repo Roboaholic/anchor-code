@@ -1311,6 +1311,9 @@ button.search-field:hover {
   gap: 4px;
   margin: 0 8px 8px;
   flex-shrink: 0;
+  /* Compact: never push search results below ~200px; scroll inside instead. */
+  max-height: 38%;
+  overflow-y: auto;
 }
 
 .files-search-filters__row {

@@ -1232,7 +1232,10 @@ export function FileTree() {
             className={`files-search-results${resultsOpen ? " is-open" : ""}`}
             style={
               resultsOpen
-                ? { height: resultsHeight, flex: "0 0 auto" }
+                ? filtersOpen
+                  ? // Filters eat vertical space — let results fill what's left.
+                    { height: resultsHeight, flex: "1 1 auto", minHeight: 200 }
+                  : { height: resultsHeight, flex: "0 0 auto" }
                 : undefined
             }
           >

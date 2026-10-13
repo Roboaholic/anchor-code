@@ -124,4 +124,64 @@ describe("findWorkspaceFiles", () => {
     expect(result.files).toContain("hardware/chip/src/AmbaRTSL_SPI.c");
     expect(result.files).toContain("common/svc/readme.md");
   });
+
+  it("prunes extra dir names from walk (workspace / .anchorignore plain names)", async () => {
+    await fs.mkdir(path.join(tmp, "src"), { recursive: true });
+    await fs.mkdir(path.join(tmp, "vendor_blob"), { recursive: true });
+    await fs.writeFile(path.join(tmp, "src", "app.ts"), "export {};\n");
+    await fs.writeFile(path.join(tmp, "vendor_blob", "lib.js"), "1\n");
+
+    const result = await findWorkspaceFiles(host, tmp, {
+      maxFiles: 100,
+      pruneDirNames: ["vendor_blob"],
+    });
+
+    expect(result.source).toBe("walk");
+    expect(result.files).toContain("src/app.ts");
+    expect(result.files.some((f) => f.includes("vendor_blob"))).toBe(false);
+  });
+
+  it("prefers host.runSearch over host.run when available", async () => {
+    execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+    await fs.writeFile(path.join(tmp, "tracked.ts"), "export {};\n");
+    execFileSync("git", ["add", "tracked.ts"], { cwd: tmp, stdio: "ignore" });
+
+    let runSearchCalls = 0;
+    let runCalls = 0;
+    const base = host;
+    const wrapped = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop === "runSearch") {
+          return async (
+            cwd: string,
+            command: string,
+            args: string[],
+            opts?: Parameters<typeof base.run>[3],
+          ) => {
+            runSearchCalls += 1;
+            return base.run(cwd, command, args, opts);
+          };
+        }
+        if (prop === "run") {
+          return async (
+            cwd: string,
+            command: string,
+            args: string[],
+            opts?: Parameters<typeof base.run>[3],
+          ) => {
+            runCalls += 1;
+            return base.run(cwd, command, args, opts);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const result = await findWorkspaceFiles(wrapped as typeof host, tmp, {
+      maxFiles: 100,
+    });
+    expect(result.files).toContain("tracked.ts");
+    expect(runSearchCalls).toBeGreaterThan(0);
+    expect(runCalls).toBe(0);
+  });
 });

@@ -490,6 +490,12 @@ export interface AnchorApi {
     }>;
     getRecent: () => Promise<RecentWorkspace[]>;
     listOpenInstances: () => Promise<WorkspaceInstancesState>;
+    /** Close an open workspace instance (persists removal). */
+    close: (id: string) => Promise<{
+      closedId: string;
+      wasActive: boolean;
+      nextActiveId: string | null;
+    }>;
     ensureDefinition: () => Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }>;
     listDir: (path: string) => Promise<DirEntry[]>;
     readText: (path: string) => Promise<ReadTextResult>;

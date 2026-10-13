@@ -307,6 +307,21 @@ export class TerminalService {
     this.emit({ type: "removed", id, kind });
   }
 
+  /** Kill tabs whose cwd is `root` or inside it (workspace close). */
+  disposeUnder(root: string): number {
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+    const r = norm(root);
+    let n = 0;
+    for (const [id, tab] of [...this.tabs.entries()]) {
+      const c = norm(tab.info.cwd || "");
+      if (c === r || c.startsWith(`${r}/`)) {
+        this.kill(id);
+        n += 1;
+      }
+    }
+    return n;
+  }
+
   disposeAll(): void {
     for (const id of [...this.tabs.keys()]) {
       this.kill(id);

@@ -547,6 +547,19 @@ export function registerIpc(opts: {
     },
   );
   ipcMain.handle(
+    "workspace:close",
+    async (_evt, id: string) => {
+      try {
+        const res = await application.workspace.close(id);
+        if (res.wasActive) fileWatcher.stop();
+        return res;
+      } catch (err) {
+        console.error("[ipc] workspace:close failed:", err);
+        rethrowIpc(err);
+      }
+    },
+  );
+  ipcMain.handle(
     "workspace:ensureDefinition",
     async (): Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }> => {
       try {

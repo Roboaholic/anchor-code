@@ -719,6 +719,45 @@ button:disabled {
   color: var(--text);
 }
 
+.workspace-menu__row {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-menu__row .workspace-menu__item {
+  padding-right: 34px;
+}
+
+.workspace-menu__close {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.workspace-menu__row:hover .workspace-menu__close,
+.workspace-menu__close:focus-visible {
+  opacity: 1;
+}
+
+.workspace-menu__close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .workspace-menu__item.is-active .workspace-menu__item-host {
   color: var(--accent);
 }
@@ -7741,7 +7780,8 @@ select.field__input {
     var(--vscode-editor-background)
   );
   font-style: normal;
-  background: var(--vscode-editor-background);
+  /* Transparent so the line's diff / selection highlight shows through. */
+  background: transparent !important;
   padding-left: 16px;
   white-space: pre;
 }

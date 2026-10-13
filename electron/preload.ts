@@ -322,6 +322,11 @@ const anchor = {
       hostProfileId: string;
       workspaceInstance: WorkspaceInstance;
     }> => ipcRenderer.invoke("workspace:activate", id),
+    close: (id: string): Promise<{
+      closedId: string;
+      wasActive: boolean;
+      nextActiveId: string | null;
+    }> => ipcRenderer.invoke("workspace:close", id),
     getRecent: (): Promise<RecentWorkspace[]> =>
       ipcRenderer.invoke("workspace:getRecent"),
     listOpenInstances: (): Promise<WorkspaceInstancesState> =>

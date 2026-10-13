@@ -248,6 +248,11 @@ export function TopBar() {
     setOpenWorkspaceDialog(true);
   };
 
+  const closeWorkspaceEntry = async (workspace: WorkspaceInstance) => {
+    const { closeWorkspace } = await import("./orchestrate");
+    await closeWorkspace(workspace.id);
+  };
+
   const openWorkspaceEntry = async (workspace: WorkspaceInstance) => {
     setWorkspaceMenuOpen(false);
     if (workspace.id === activeWorkspaceId || workspace.root === workspaceRoot) return;
@@ -326,8 +331,8 @@ export function TopBar() {
                           (item.root === workspaceRoot &&
                             item.hostProfileId === hostProfileId);
                         return (
+                          <div key={item.id} className="workspace-menu__row">
                           <button
-                            key={item.id}
                             type="button"
                             role="menuitem"
                             className={`workspace-menu__item${
@@ -357,6 +362,19 @@ export function TopBar() {
                                 : hostLabel(item.hostKind, item.hostProfileId)}
                             </span>
                           </button>
+                          <button
+                            type="button"
+                            className="workspace-menu__close"
+                            aria-label={`Close workspace ${item.name}`}
+                            title="Close workspace"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void closeWorkspaceEntry(item);
+                            }}
+                          >
+                            <Icon name="close" />
+                          </button>
+                          </div>
                         );
                       })}
                     </div>

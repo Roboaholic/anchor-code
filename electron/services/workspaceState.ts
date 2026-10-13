@@ -479,3 +479,33 @@ export async function recordActiveWorkspaceInstance(
   });
   return instance;
 }
+
+/**
+ * Remove an open workspace instance and persist. When the closed one was
+ * active, the most recently active remaining instance becomes active
+ * (or null when none remain).
+ */
+export async function closeWorkspaceInstance(
+  id: WorkspaceId,
+): Promise<{ closed: WorkspaceInstance | null; state: WorkspaceInstancesState }> {
+  const closed = liveWorkspaceState.openWorkspaces.find((item) => item.id === id) ?? null;
+  const remaining = liveWorkspaceState.openWorkspaces.filter((item) => item.id !== id);
+  let activeWorkspaceId = liveWorkspaceState.activeWorkspaceId;
+  if (activeWorkspaceId === id || !remaining.some((item) => item.id === activeWorkspaceId)) {
+    activeWorkspaceId = pickNextActive(remaining)?.id ?? null;
+  }
+  const state = await saveWorkspaceInstances({
+    version: 1,
+    activeWorkspaceId,
+    openWorkspaces: remaining,
+  });
+  return { closed, state };
+}
+
+export function pickNextActive(items: WorkspaceInstance[]): WorkspaceInstance | null {
+  let best: WorkspaceInstance | null = null;
+  for (const item of items) {
+    if (!best || item.lastActiveAt > best.lastActiveAt) best = item;
+  }
+  return best;
+}

@@ -4,6 +4,7 @@ import { HostError } from "../host/types.js";
 import type { TerminalService } from "../services/terminalService.js";
 import {
   activateWorkspaceInstance,
+  closeWorkspaceInstance,
   getLiveWorkspaceInstances,
   readWorkspaceDefinition,
   recordActiveWorkspaceInstance,
@@ -180,6 +181,37 @@ export class WorkspaceFacade {
       hostProfileId: target.hostProfileId,
       workspaceInstance,
     };
+  }
+
+  /**
+   * Close an open workspace instance: drop it from the persisted list, kill
+   * its terminals / agent sessions, and — when it was the active one — clear
+   * the host root and stop the WSL search helper. Switching to the next
+   * workspace is left to the caller (renderer calls `activate`).
+   */
+  async close(id: string): Promise<{
+    closedId: string;
+    wasActive: boolean;
+    nextActiveId: string | null;
+  }> {
+    const live = getLiveWorkspaceInstances();
+    const target = live.openWorkspaces.find((item) => item.id === id);
+    if (!target) throw new HostError("not_found", `Workspace instance not found: ${id}`);
+    const wasActive = live.activeWorkspaceId === id;
+    const { state } = await closeWorkspaceInstance(id);
+
+    const host = this.hosts.session;
+    if (target.hostProfileId === host.profileId) {
+      this.terminal.disposeUnder(target.root);
+    }
+    if (wasActive) {
+      if (target.hostProfileId === host.profileId) host.workspaceRoot = null;
+      if (state.openWorkspaces.length === 0) {
+        const h = host as typeof host & { disposeSearchHelper?: () => void };
+        h.disposeSearchHelper?.();
+      }
+    }
+    return { closedId: id, wasActive, nextActiveId: wasActive ? state.activeWorkspaceId : null };
   }
 
   async open(

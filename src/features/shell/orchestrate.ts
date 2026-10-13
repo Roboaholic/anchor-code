@@ -127,6 +127,54 @@ export async function activateWorkspace(id: string): Promise<void> {
     useWorkspaceStore.setState({ status: "error", error: message });
   }
 }
+/**
+ * Close an open workspace from the switcher. Closing the current one switches
+ * to the most recently active remaining workspace, or to the empty state.
+ */
+export async function closeWorkspace(id: string): Promise<void> {
+  try {
+    const res = await window.anchor.workspace.close(id);
+    useWorkspaceStore.setState((s) => {
+      const views = { ...s.workspaceViews };
+      delete views[id];
+      return {
+        workspaceViews: views,
+        openWorkspaces: s.openWorkspaces.filter((w) => w.id !== id),
+      };
+    });
+    if (!res.wasActive) {
+      await useWorkspaceStore.getState().loadOpenWorkspaces();
+      return;
+    }
+    // Drop the closed root first so activateWorkspace does not re-save its views.
+    useWorkspaceStore.setState({
+      workspaceRoot: null,
+      workspaceName: null,
+      rootEntries: [],
+      selectedPath: null,
+      status: "idle",
+      error: null,
+    });
+    if (res.nextActiveId) {
+      await activateWorkspace(res.nextActiveId);
+      return;
+    }
+    useWorkspaceStore.setState({
+      activeWorkspaceId: null,
+      hostKind: null,
+      hostProfileId: null,
+    });
+    useDocumentStore.getState().closeAllItems();
+    useHistoryStore.getState().reset();
+    useAnnotationsStore.getState().reset();
+    useShellStore.getState().setLeftMode("files");
+    await useWorkspaceStore.getState().loadOpenWorkspaces();
+  } catch (err) {
+    console.error("[shell] closeWorkspace failed:", err);
+    await useWorkspaceStore.getState().loadOpenWorkspaces();
+  }
+}
+
 async function afterWorkspaceOpened(
   root: string,
   hostProfileId: string | null,

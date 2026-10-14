@@ -9,6 +9,7 @@ export const AGENT_SESSION_SCAN_TIMEOUT_MS = 8_000;
 export function sessionIdPattern(profileId: string): RegExp | null {
   switch (profileId.trim().toLowerCase()) {
     case "omp":
+    case "pi":
       return new RegExp(`\\"type\\":\\"session\\"[^\\n]*?\\"id\\":\\"(${UUID})\\"`, "gi");
     case "codex":
       // Older rollouts: "session_id"; newer session_meta lines: {"type":"session_meta","payload":{"id":…}}.
@@ -44,7 +45,8 @@ export function sessionIdsFromFileNames(text: string): Set<string> {
 /** CLIs whose transcript file name carries the session id. */
 function namesCarrySessionId(profileId: string): boolean {
   const id = profileId.trim().toLowerCase();
-  return id === "claude" || id === "codex";
+  // pi: <ts>_<uuid>.jsonl
+  return id === "claude" || id === "codex" || id === "pi";
 }
 
 export interface AgentSessionSummary {
@@ -57,6 +59,7 @@ function sessionRoot(home: string, profileId: string): string | null {
   const root = home.replace(/[\\/]+$/, "");
   switch (profileId.trim().toLowerCase()) {
     case "omp": return `${root}/.omp/agent/sessions`;
+    case "pi": return `${root}/.pi/agent/sessions`;
     case "codex": return `${root}/.codex/sessions`;
     case "claude": return `${root}/.claude/projects`;
     case "gemini": return `${root}/.gemini/tmp`;
@@ -163,6 +166,7 @@ export function parseAgentSessionList(
 function sessionSegments(profileId: string): string | null {
   switch (profileId.trim().toLowerCase()) {
     case "omp": return ".omp/agent/sessions";
+    case "pi": return ".pi/agent/sessions";
     case "codex": return ".codex/sessions";
     case "claude": return ".claude/projects";
     case "gemini": return ".gemini/tmp";

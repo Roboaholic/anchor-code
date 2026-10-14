@@ -34,6 +34,11 @@ import { openWorkspaceWithHost } from "./orchestrate";
 import { saveWorkspaceAgents } from "@/features/terminal/terminalStore";
 import { AskDialog } from "@/features/ask/AskDialog";
 
+/** Default sidebar widths (% of window). */
+export const LEFT_DEFAULT_SIZE = 16;
+export const LEFT_MAX_SIZE = 28;
+export const AGENT_DEFAULT_SIZE = 22;
+
 /**
  * Drive collapsible panel open/closed without remounting siblings.
  * Retries a few frames so expand isn't lost on first paint.
@@ -441,8 +446,8 @@ export function Shell() {
   }, [agentWorkbench]);
 
   // Never remount PanelGroup for these toggles — only collapse/expand.
-  useCollapsiblePanel(leftPanelRef, leftVisible, 22);
-  useCollapsiblePanel(agentPanelRef, showAgent, 28);
+  useCollapsiblePanel(leftPanelRef, leftVisible, LEFT_DEFAULT_SIZE);
+  useCollapsiblePanel(agentPanelRef, showAgent, AGENT_DEFAULT_SIZE);
   useCollapsiblePanel(terminalPanelRef, showTerminal, 28);
 
   return (
@@ -551,9 +556,9 @@ export function Shell() {
             order={1}
             collapsible
             collapsedSize={0}
-            defaultSize={leftVisible ? 22 : 0}
+            defaultSize={leftVisible ? LEFT_DEFAULT_SIZE : 0}
             minSize={14}
-            maxSize={36}
+            maxSize={LEFT_MAX_SIZE}
             onCollapse={() => useShellStore.getState().setLeftVisible(false)}
             id="left"
           >
@@ -564,7 +569,18 @@ export function Shell() {
             style={{ display: leftVisible ? undefined : "none" }}
           />
 
-          <Panel order={2} defaultSize={50} minSize={30} id="center">
+          <Panel
+            order={2}
+            // Defaults must sum to 100, otherwise the library rescales them
+            // (16 + 50 + 0 used to render the left sidebar at ~24%).
+            defaultSize={
+              100 -
+              (leftVisible ? LEFT_DEFAULT_SIZE : 0) -
+              (showAgent ? AGENT_DEFAULT_SIZE : 0)
+            }
+            minSize={30}
+            id="center"
+          >
             <div className="shell__center-stack">
               <PanelGroup
                 direction="vertical"
@@ -641,7 +657,7 @@ export function Shell() {
             order={3}
             collapsible
             collapsedSize={0}
-            defaultSize={showAgent ? 28 : 0}
+            defaultSize={showAgent ? AGENT_DEFAULT_SIZE : 0}
             minSize={18}
             maxSize={50}
             id="agent"

@@ -116,6 +116,7 @@ export async function discoverAgentLaunchOptions(
   else if (id === "claude") result = await discoverClaude(host);
   else if (id === "grok") result = await discoverGrok(host);
   else if (id === "omp") result = await discoverOmp(host);
+  else if (id === "pi") result = await discoverPi(host);
   else {
     result = {
       profileId: id,
@@ -157,12 +158,15 @@ export async function discoverAgentLaunchOptions(
  * - claude: `--permission-mode plan`
  * - codex: `--sandbox read-only`
  * - gemini: `--approval-mode plan`
+ * - pi: `--tools read,grep,find,ls`
  */
 export function agentReadOnlyArgs(profileId: string): string[] {
   const id = profileId.trim().toLowerCase();
   if (id === "claude") return ["--permission-mode", "plan"];
   if (id === "codex") return ["--sandbox", "read-only"];
   if (id === "gemini") return ["--approval-mode", "plan"];
+  // pi: allowlist only read-only built-in tools (no bash/edit/write).
+  if (id === "pi") return ["--tools", "read,grep,find,ls"];
   return [];
 }
 
@@ -193,6 +197,14 @@ export function buildAgentLaunchArgs(
     if (opts.effort?.trim()) {
       args.push("--reasoning-effort", opts.effort.trim());
     }
+    if (prompt) args.push(prompt);
+    return args;
+  }
+  if (id === "pi") {
+    // pi: --model <provider/id> --thinking <level> [prompt]
+    // (pi rejects the `--flag=value` form: "Unknown options".)
+    if (opts.model?.trim()) args.push("--model", opts.model.trim());
+    if (opts.effort?.trim()) args.push("--thinking", opts.effort.trim());
     if (prompt) args.push(prompt);
     return args;
   }
@@ -228,6 +240,8 @@ export function buildAgentResumeArgs(
   if (id === "claude") return ["--resume", target];
   if (id === "grok") return ["--session", target];
   if (id === "omp") return [`--resume=${target}`];
+  // pi: --resume opens a picker; --session takes an exact id / file.
+  if (id === "pi") return ["--session", target];
   if (id === "cursor-agent") return ["--resume", target];
   if (id === "gemini") return ["--resume", target];
   return null;
@@ -899,6 +913,68 @@ export function parseGrokConfigModels(text: string): Array<
     if (base) current.baseModel = base[1]!;
   }
   return out;
+}
+
+// ── Pi ───────────────────────────────────────────────────────
+
+/** Thinking levels documented by `pi --help` (`--thinking <level>`). */
+export const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Parse `pi --list-models` table: provider  model  context  max-out  thinking  images. */
+export function parsePiModelsTable(text: string): AgentModelOption[] {
+  const models: AgentModelOption[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const cols = raw.trim().split(/\s+/);
+    if (cols.length < 2 || cols[0] === "provider") continue;
+    const [provider, model] = cols;
+    if (!provider || !model || !/^[\w.-]+$/.test(provider)) continue;
+    const thinking = cols[4]?.toLowerCase() === "yes";
+    pushModel(models, `${provider}/${model}`, model, thinking ? PI_THINKING_LEVELS : []);
+  }
+  return models;
+}
+
+export function parsePiSettings(text: string): { model?: string; thinking?: string } {
+  try {
+    const s = JSON.parse(text) as Record<string, unknown>;
+    const provider = typeof s.defaultProvider === "string" ? s.defaultProvider : "";
+    const model = typeof s.defaultModel === "string" ? s.defaultModel : "";
+    const thinking = typeof s.defaultThinkingLevel === "string" ? s.defaultThinkingLevel : undefined;
+    return {
+      model: model ? (provider && !model.includes("/") ? `${provider}/${model}` : model) : undefined,
+      thinking,
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function discoverPi(host: HostSession): Promise<AgentLaunchDiscovery> {
+  const home = await hostHome(host);
+  const piHome = home ? joinPosix(home.replace(/\/$/, ""), ".pi") : "";
+  const settingsText = piHome
+    ? await readHostText(host, joinPosix(joinPosix(piHome, "agent"), "settings.json"))
+    : null;
+  const cfg = parsePiSettings(settingsText ?? "");
+  const out = await runHostCommand(host, "pi", ["--list-models"]);
+  const models = out ? parsePiModelsTable(out) : [];
+  if (cfg.model) {
+    models.sort((a, b) => Number(b.id === cfg.model) - Number(a.id === cfg.model));
+  }
+  for (const m of models) {
+    if (cfg.thinking && m.efforts.includes(cfg.thinking)) m.defaultEffort = cfg.thinking;
+  }
+  return {
+    profileId: "pi",
+    supportsModel: models.length > 0,
+    supportsEffort: models.some((m) => m.efforts.length > 0),
+    models,
+    defaultModel: cfg.model,
+    defaultEffort: cfg.thinking,
+    configHome: piHome || undefined,
+    source: models.length ? "pi --list-models" : "empty",
+    error: models.length === 0 ? "Could not list models (pi --list-models empty)" : undefined,
+  };
 }
 
 // ── OMP ──────────────────────────────────────────────────────

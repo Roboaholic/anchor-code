@@ -151,3 +151,17 @@ describe("robust session id capture", () => {
     expect(recentCalls).toBe(2);
   }, 15_000);
 });
+
+describe("pi sessions", () => {
+  const pid = "01a1398f-d412-7775-ad78-3580c8d7e8e9";
+  it("captures ids from pi file names and session headers, and reads names", () => {
+    expect([...sessionIdsFromFileNames(`/h/.pi/agent/sessions/--tmp--/2026-10-14T08-38-09-682Z_${pid}.jsonl`)]).toEqual([pid]);
+    const m = [...`{"type":"session","version":3,"id":"${pid}","cwd":"/tmp"}`.matchAll(sessionIdPattern("pi")!)][0]!;
+    expect(m[1]).toBe(pid);
+    expect(parseAgentSessionTitle("pi", [
+      `{"type":"session","version":3,"id":"${pid}"}`,
+      `{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Explain the limiter"}]}}`,
+    ].join("\n"))).toBe("Explain the limiter");
+    expect(parseAgentSessionTitle("pi", `{"type":"session_info","id":"b","name":"Limiter review"}`)).toBe("Limiter review");
+  });
+});

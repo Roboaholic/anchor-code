@@ -93,16 +93,16 @@ describe("askPasteChunks", () => {
 describe("askSessionLabel", () => {
   const base = { title: "You are applying Anchor Code review fee…", status: "running" as const, agentId: "claude" };
   it("hides raw prompt titles behind an index", () => {
-    expect(askSessionLabel(base, 1, "idle")).toBe("claude · 会话 2 · 空闲");
+    expect(askSessionLabel(base, 1, "idle")).toBe("claude · Session 2 · idle");
   });
   it("uses user titles, truncated", () => {
-    expect(askSessionLabel({ ...base, titleSource: "user", title: "fix login" }, 0, undefined, "Claude")).toBe("Claude · fix login · 空闲");
+    expect(askSessionLabel({ ...base, titleSource: "user", title: "fix login" }, 0, undefined, "Claude")).toBe("Claude · fix login · idle");
     const long = askSessionLabel({ ...base, titleSource: "user", title: "x".repeat(40) }, 0, "idle");
     expect(long).toContain("…");
   });
   it("keeps Ask-named tabs and reports status", () => {
-    expect(askSessionLabel({ ...base, title: "Ask · a.ts L3" }, 0, "working")).toBe("claude · Ask · a.ts L3 · 忙碌");
-    expect(askSessionLabel({ ...base, status: "exited" }, 2, "idle")).toBe("claude · 会话 3 · 已退出");
+    expect(askSessionLabel({ ...base, title: "Ask · a.ts L3" }, 0, "working")).toBe("claude · Ask · a.ts L3 · busy");
+    expect(askSessionLabel({ ...base, status: "exited" }, 2, "idle")).toBe("claude · Session 3 · exited");
   });
 });
 

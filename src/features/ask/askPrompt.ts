@@ -117,7 +117,7 @@ const SHORT_TITLE_MAX = 24;
 /**
  * Readable session-selector label: `agent · title-or-index · status`.
  * Default/inferred titles are often the raw launch prompt, so fall back to
- * "会话 N" unless the user (or Ask itself) named the tab.
+ * "Session N" unless the user (or Ask itself) named the tab.
  */
 export function askSessionLabel(
   tab: AskSessionLabelTab,
@@ -132,13 +132,13 @@ export function askSessionLabel(
     ? raw.length > SHORT_TITLE_MAX
       ? `${raw.slice(0, SHORT_TITLE_MAX - 1)}…`
       : raw
-    : `会话 ${index + 1}`;
+    : `Session ${index + 1}`;
   const status =
     tab.status === "exited"
-      ? "已退出"
+      ? "exited"
       : (activity ?? "idle") === "working"
-        ? "忙碌"
-        : "空闲";
+        ? "busy"
+        : "idle";
   return `${agent} · ${short} · ${status}`;
 }
 

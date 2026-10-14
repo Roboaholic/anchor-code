@@ -13,6 +13,9 @@ import {
   parseGrokModelsOutput,
   parseOmpModelsJson,
   parseOmpModelsYml,
+  parsePiModelsTable,
+  parsePiSettings,
+  PI_THINKING_LEVELS,
 } from "./agentLaunch.js";
 describe("parseCodexConfigToml", () => {
   it("reads model and model_reasoning_effort", () => {
@@ -389,5 +392,34 @@ describe("read-only launch args (Ask)", () => {
     ]);
     expect(buildAgentLaunchArgs("claude", { prompt: "q" })).toEqual(["q"]);
     expect(buildAgentLaunchArgs("omp", { prompt: "q", readOnly: true })).toEqual(["q"]);
+  });
+});
+
+describe("pi agent", () => {
+  it("parses pi --list-models and builds launch / resume / read-only args", () => {
+    const table = [
+      "provider  model            context  max-out  thinking  images",
+      "deepseek  deepseek-flash   1M       384K     yes       yes",
+      "deepseek  deepseek-v4-pro  1M       384K     no        no",
+    ].join("\n");
+    const models = parsePiModelsTable(table);
+    expect(models.map((m) => m.id)).toEqual(["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"]);
+    expect(models[0]!.efforts).toEqual(PI_THINKING_LEVELS);
+    expect(models[1]!.efforts).toEqual([]);
+    expect(parsePiSettings('{"defaultProvider":"deepseek","defaultModel":"deepseek-flash"}')).toEqual({
+      model: "deepseek/deepseek-flash",
+      thinking: undefined,
+    });
+    expect(buildAgentLaunchArgs("pi", { model: "deepseek/deepseek-flash", effort: "high", prompt: "hi" })).toEqual([
+      "--model", "deepseek/deepseek-flash",
+      "--thinking", "high",
+      "hi",
+    ]);
+    expect(buildAgentLaunchArgs("pi", { prompt: "q", readOnly: true })).toEqual([
+      "--tools", "read,grep,find,ls", "q",
+    ]);
+    expect(buildAgentResumeArgs("pi", "01a1398f-d412-7775-ad78-3580c8d7e8e9")).toEqual([
+      "--session", "01a1398f-d412-7775-ad78-3580c8d7e8e9",
+    ]);
   });
 });

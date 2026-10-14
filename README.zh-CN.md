@@ -17,9 +17,11 @@ Anchor Code 把代码、技术文档、Git 历史、Diff、审阅评论和你在
 
 选中代码或渲染后的 Markdown，即可在锚定于选区的行内气泡中写评论，并在写的同时选择状态。审阅会话把每条评论标记为问题（`discussing`）、修改请求（`need_modify`）或已解决（`closed`）；点击 **Feedback** 把整个会话交给 Agent，Agent 可以在原线程回复并更新状态。
 
-![锚定在选中行旁的评论气泡，正在撰写一条 need_modify 审阅意见](docs/images/comment-bubble.png)
+![选中代码行，在评论气泡中撰写审阅意见并添加](docs/images/comment-bubble.gif)
 
 ![带行锚定评论和 Pi Agent 回复的审阅会话](docs/images/comments.png)
+
+![通过 Feedback 把审阅会话交给 Pi，Pi 的回复出现在评论线程中](docs/images/feedback-reply.gif)
 
 ### 工作区 Diff
 
@@ -45,11 +47,15 @@ Anchor Code 把代码、技术文档、Git 历史、Diff、审阅评论和你在
 
 ![Agent 面板中的三个 Pi 会话，其中一个刚编写并运行了新测试](docs/images/agent-sessions.png)
 
+![新建 Pi 会话，修改代码并运行测试](docs/images/agent-working.gif)
+
 ### 针对选区提问（Ask）
 
 选中几行后点 **?**，在锚定于选区旁的小气泡里向 Agent 提问。可以发给空闲会话，也可以新建会话；**Read-only**（默认勾选）会让新建的 Agent 以 plan / 只读模式启动。按 `Ctrl+Enter` 发送。
 
 ![锚定在选中行下方的 Ask 气泡](docs/images/ask.png)
+
+![选中代码向 Pi 提问，答案出现在 Agent 面板中](docs/images/ask-answer.gif)
 
 ### Markdown 与 Mermaid
 

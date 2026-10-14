@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, session } from "electron";
 import { createSearchHitBatcher } from "./searchBatcher.js";
 import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
@@ -116,6 +116,13 @@ export function registerIpc(opts: {
   const browseSessions = new Map<string, HostSession>();
 
   // ── shell ──────────────────────────────────────────
+  ipcMain.handle("shell:flushStorage", async () => {
+    try {
+      session.defaultSession.flushStorageData();
+    } catch {
+      // best effort
+    }
+  });
   ipcMain.handle("shell:getVersion", async () => {
     const h = host();
     return {

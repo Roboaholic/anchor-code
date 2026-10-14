@@ -9,7 +9,11 @@ import { DEFAULT_FONT_SIZE, fontSizeShortcutDelta } from "@/core/theme/theme";
 import { DocumentArea } from "@/features/document/DocumentArea";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { saveWorkspaceDocuments } from "@/features/document/documentStore";
+import {
+  bindDocumentAutosave,
+  flushDocumentAutosave,
+  saveWorkspaceDocuments,
+} from "@/features/document/documentStore";
 import { Icon } from "@/shared/Icon";
 import { LeftNav } from "./LeftNav";
 import {
@@ -252,6 +256,15 @@ export function Shell() {
     const off =
       window.anchor?.shell?.onCommand?.((cmd) => {
         if (applyFontSizeCommand(cmd.type)) return;
+        if (cmd.type === "flushState") {
+          flushDocumentAutosave();
+          const workspace = useWorkspaceStore.getState();
+          if (workspace.workspaceRoot) {
+            saveWorkspaceDocuments(workspace.workspaceRoot, workspace.hostProfileId);
+            saveWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
+          }
+          return;
+        }
         if (cmd.type === "openWorkspace") {
           void import("./orchestrate").then((m) => m.openWorkspaceFromPicker());
         } else if (cmd.type === "quickOpen") {
@@ -287,14 +300,26 @@ export function Shell() {
   }, [setVersionLabel, loadRecent, openPalette]);
 
   useEffect(() => {
+    const unbindAutosave = bindDocumentAutosave(() => {
+      const workspace = useWorkspaceStore.getState();
+      return workspace.workspaceRoot
+        ? { workspaceRoot: workspace.workspaceRoot, hostProfileId: workspace.hostProfileId }
+        : null;
+    });
     const saveCurrentWorkspace = () => {
+      flushDocumentAutosave();
       const workspace = useWorkspaceStore.getState();
       if (!workspace.workspaceRoot) return;
       saveWorkspaceDocuments(workspace.workspaceRoot, workspace.hostProfileId);
       saveWorkspaceAgents(workspace.workspaceRoot, workspace.hostProfileId);
     };
     window.addEventListener("beforeunload", saveCurrentWorkspace);
-    return () => window.removeEventListener("beforeunload", saveCurrentWorkspace);
+    window.addEventListener("pagehide", saveCurrentWorkspace);
+    return () => {
+      window.removeEventListener("beforeunload", saveCurrentWorkspace);
+      window.removeEventListener("pagehide", saveCurrentWorkspace);
+      unbindAutosave();
+    };
   }, []);
 
 

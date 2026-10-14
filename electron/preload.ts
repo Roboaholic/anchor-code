@@ -242,6 +242,8 @@ const anchor = {
   shell: {
     getVersion: (): Promise<AppVersionInfo> =>
       ipcRenderer.invoke("shell:getVersion"),
+    /** Commit renderer localStorage to disk now (tab state survives a hard kill). */
+    flushStorage: (): Promise<void> => ipcRenderer.invoke("shell:flushStorage"),
     menuAction: (action: string): Promise<boolean> =>
       ipcRenderer.invoke("shell:menuAction", action),
     onCommand: (

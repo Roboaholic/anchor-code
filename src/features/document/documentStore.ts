@@ -45,7 +45,33 @@ type DocumentWorkspaceView = { openItems: OpenItem[]; activeId: string | null };
 const documentWorkspaceViews = new Map<string, DocumentWorkspaceView>();
 
 function workspaceKey(workspaceRoot: string, hostProfileId: string | null): string {
-  return `${hostProfileId ?? "local-default"}::${normalizePathKey(workspaceRoot)}`;
+  const root = normalizePathKey(workspaceRoot).replace(/\/+$/, "") || "/";
+  return `${hostProfileId?.trim() || "local-default"}::${root}`;
+}
+
+/** Keys written by older builds (null/"" host and raw root), read as fallback. */
+function legacyWorkspaceKeys(workspaceRoot: string, hostProfileId: string | null): string[] {
+  const raw = normalizePathKey(workspaceRoot);
+  const hosts = new Set([hostProfileId ?? "local-default", hostProfileId?.trim() || "local-default"]);
+  const keys: string[] = [];
+  for (const host of hosts) {
+    keys.push(`${host}::${raw}`, `${host}::${raw.replace(/\/+$/, "")}`, `${host}::${raw}/`);
+  }
+  const current = workspaceKey(workspaceRoot, hostProfileId);
+  return [...new Set(keys)].filter((k) => k !== current);
+}
+
+function readSavedDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): PersistedDocumentState | undefined {
+  const saved = readPersistedDocuments();
+  const current = saved[workspaceKey(workspaceRoot, hostProfileId)];
+  if (current) return current;
+  for (const key of legacyWorkspaceKeys(workspaceRoot, hostProfileId)) {
+    if (saved[key]) return saved[key];
+  }
+  return undefined;
 }
 
 function readPersistedDocuments(): Record<string, PersistedDocumentState> {
@@ -115,6 +141,7 @@ export function saveWorkspaceDocuments(
       state.openItems.findIndex((item) => item.id === state.activeId),
     );
     const saved = readPersistedDocuments();
+    for (const key of legacyWorkspaceKeys(workspaceRoot, hostProfileId)) delete saved[key];
     saved[workspaceKey(workspaceRoot, hostProfileId)] = {
       openItems: state.openItems.map(persistedItem),
       activeIndex,
@@ -130,7 +157,20 @@ export async function restoreWorkspaceDocuments(
   hostProfileId: string | null,
 ): Promise<void> {
   if (restoreCachedWorkspaceDocuments(workspaceRoot, hostProfileId)) return;
-  const saved = readPersistedDocuments()[workspaceKey(workspaceRoot, hostProfileId)];
+  restoringDocuments += 1;
+  cancelDocumentAutosave();
+  try {
+    await restoreSavedDocuments(workspaceRoot, hostProfileId);
+  } finally {
+    restoringDocuments -= 1;
+  }
+}
+
+async function restoreSavedDocuments(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): Promise<void> {
+  const saved = readSavedDocuments(workspaceRoot, hostProfileId);
   useDocumentStore.setState({ openItems: [], activeId: null });
   if (!saved || !Array.isArray(saved.openItems) || saved.openItems.length === 0) {
     useDocumentStore.getState().openWelcome();
@@ -550,3 +590,81 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }));
   },
 }));
+
+// ---------------------------------------------------------------------------
+// Auto-save: persist tab changes (close all, close tab, reorder, open) shortly
+// after they happen instead of relying only on beforeunload / workspace switch.
+
+export const DOCUMENT_AUTOSAVE_DELAY_MS = 250;
+
+type AutosaveTarget = { workspaceRoot: string; hostProfileId: string | null };
+
+let restoringDocuments = 0;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingTarget: AutosaveTarget | null = null;
+let unsubscribeAutosave: (() => void) | null = null;
+
+function cancelDocumentAutosave(): void {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  pendingTarget = null;
+}
+
+/** Ask the main process to commit localStorage to disk (Chromium writes lazily). */
+function requestStorageFlush(): void {
+  try {
+    const flush = (globalThis as { window?: { anchor?: { shell?: { flushStorage?: () => Promise<void> } } } })
+      .window?.anchor?.shell?.flushStorage;
+    void flush?.().catch(() => undefined);
+  } catch {
+    // best effort
+  }
+}
+
+/** Write any pending debounced save right now (beforeunload / quit / close workspace). */
+export function flushDocumentAutosave(): void {
+  const target = pendingTarget;
+  cancelDocumentAutosave();
+  if (target) saveWorkspaceDocuments(target.workspaceRoot, target.hostProfileId);
+}
+
+/**
+ * Subscribe to tab changes and save them for the workspace that was current
+ * when the change happened. Returns an unsubscribe function.
+ */
+export function bindDocumentAutosave(
+  getTarget: () => AutosaveTarget | null,
+  delayMs = DOCUMENT_AUTOSAVE_DELAY_MS,
+): () => void {
+  unsubscribeAutosave?.();
+  const unsubscribe = useDocumentStore.subscribe((state, prev) => {
+    if (state.openItems === prev.openItems && state.activeId === prev.activeId) return;
+    if (restoringDocuments > 0) return;
+    const target = getTarget();
+    if (!target?.workspaceRoot) return;
+    if (
+      pendingTarget &&
+      workspaceKey(pendingTarget.workspaceRoot, pendingTarget.hostProfileId) !==
+        workspaceKey(target.workspaceRoot, target.hostProfileId)
+    ) {
+      flushDocumentAutosave();
+    }
+    pendingTarget = target;
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      const t = pendingTarget;
+      pendingTarget = null;
+      if (t) {
+        saveWorkspaceDocuments(t.workspaceRoot, t.hostProfileId);
+        requestStorageFlush();
+      }
+    }, delayMs);
+  });
+  unsubscribeAutosave = () => {
+    unsubscribe();
+    cancelDocumentAutosave();
+    unsubscribeAutosave = null;
+  };
+  return unsubscribeAutosave;
+}

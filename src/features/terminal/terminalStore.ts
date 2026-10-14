@@ -63,17 +63,48 @@ const WORKSPACE_AGENTS_KEY = "anchor.workspace.agents.v1";
 
 type PersistedAgent = {
   profileId: string;
+  /** Empty when the CLI session id was never captured (not resumable). */
   sessionId: string;
   title: string;
   groupId?: string;
+  /** Epoch ms of last focus / launch; newest first on restore. */
+  lastActiveAt?: number;
+  resumable?: boolean;
+  /** User/caller-set title (e.g. "Ask · file L3"): re-pinned on resume. */
+  titlePinned?: boolean;
 };
 
 export type ParkedAgent = {
   profileId: string;
+  /** Provider session id; `unresumable:<key>` placeholder when not resumable. */
   sessionId: string;
   title: string;
   groupId: string;
+  lastActiveAt?: number;
+  titlePinned?: boolean;
+  /** False → listed greyed, can't be resumed. */
+  resumable?: boolean;
+  /** Last resume failure (shown in the sidebar). */
+  error?: string;
 };
+
+const UNRESUMABLE_PREFIX = "unresumable:";
+/** A resumed CLI that exits this fast most likely failed to resume. */
+export const RESUME_FAIL_WINDOW_MS = 5_000;
+const agentLastActiveAt = new Map<string, number>();
+const resumingSessions = new Set<string>();
+const resumeWatch = new Map<string, { parked: ParkedAgent; at: number }>();
+
+export function markAgentActive(tabId: string, at = Date.now()): void {
+  agentLastActiveAt.set(tabId, at);
+}
+
+function byRecency<T extends { lastActiveAt?: number }>(items: T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (b.item.lastActiveAt ?? 0) - (a.item.lastActiveAt ?? 0) || a.index - b.index)
+    .map(({ item }) => item);
+}
 type TerminalWorkspaceView = {
   tabs: TerminalTabInfo[];
   activeByMode: Record<RightTermMode, string | null>;
@@ -179,16 +210,26 @@ function parkedFromPersisted(
 ): ParkedAgent[] {
   if (!Array.isArray(agents)) return [];
   const groupIds = new Set(workgroups.groups.map((group) => group.id));
-  return agents.flatMap((saved) => {
-    if (!saved.sessionId || liveSessionIds.has(saved.sessionId)) return [];
+  return byRecency(agents.flatMap((saved, index): ParkedAgent[] => {
+    if (!saved || typeof saved.profileId !== "string") return [];
+    const resumable = saved.resumable !== false && Boolean(saved.sessionId?.trim());
+    if (resumable && liveSessionIds.has(saved.sessionId)) return [];
+    const sessionId = resumable
+      ? saved.sessionId
+      : saved.sessionId?.startsWith(UNRESUMABLE_PREFIX)
+        ? saved.sessionId
+        : `${UNRESUMABLE_PREFIX}${index}:${saved.title}`;
     const mapped = saved.groupId ?? workgroups.sessionGroupById[saved.sessionId];
     return [{
       profileId: saved.profileId,
-      sessionId: saved.sessionId,
+      sessionId,
       title: saved.title,
       groupId: mapped && groupIds.has(mapped) ? mapped : DEFAULT_WORKGROUP_ID,
+      ...(saved.lastActiveAt ? { lastActiveAt: saved.lastActiveAt } : {}),
+      ...(saved.titlePinned ? { titlePinned: true } : {}),
+      ...(resumable ? {} : { resumable: false }),
     }];
-  });
+  }));
 }
 
 function persistCurrentWorkgroups(hostProfileId?: string | null): void {
@@ -339,21 +380,29 @@ export function saveWorkspaceAgents(
     persistCurrentWorkgroups(hostProfileId);
     const saved = readPersistedAgents();
     const state = useTerminalStore.getState();
-    const live = state.tabs
+    const now = Date.now();
+    const live: PersistedAgent[] = state.tabs
       .filter(
-        (tab): tab is TerminalTabInfo & { agentId: string; agentSessionId: string } =>
+        (tab): tab is TerminalTabInfo & { agentId: string } =>
           tab.kind === "agent" &&
           tab.status === "running" &&
-          typeof tab.agentId === "string" &&
-          typeof tab.agentSessionId === "string" &&
-          tab.agentSessionId.trim().length > 0,
+          typeof tab.agentId === "string",
       )
-      .map((tab) => ({
-        profileId: tab.agentId,
-        sessionId: tab.agentSessionId,
-        title: tab.title,
-        groupId: state.tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID,
-      }));
+      .map((tab) => {
+        const sessionId = tab.agentSessionId?.trim() ?? "";
+        return {
+          profileId: tab.agentId,
+          // No captured id: keep it listed (greyed) instead of silently dropping.
+          sessionId: sessionId || `${UNRESUMABLE_PREFIX}${tab.id}`,
+          title: tab.title,
+          groupId: state.tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID,
+          lastActiveAt:
+            agentLastActiveAt.get(tab.id) ??
+            (state.activeByMode.agent === tab.id ? now : undefined),
+          ...(sessionId ? {} : { resumable: false }),
+          ...(tab.titleSource === "user" ? { titlePinned: true } : {}),
+        };
+      });
     const bySession = new Map<string, PersistedAgent>();
     for (const item of state.parkedAgents) {
       bySession.set(item.sessionId, {
@@ -361,10 +410,13 @@ export function saveWorkspaceAgents(
         sessionId: item.sessionId,
         title: item.title,
         groupId: item.groupId,
+        lastActiveAt: item.lastActiveAt,
+        ...(item.resumable === false ? { resumable: false } : {}),
+        ...(item.titlePinned ? { titlePinned: true } : {}),
       });
     }
     for (const item of live) bySession.set(item.sessionId, item);
-    saved[workspaceAgentKey(cwd, hostProfileId)] = [...bySession.values()];
+    saved[workspaceAgentKey(cwd, hostProfileId)] = byRecency([...bySession.values()]);
     localStorage.setItem(WORKSPACE_AGENTS_KEY, JSON.stringify(saved));
   } catch {
     // Persistence must not interrupt workspace switching.
@@ -408,6 +460,13 @@ export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
     .getState()
     .parkedAgents.find((item) => item.sessionId === sessionId);
   if (!parked) return false;
+  if (parked.resumable === false) {
+    useTerminalStore.setState({
+      error: "This conversation can't be resumed: its CLI session id was never captured.",
+    });
+    return false;
+  }
+  if (resumingSessions.has(sessionId)) return false;
   const live = useTerminalStore.getState().tabs.find(
     (tab) =>
       (tab.kind ?? "shell") === "agent" && tab.agentSessionId === sessionId,
@@ -419,19 +478,69 @@ export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
     }));
     return true;
   }
-  const profiles = await window.anchor.agent.listProfiles();
-  const profile = profiles.find((item) => item.id === parked.profileId);
-  if (!profile || profile.enabled === false) {
-    useTerminalStore.setState({
-      error: `Agent profile unavailable: ${parked.profileId}`,
+  resumingSessions.add(sessionId);
+  try {
+    const profiles = await window.anchor.agent.listProfiles();
+    const profile = profiles.find((item) => item.id === parked.profileId);
+    if (!profile || profile.enabled === false) {
+      setParkedError(sessionId, `Agent profile unavailable: ${parked.profileId}`);
+      return false;
+    }
+    useTerminalStore.getState().setActiveWorkgroup(parked.groupId);
+    const ok = await useTerminalStore.getState().createAgentTab(profile, {
+      title: parked.title,
+      resumeSessionId: parked.sessionId,
     });
-    return false;
+    if (!ok) {
+      // createAgentTab keeps the parked entry on failure; record why.
+      setParkedError(sessionId, useTerminalStore.getState().error ?? "Resume failed");
+      return false;
+    }
+    const tab = useTerminalStore
+      .getState()
+      .tabs.find((item) => item.agentSessionId === sessionId);
+    if (tab) {
+      markAgentActive(tab.id);
+      resumeWatch.set(tab.id, { parked, at: Date.now() });
+      // Keep short caller titles (Ask / Feedback / renamed) over CLI-inferred ones.
+      if (parked.titlePinned && tab.titleSource !== "user") {
+        void useTerminalStore.getState().renameTab(tab.id, parked.title);
+      }
+    }
+    return true;
+  } finally {
+    resumingSessions.delete(sessionId);
   }
-  useTerminalStore.getState().setActiveWorkgroup(parked.groupId);
-  return useTerminalStore.getState().createAgentTab(profile, {
-    title: parked.title,
-    resumeSessionId: parked.sessionId,
-  });
+}
+
+function setParkedError(sessionId: string, error: string): void {
+  useTerminalStore.setState((state) => ({
+    error,
+    parkedAgents: state.parkedAgents.map((item) =>
+      item.sessionId === sessionId ? { ...item, error } : item,
+    ),
+  }));
+}
+
+/** Pick the most recent resumable parked conversation (current group first). */
+export function mostRecentParkedAgent(
+  parked: ParkedAgent[],
+  activeGroupId: string,
+): ParkedAgent | null {
+  const candidates = byRecency(parked.filter((item) => item.resumable !== false));
+  return (
+    candidates.find((item) => item.groupId === activeGroupId) ??
+    candidates[0] ??
+    null
+  );
+}
+
+/** Top-bar agent button with no live agents: lazily resume just one. */
+export async function resumeMostRecentParkedAgent(): Promise<boolean> {
+  const state = useTerminalStore.getState();
+  const target = mostRecentParkedAgent(state.parkedAgents, state.activeGroupId);
+  if (!target) return false;
+  return resumeParkedAgent(target.sessionId);
 }
 function readSessionListOpenByMode(): Record<RightTermMode, boolean> {
   try {
@@ -801,6 +910,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         readOnly: launch?.readOnly,
         resume: Boolean(launch?.resumeSessionId),
         sessionId: launch?.resumeSessionId,
+        title: taskTitle || undefined,
         cols: 80,
         rows: 24,
       });
@@ -1254,6 +1364,17 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onUpdated) {
 if (typeof window !== "undefined" && window.anchor?.terminal?.onExit) {
   window.anchor.terminal.onExit(({ id }) => {
     clearAgentCompletionTimer(id);
+    const watched = resumeWatch.get(id);
+    resumeWatch.delete(id);
+    if (watched && Date.now() - watched.at < RESUME_FAIL_WINDOW_MS) {
+      const error = "The CLI exited right after resuming; the session may no longer exist.";
+      useTerminalStore.setState((state) => ({
+        error,
+        parkedAgents: state.parkedAgents.some((p) => p.sessionId === watched.parked.sessionId)
+          ? state.parkedAgents
+          : [{ ...watched.parked, error }, ...state.parkedAgents],
+      }));
+    }
     useTerminalStore.setState((state) => {
       const tab = state.tabs.find((item) => item.id === id);
       return {
@@ -1300,3 +1421,9 @@ export function agentTabsInWorkgroup(
       (tabWorkgroupById[tab.id] ?? DEFAULT_WORKGROUP_ID) === groupId,
   );
 }
+
+// Recency for "most recent conversation": whichever agent tab gets focus.
+useTerminalStore.subscribe((state, prev) => {
+  const id = state.activeByMode.agent;
+  if (id && id !== prev.activeByMode.agent) markAgentActive(id);
+});

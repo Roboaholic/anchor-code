@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTabInfo } from "@/shared/anchor-api";
 import {
+  markAgentActive,
+  mostRecentParkedAgent,
   restoreParkedWorkspaceAgents,
+  resumeMostRecentParkedAgent,
   saveWorkspaceAgents,
   useTerminalStore,
 } from "./terminalStore";
@@ -472,5 +475,119 @@ describe("terminal error isolation", () => {
     expect(useTerminalStore.getState().activeByMode.terminal).toBe(shell.id);
     expect(useTerminalStore.getState().error).toBe("agent preflight failed");
     vi.unstubAllGlobals();
+  });
+});
+
+describe("saved conversations: recency, lazy resume, unresumable", () => {
+  function stub(createSession = vi.fn(async (args: { sessionId?: string }) => ({
+    id: `t-${args.sessionId}`,
+    title: "x",
+    cwd: "/workspace",
+    status: "running" as const,
+    kind: "agent" as const,
+    agentId: "claude",
+    agentSessionId: args.sessionId,
+  }))) {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    vi.stubGlobal("window", {
+      anchor: {
+        agent: {
+          listProfiles: vi.fn(async () => [{ id: "claude", name: "Claude", command: "claude" }]),
+          createSession,
+          setDefaultId: vi.fn(),
+        },
+        terminal: {},
+      },
+    });
+    return createSession;
+  }
+
+  beforeEach(() => {
+    useTerminalStore.setState({
+      tabs: [],
+      parkedAgents: [],
+      activeByMode: { terminal: null, agent: null },
+      tabWorkgroupById: {},
+      workspaceCwd: "/workspace",
+      workspaceHostProfileId: "local-default",
+      error: null,
+    });
+  });
+
+  it("persists newest-first and keeps id-less sessions listed as not resumable", () => {
+    stub();
+    const agent = (id: string, sid?: string): TerminalTabInfo => ({
+      id, title: id, cwd: "/workspace", status: "running", kind: "agent", agentId: "claude",
+      ...(sid ? { agentSessionId: sid } : {}),
+    });
+    useTerminalStore.setState({ tabs: [agent("old", "s-old"), agent("ask"), agent("new", "s-new")] });
+    markAgentActive("old", 100);
+    markAgentActive("ask", 200);
+    markAgentActive("new", 300);
+    saveWorkspaceAgents("/workspace", "local-default");
+    useTerminalStore.setState({ tabs: [], parkedAgents: [] });
+    restoreParkedWorkspaceAgents("/workspace", "local-default");
+    const parked = useTerminalStore.getState().parkedAgents;
+    expect(parked.map((p) => p.title)).toEqual(["new", "ask", "old"]);
+    expect(parked[1]!.resumable).toBe(false);
+    expect(parked[0]!.resumable).toBeUndefined();
+  });
+
+  it("lazily resumes only the most recent resumable one (current group first)", async () => {
+    const createSession = stub();
+    useTerminalStore.setState({
+      activeGroupId: DEFAULT_WORKGROUP_ID,
+      parkedAgents: [
+        { profileId: "claude", sessionId: "unresumable:1", title: "Ask", groupId: DEFAULT_WORKGROUP_ID, lastActiveAt: 900, resumable: false },
+        { profileId: "claude", sessionId: "s-other", title: "Other", groupId: "g2", lastActiveAt: 800 },
+        { profileId: "claude", sessionId: "s-new", title: "New", groupId: DEFAULT_WORKGROUP_ID, lastActiveAt: 500 },
+        { profileId: "claude", sessionId: "s-old", title: "Old", groupId: DEFAULT_WORKGROUP_ID, lastActiveAt: 100 },
+      ],
+    });
+    expect(mostRecentParkedAgent(useTerminalStore.getState().parkedAgents, "g2")?.sessionId).toBe("s-other");
+    const [a, b] = await Promise.all([resumeMostRecentParkedAgent(), resumeMostRecentParkedAgent()]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ resume: true, sessionId: "s-new" }));
+    expect(useTerminalStore.getState().parkedAgents.map((p) => p.sessionId)).toEqual([
+      "unresumable:1", "s-other", "s-old",
+    ]);
+  });
+
+  it("refuses unresumable entries and keeps a failed resume listed with its error", async () => {
+    stub(vi.fn(async () => { throw new Error("no such session"); }));
+    useTerminalStore.setState({
+      parkedAgents: [
+        { profileId: "claude", sessionId: "unresumable:1", title: "Ask", groupId: DEFAULT_WORKGROUP_ID, resumable: false },
+        { profileId: "claude", sessionId: "s-gone", title: "Gone", groupId: DEFAULT_WORKGROUP_ID },
+      ],
+    });
+    expect(await useTerminalStore.getState().resumeParkedAgent("unresumable:1")).toBe(false);
+    expect(await useTerminalStore.getState().resumeParkedAgent("s-gone")).toBe(false);
+    const gone = useTerminalStore.getState().parkedAgents.find((p) => p.sessionId === "s-gone");
+    expect(gone?.error).toContain("no such session");
+  });
+
+  it("re-pins a caller title (Ask) after resume", async () => {
+    stub();
+    const rename = vi.fn(async (id: string, title: string) => ({
+      id, title, cwd: "/workspace", status: "running" as const, kind: "agent" as const,
+      agentId: "claude", agentSessionId: "s-ask", titleSource: "user" as const,
+    }));
+    (window as unknown as { anchor: { terminal: Record<string, unknown> } }).anchor.terminal.rename = rename;
+    useTerminalStore.setState({
+      parkedAgents: [{ profileId: "claude", sessionId: "s-ask", title: "Ask · a.ts L3", groupId: DEFAULT_WORKGROUP_ID, titlePinned: true }],
+    });
+    expect(await useTerminalStore.getState().resumeParkedAgent("s-ask")).toBe(true);
+    expect(rename).toHaveBeenCalledWith("t-s-ask", "Ask · a.ts L3");
+  });
+
+  it("returns false when nothing is saved (caller opens the new-session dialog)", async () => {
+    stub();
+    expect(await resumeMostRecentParkedAgent()).toBe(false);
   });
 });

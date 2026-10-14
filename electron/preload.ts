@@ -847,6 +847,7 @@ const anchor = {
       readOnly?: boolean;
       resume?: boolean;
       sessionId?: string;
+      title?: string;
       cols?: number;
       rows?: number;
     }): Promise<TerminalTabInfo> =>

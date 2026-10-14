@@ -122,9 +122,12 @@ export class AgentFacade {
       );
     }
     const host = this.hosts.session;
+    const launchedAt = Date.now();
+    // A failed snapshot must not block the launch; capture then relies on
+    // transcripts created after `launchedAt`.
     const previousSessionIds = input.resume
       ? new Set<string>()
-      : await listAgentSessionIds(host, profile.id);
+      : await listAgentSessionIds(host, profile.id).catch(() => new Set<string>());
     const session = await this.terminal.create({
       cwd: this.workspace.root(),
       cols: input.cols ?? 80,
@@ -132,7 +135,9 @@ export class AgentFacade {
       kind: "agent",
       command: profile.command,
       args: [...(profile.args ?? []), ...extra],
-      title: prompt || fallbackTitle,
+      // Never the raw prompt: a short caller title, else a fallback the
+      // CLI-inferred title (watchSessionTitle) can replace.
+      title: input.title?.trim() || fallbackTitle,
       agentId: profile.id,
       agentSessionId: input.sessionId,
     });
@@ -148,6 +153,7 @@ export class AgentFacade {
           this.claimedSessions.add(key);
           return true;
         },
+        launchedAt,
       ).then((sessionId) => {
         if (sessionId) {
           this.terminal.setAgentSessionId(session.id, sessionId);
@@ -157,6 +163,7 @@ export class AgentFacade {
     } else if (input.sessionId) {
       this.watchSessionTitle(host, session.id, profile.id, input.sessionId);
     }
-    return prompt ? this.terminal.rename(session.id, prompt) ?? session : session;
+    const pinned = !input.resume ? input.title?.trim() : "";
+    return pinned ? this.terminal.rename(session.id, pinned) ?? session : session;
   }
 }

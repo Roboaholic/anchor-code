@@ -8426,3 +8426,8 @@ input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--accent);
 }
+
+.agent-sidebar__row--parked.is-unresumable {
+  opacity: 0.5;
+  cursor: default;
+}

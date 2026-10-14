@@ -480,8 +480,8 @@ export function AgentSidebar() {
                     <li key={`parked:${item.sessionId}`} className="agent-sidebar__item">
                       <button
                         type="button"
-                        className="agent-sidebar__row agent-sidebar__row--parked"
-                        disabled={resumingId === item.sessionId}
+                        className={`agent-sidebar__row agent-sidebar__row--parked${item.resumable === false ? " is-unresumable" : ""}`}
+                        disabled={resumingId === item.sessionId || item.resumable === false}
                         onClick={() => {
                           setResumingId(item.sessionId);
                           void resumeParkedAgent(item.sessionId).finally(() => {
@@ -490,11 +490,23 @@ export function AgentSidebar() {
                             );
                           });
                         }}
-                        title="Click title to resume"
+                        title={
+                          item.resumable === false
+                            ? "Can't resume: the CLI session id was never captured"
+                            : item.error
+                              ? `Resume failed: ${item.error}`
+                              : "Click title to resume"
+                        }
                       >
                         <span className="agent-sidebar__row-title">{item.title}</span>
                         <span className="muted">
-                          {resumingId === item.sessionId ? "resuming" : "saved"}
+                          {item.resumable === false
+                            ? "not resumable"
+                            : resumingId === item.sessionId
+                              ? "resuming"
+                              : item.error
+                                ? "failed"
+                                : "saved"}
                         </span>
                       </button>
                     </li>

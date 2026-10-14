@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import "@/features/shell/smoothScrollStore";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import {

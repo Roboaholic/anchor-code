@@ -86,7 +86,11 @@ export interface AddCommentInput {
   lineText?: string;
   body: string;
   author?: string;
+  /** Initial status (default `discussing`). */
+  status?: CommentStatus;
 }
+
+const COMMENT_STATUSES: readonly CommentStatus[] = ["discussing", "need_modify", "closed"];
 
 function sessionDir(host: HostSession, repoRoot: string): string {
   return hostJoin(host.kind, repoRoot, ".anchor-code");
@@ -327,7 +331,10 @@ export async function addComment(
     "";
   const comment: CommentRecord = {
     id: makeId("comment"),
-    status: "discussing",
+    status:
+      input.status && COMMENT_STATUSES.includes(input.status)
+        ? input.status
+        : "discussing",
     target: {
       file_path: asRelative(host, input.repoRoot, input.filePath),
       kind: input.kind,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSmoothScrollStore } from "./smoothScrollStore";
 import QRCode from "qrcode";
 import {
   DEFAULT_FONT_SIZE,
@@ -110,6 +111,9 @@ export function SettingsPanel() {
 
   const onClose = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   const [restoreLastWorkspace, setRestoreLastWorkspaceState] = useState(true);
+  const smoothScrollEnabled = useSmoothScrollStore((s) => s.enabled);
+  const reducedMotion = useSmoothScrollStore((s) => s.reducedMotion);
+  const setSmoothScrollEnabled = useSmoothScrollStore((s) => s.setEnabled);
 
   useEffect(() => {
     if (!open || !window.anchor?.settings?.getRestoreLastWorkspace) return;
@@ -437,6 +441,22 @@ export function SettingsPanel() {
                 <p className="settings-section__desc muted">
                   Falls back to the Welcome page if the folder, WSL distro, or
                   SSH host is unavailable.
+                </p>
+                <h3 className="settings-section__title">Scrolling</h3>
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    data-testid="smooth-scrolling-toggle"
+                    checked={smoothScrollEnabled && !reducedMotion}
+                    disabled={reducedMotion}
+                    onChange={(e) => setSmoothScrollEnabled(e.target.checked)}
+                  />
+                  <span>Smooth scrolling</span>
+                </label>
+                <p className="settings-section__desc muted">
+                  {reducedMotion
+                    ? "Off because the system asks for reduced motion."
+                    : "Animates scrolling in editors, diffs, the terminal (wheel only) and sidebars."}
                 </p>
                 <h3 className="settings-section__title">Font size</h3>
                 <p className="settings-section__desc muted">

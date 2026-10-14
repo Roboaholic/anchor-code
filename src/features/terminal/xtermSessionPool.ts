@@ -9,6 +9,10 @@ import { Terminal, type ILink, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { xtermThemeFromCss, type UiTheme } from "@/core/theme/theme";
 import { useTerminalStore } from "./terminalStore";
+import {
+  useSmoothScrollStore,
+  xtermSmoothScrollDuration,
+} from "@/features/shell/smoothScrollStore";
 import { useDocumentStore } from "@/features/document/documentStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
@@ -29,6 +33,12 @@ export type PooledXterm = {
 
 const pool = new Map<string, PooledXterm>();
 const fitDebounceTimers = new Map<string, number>();
+
+useSmoothScrollStore.subscribe((state, prev) => {
+  if (state.effective === prev.effective) return;
+  const ms = xtermSmoothScrollDuration(state.effective);
+  for (const session of pool.values()) session.term.options.smoothScrollDuration = ms;
+});
 export function terminalKeySequence(event: {
   key: string;
   ctrlKey: boolean;
@@ -217,6 +227,11 @@ export function acquireXtermSession(
     allowProposedApi: true,
     rightClickSelectsWord: false,
     scrollback: 50_000,
+    // Animates wheel/scrollbar scrolling only: buffer-driven scrolling (new
+    // output while following the bottom) syncs immediately in xterm's Viewport.
+    smoothScrollDuration: xtermSmoothScrollDuration(
+      useSmoothScrollStore.getState().effective,
+    ),
     windowsPty: navigator.platform.startsWith("Win")
       ? { backend: "conpty", buildNumber: 21376 }
       : undefined,

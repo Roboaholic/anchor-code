@@ -355,3 +355,48 @@ describe("selectionLabelForCard", () => {
     expect(selectionLabelForCard(card)).toBe("HEAD → worktree");
   });
 });
+
+describe("historyStore refreshRepo (header Refresh)", () => {
+  beforeEach(() => {
+    useHistoryStore.getState().reset();
+    mockAnchor();
+  });
+
+  it("refreshes status, history (when loaded) and compares together", async () => {
+    await useHistoryStore.getState().discover("/ws");
+    await useHistoryStore.getState().toggleHistory("/ws/repo-a");
+    const api = window.anchor.history as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    const statusCalls = api.status!.mock.calls.length;
+    const logCalls = api.loadLog!.mock.calls.length;
+    const recentCalls = api.getRecentCompares!.mock.calls.length;
+
+    const pending = useHistoryStore.getState().refreshRepo("/ws/repo-a");
+    expect(useHistoryStore.getState().refreshingRepos["/ws/repo-a"]).toBe(true);
+    // Coalesced while in flight.
+    await useHistoryStore.getState().refreshRepo("/ws/repo-a");
+    await pending;
+
+    expect(api.status!.mock.calls.length).toBe(statusCalls + 1);
+    expect(api.loadLog!.mock.calls.length).toBe(logCalls + 1);
+    expect(api.getRecentCompares!.mock.calls.length).toBe(recentCalls + 1);
+    expect(useHistoryStore.getState().refreshingRepos["/ws/repo-a"]).toBeUndefined();
+  });
+
+  it("does not load a never-opened History log; repos refresh independently", async () => {
+    await useHistoryStore.getState().discover("/ws");
+    const api = window.anchor.history as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    const logCalls = api.loadLog!.mock.calls.length;
+    const a = useHistoryStore.getState().refreshRepo("/ws/repo-a");
+    expect(useHistoryStore.getState().refreshingRepos["/ws/repo-b"]).toBeUndefined();
+    await a;
+    expect(api.loadLog!.mock.calls.length).toBe(logCalls);
+  });
+
+  it("clears the spinner state even when a refresh fails", async () => {
+    await useHistoryStore.getState().discover("/ws");
+    const api = window.anchor.history as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    api.status!.mockRejectedValueOnce(new Error("git failed"));
+    await useHistoryStore.getState().refreshRepo("/ws/repo-a");
+    expect(useHistoryStore.getState().refreshingRepos["/ws/repo-a"]).toBeUndefined();
+  });
+});

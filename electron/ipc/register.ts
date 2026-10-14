@@ -1673,6 +1673,7 @@ export function registerIpc(opts: {
         readOnly?: boolean;
         resume?: boolean;
         sessionId?: string;
+        title?: string;
         cols?: number;
         rows?: number;
       },

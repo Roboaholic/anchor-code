@@ -11,7 +11,11 @@ export function sessionIdPattern(profileId: string): RegExp | null {
     case "omp":
       return new RegExp(`\\"type\\":\\"session\\"[^\\n]*?\\"id\\":\\"(${UUID})\\"`, "gi");
     case "codex":
-      return new RegExp(`\\"session_id\\":\\"(${UUID})\\"`, "gi");
+      // Older rollouts: "session_id"; newer session_meta lines: {"type":"session_meta","payload":{"id":…}}.
+      return new RegExp(
+        `\\"session_id\\":\\"(${UUID})\\"|\\"type\\":\\"session_meta\\"[^\\n]*?\\"id\\":\\"(${UUID})\\"`,
+        "gi",
+      );
     case "claude":
     case "gemini":
       return new RegExp(`\\"sessionId\\":\\"(${UUID})\\"`, "gi");
@@ -24,6 +28,23 @@ const UUID_PATTERN = new RegExp(UUID, "gi");
 
 export function sessionIdsFromPaths(text: string): Set<string> {
   return new Set(text.match(UUID_PATTERN)?.map((id) => id.toLowerCase()) ?? []);
+}
+
+/** Session ids from transcript file names (`<uuid>.jsonl`, `rollout-…-<uuid>.jsonl`). */
+export function sessionIdsFromFileNames(text: string): Set<string> {
+  const ids = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const base = line.trim().split(/[\\/]/).pop() ?? "";
+    const m = base.match(new RegExp(`(${UUID})\\.jsonl$`, "i"));
+    if (m?.[1]) ids.add(m[1].toLowerCase());
+  }
+  return ids;
+}
+
+/** CLIs whose transcript file name carries the session id. */
+function namesCarrySessionId(profileId: string): boolean {
+  const id = profileId.trim().toLowerCase();
+  return id === "claude" || id === "codex";
 }
 
 export interface AgentSessionSummary {
@@ -124,7 +145,8 @@ export function parseAgentSessionList(
     const filePath = header.slice(tab + 1);
     const transcript = record.slice(newline + 1);
     const pathId = filePath.match(UUID_PATTERN)?.[0];
-    const contentId = pattern ? [...transcript.matchAll(pattern)][0]?.[1] : undefined;
+    const first = pattern ? [...transcript.matchAll(pattern)][0] : undefined;
+    const contentId = first ? first[1] ?? first[2] : undefined;
     const id = (pathId ?? contentId)?.toLowerCase();
     if (!id) continue;
     sessions.push({
@@ -208,14 +230,26 @@ export async function listAgentSessions(
   return parseAgentSessionList(profileId, text);
 }
 
-async function runSessionPathScan(host: HostSession, root: string): Promise<string> {
+async function runSessionPathScan(
+  host: HostSession,
+  root: string,
+  sinceMs?: number,
+): Promise<string> {
   const cwd = hostHomeCwd(host);
+  // Minutes window (+1 slack) for "modified since launch" filtering.
+  const minutes = sinceMs !== undefined
+    ? Math.max(1, Math.ceil((Date.now() - sinceMs) / 60_000) + 1)
+    : null;
   if (host.kind === "local" && process.platform === "win32") {
     const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
-    const command = `$root=${rootArg}; if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } }`;
+    const since = minutes !== null
+      ? ` | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-${minutes}) }`
+      : "";
+    const command = `$root=${rootArg}; if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue${since} | ForEach-Object { $_.FullName } }`;
     return (await host.run(cwd, "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { timeoutMs: 8_000 })).stdout;
   }
-  const script = `if [ -d ${shellQuote(root)} ]; then find ${shellQuote(root)} -type f -name '*.jsonl' -print 2>/dev/null; fi`;
+  const since = minutes !== null ? ` -mmin -${minutes}` : "";
+  const script = `if [ -d ${shellQuote(root)} ]; then find ${shellQuote(root)} -type f -name '*.jsonl'${since} -print 2>/dev/null; fi`;
   if (host.kind === "wsl" || host.kind === "ssh") {
     return (await host.run(cwd, "bash", ["-s"], { stdin: script, timeoutMs: 8_000 })).stdout;
   }
@@ -268,10 +302,39 @@ export async function listAgentSessionIds(host: HostSession, profileId: string):
     return sessionIdsFromPaths(await runSessionPathScan(host, root));
   }
   const ids = new Set<string>();
-  for (const match of (await runSessionScan(host, root)).matchAll(pattern)) {
-    if (match[1]) ids.add(match[1]);
+  let scanError: unknown = null;
+  if (namesCarrySessionId(id)) {
+    try {
+      for (const sid of sessionIdsFromFileNames(await runSessionPathScan(host, root))) ids.add(sid);
+    } catch (err) {
+      scanError = err;
+    }
+  }
+  try {
+    for (const match of (await runSessionScan(host, root)).matchAll(pattern)) {
+      const sid = match[1] ?? match[2];
+      if (sid) ids.add(sid.toLowerCase());
+    }
+  } catch (err) {
+    if (scanError || !namesCarrySessionId(id)) throw err;
   }
   return ids;
+}
+
+/**
+ * Ids of transcripts written since `sinceMs` (claude / codex file names).
+ * Null when the CLI has no id-bearing file names.
+ */
+export async function listRecentSessionFileIds(
+  host: HostSession,
+  profileId: string,
+  sinceMs: number,
+): Promise<Set<string> | null> {
+  if (!namesCarrySessionId(profileId)) return null;
+  const home = await resolveHostHome(host);
+  const root = sessionRoot(home, profileId);
+  if (!root) return null;
+  return sessionIdsFromFileNames(await runSessionPathScan(host, root, sinceMs));
 }
 
 export function claimCreatedAgentSession(
@@ -292,12 +355,28 @@ export async function waitForCreatedAgentSession(
   before: ReadonlySet<string>,
   timeoutMs = AGENT_SESSION_CAPTURE_TIMEOUT_MS,
   claim?: (sessionId: string) => boolean,
+  /** Launch time; only transcripts written after it count (claude / codex). */
+  sinceMs?: number,
 ): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   do {
-    const current = await listAgentSessionIds(host, profileId);
-    const created = claimCreatedAgentSession(current, before, claim);
-    if (created) return created;
+    // Scan failures / timeouts (big transcript trees, slow SSH) are retried,
+    // never fatal: a missed id means the session can't be resumed later.
+    try {
+      // Prefer transcripts created after launch (file name = id): immune to
+      // first-line formats (plan mode, long prompts) and to a failed `before`.
+      const recent = await listRecentSessionFileIds(host, profileId, sinceMs ?? startedAt);
+      const fromFiles = recent ? claimCreatedAgentSession(recent, before, claim) : null;
+      if (fromFiles) return fromFiles;
+      if (!recent || recent.size === 0) {
+        const current = await listAgentSessionIds(host, profileId);
+        const created = claimCreatedAgentSession(current, before, claim);
+        if (created) return created;
+      }
+    } catch {
+      // retry
+    }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   } while (Date.now() < deadline);
   return null;

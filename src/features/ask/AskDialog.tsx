@@ -197,13 +197,13 @@ export function AskDialog() {
         const profileId = target.slice(NEW_PREFIX.length);
         const profile = store.agentProfiles.find((p) => p.id === profileId);
         if (!profile) throw new Error(`Agent profile not found: ${profileId}`);
-        const ok = await store.createAgentTab(profile, { prompt, readOnly });
+        const base = context.path.split(/[\\/]/).pop() || context.path;
+        const ok = await store.createAgentTab(profile, {
+          prompt,
+          readOnly,
+          title: `Ask · ${base} ${askLineLabel(context)}`,
+        });
         if (!ok) throw new Error(store.error ?? "Could not start agent session");
-        const created = useTerminalStore.getState().activeByMode.agent;
-        if (created) {
-          const base = context.path.split(/[\\/]/).pop() || context.path;
-          void store.renameTab(created, `Ask · ${base} ${askLineLabel(context)}`);
-        }
       } else if (targetTab) {
         // Re-check at send time: session may have started working meanwhile.
         if (!isAskSessionSelectable(targetTab, store.agentActivity[targetTab.id])) {

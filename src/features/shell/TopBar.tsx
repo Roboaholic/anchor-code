@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { workspaceDisplayName } from "@/core/workspace/paths";
 import { Icon } from "@/shared/Icon";
 import type { AppUpdateState, HostKind, WorkspaceInstance } from "@/shared/anchor-api";
-import { useTerminalStore } from "@/features/terminal/terminalStore";
+import { resumeMostRecentParkedAgent, useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { AppMenuBar } from "./AppMenuBar";
 import { useShellStore } from "./shellStore";
@@ -210,10 +210,19 @@ export function TopBar() {
     }
     const hasAgent = tabs.some((tab) => (tab.kind ?? "shell") === "agent");
     const shell = useShellStore.getState();
+    // Nothing live but conversations saved from last time: resume only the
+    // most recent one (others stay listed and resume on click).
+    const resumeSaved = async (): Promise<boolean> => {
+      if (hasAgent) return false;
+      const ok = await resumeMostRecentParkedAgent();
+      if (ok) useShellStore.getState().setAgentVisible(true);
+      return ok;
+    };
 
     if (shell.leftMode === "agent") {
       shell.leaveAgentWorkbench();
       if (hasAgent) shell.setAgentVisible(true);
+      else if (await resumeSaved()) return;
       else {
         void useTerminalStore.getState().loadAgentProfiles();
         useTerminalStore.getState().setAgentMenuOpen(true);
@@ -222,6 +231,7 @@ export function TopBar() {
     }
 
     if (!hasAgent) {
+      if (!useTerminalStore.getState().agentMenuOpen && (await resumeSaved())) return;
       if (useTerminalStore.getState().agentMenuOpen) {
         useTerminalStore.getState().closeAgentMenu();
       } else {

@@ -190,6 +190,8 @@ export interface CreateAgentSessionInput {
   readOnly?: boolean;
   resume?: boolean;
   sessionId?: string;
+  /** Short tab title. Pinned (user) for new sessions; initial title on resume. */
+  title?: string;
   cols?: number;
   rows?: number;
 }

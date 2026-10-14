@@ -7,6 +7,8 @@ import {
   listAgentSessions,
   parseAgentSessionList,
   sessionIdsFromPaths,
+  sessionIdsFromFileNames,
+  waitForCreatedAgentSession,
   sessionIdPattern,
 } from "./agentSessionIdentity.js";
 
@@ -111,4 +113,41 @@ describe("agent session identity", () => {
     expect(sessionIdPattern("custom")).toBeNull();
     expect(extract("codex", `{"turn_id":"${id}"}`)).toEqual([]);
   });
+});
+
+describe("robust session id capture", () => {
+  const fresh = "11111111-2222-4333-8444-555555555555";
+  const old = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+  it("reads ids from transcript file names only", () => {
+    expect([...sessionIdsFromFileNames([
+      `/h/.claude/projects/-repo/${fresh}.jsonl`,
+      `/h/.codex/sessions/2026/10/14/rollout-2026-10-14T07-00-00-${old.toUpperCase()}.jsonl`,
+      `/h/.claude/projects/-repo/${old}/subagents/agent-1.jsonl`,
+    ].join("\n"))]).toEqual([fresh, old]);
+  });
+
+  it("matches newer codex session_meta ids", () => {
+    const pattern = sessionIdPattern("codex")!;
+    const m = [...`{"type":"session_meta","payload":{"id":"${fresh}","cwd":"/r"}}`.matchAll(pattern)][0]!;
+    expect(m[1] ?? m[2]).toBe(fresh);
+  });
+
+  it("retries after a scan failure and claims the transcript created after launch", async () => {
+    let recentCalls = 0;
+    const run = vi.fn(async (_cwd: string, _cmd: string, args: string[], opts?: { stdin?: string }) => {
+      const script = [...args, opts?.stdin ?? ""].join(" ");
+      if (script.includes("-mmin")) {
+        recentCalls += 1;
+        if (recentCalls === 1) throw new Error("scan timed out");
+        return { stdout: `/home/u/.claude/projects/-repo/${old}.jsonl\n/home/u/.claude/projects/-repo/${fresh}.jsonl\n`, stderr: "", code: 0 };
+      }
+      if (script.includes("HOME") || script.includes("echo")) return { stdout: "/home/u\n", stderr: "", code: 0 };
+      return { stdout: "", stderr: "", code: 0 };
+    });
+    const host = { id: "local", kind: "local", run } as never;
+    const id = await waitForCreatedAgentSession(host, "claude", new Set([old]), 10_000, undefined, Date.now());
+    expect(id).toBe(fresh);
+    expect(recentCalls).toBe(2);
+  }, 15_000);
 });

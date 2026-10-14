@@ -4158,6 +4158,11 @@ body.terminal-session-rail-resizing {
   line-height: 1;
   text-transform: uppercase;
   color: var(--text-muted);
+  /* Narrow sidebars: never wrap under the head actions (All / Tracked / Commit). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .repo-block__toggle {

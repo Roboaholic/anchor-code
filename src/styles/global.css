@@ -8376,9 +8376,19 @@ select.field__input {
 }
 .ask__readonly {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   font-size: 12px;
+  white-space: nowrap;
+}
+/* Themed native checkboxes in the Ask / new-comment popovers. */
+.ask-pop input[type="checkbox"] {
+  margin: 0;
+}
+.ask-pop__target {
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 /* New-comment popover (reuses .ask-pop). */
@@ -8387,6 +8397,7 @@ select.field__input {
 }
 .comment-pop__newsession {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   color: var(--text-muted);
@@ -8408,4 +8419,10 @@ html.smooth-scroll .repo-card-list,
 html.smooth-scroll .comments-pane,
 html.smooth-scroll .comment-list {
   scroll-behavior: smooth;
+}
+
+/* Native checkboxes / radios follow the theme accent everywhere (no browser default). */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
 }

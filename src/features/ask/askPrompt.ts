@@ -62,8 +62,24 @@ export function buildAskPrompt(input: AskPromptInput): string {
   }
   lines.push("", "Selected code:", "```", snippet, "```");
   if (clipped) lines.push(`(snippet clipped to ${MAX_SNIPPET_CHARS} chars)`);
-  lines.push("", "Question:", question);
+  const lang = detectQuestionLanguage(question);
+  lines.push(
+    "",
+    lang
+      ? `Reply in the same language as the question below (${lang}).`
+      : "Reply in the same language as the question below.",
+    "Question:",
+    question,
+  );
   return lines.join("\n");
+}
+
+/** Best-effort language name for CJK questions; null = let the agent infer. */
+export function detectQuestionLanguage(text: string): string | null {
+  if (/[\u3040-\u30ff]/.test(text)) return "Japanese";
+  if (/[\uac00-\ud7af]/.test(text)) return "Korean";
+  if (/[\u4e00-\u9fff]/.test(text)) return "Chinese";
+  return null;
 }
 
 /** Only idle (or finished-but-unread) running agent sessions can take an Ask. */

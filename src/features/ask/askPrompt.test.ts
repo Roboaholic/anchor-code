@@ -6,6 +6,7 @@ import {
   askSessionLabel,
   askPasteChunks,
   buildAskPrompt,
+  detectQuestionLanguage,
   isAskSessionSelectable,
 } from "./askPrompt";
 
@@ -17,6 +18,16 @@ const ctx = {
 };
 
 describe("buildAskPrompt", () => {
+  it("asks for a reply in the question's language, naming CJK explicitly", () => {
+    const en = buildAskPrompt({ context: ctx, question: "why?", readOnly: false });
+    expect(en).toContain("Reply in the same language as the question below.\nQuestion:\nwhy?");
+    const zh = buildAskPrompt({ context: ctx, question: "这里为什么要加锁？", readOnly: false });
+    expect(zh).toContain("Reply in the same language as the question below (Chinese).");
+    expect(detectQuestionLanguage("これは何？")).toBe("Japanese");
+    expect(detectQuestionLanguage("이게 뭐야?")).toBe("Korean");
+    expect(detectQuestionLanguage("what is this")).toBeNull();
+  });
+
   it("includes path, lines, snippet and question", () => {
     const p = buildAskPrompt({ context: ctx, question: "  why?  ", readOnly: false });
     expect(p).toContain("File: /repo/src/a.ts");

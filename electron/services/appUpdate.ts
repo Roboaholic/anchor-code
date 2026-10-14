@@ -4,7 +4,7 @@
  * Packaged builds: electron-updater (NSIS / dmg / AppImage).
  * Dev / unpackaged: GitHub API check + open release page (cannot self-install).
  */
-import { app, shell, type BrowserWindow } from "electron";
+import { app, BrowserWindow, session, shell } from "electron";
 // electron-updater is CJS — default import required under ESM main.
 import electronUpdater from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
@@ -377,8 +377,20 @@ export function installAppUpdate(): { ok: boolean; error?: string } {
     return { ok: false, error: "No update downloaded yet." };
   }
   try {
-    // isSilent=false, isForceRunAfter=true
-    autoUpdater.quitAndInstall(false, true);
+    // Ask renderers to persist tabs and flush localStorage before the updater
+    // force-quits; quitAndInstall can skip the normal beforeunload path.
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("shell:command", { type: "flushState" });
+    }
+    setTimeout(() => {
+      try {
+        session.defaultSession.flushStorageData();
+      } catch {
+        // best effort
+      }
+      // isSilent=false, isForceRunAfter=true
+      autoUpdater.quitAndInstall(false, true);
+    }, 300);
     return { ok: true };
   } catch (err) {
     return {

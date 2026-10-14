@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, session } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -305,6 +305,17 @@ app.whenReady().then(async () => {
         .then((t) => createWindow(t));
     }
   });
+});
+
+// Renderer state (open tabs) lives in localStorage, which Chromium writes to
+// disk lazily. Windows have already run beforeunload by will-quit, so flush
+// the storage backend there so a fast quit cannot drop the last save.
+app.on("will-quit", () => {
+  try {
+    session.defaultSession.flushStorageData();
+  } catch {
+    // best effort
+  }
 });
 
 registerRuntimeLifecycle({

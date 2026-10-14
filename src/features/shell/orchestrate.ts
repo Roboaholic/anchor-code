@@ -12,6 +12,7 @@ import { joinPath } from "@/core/workspace/paths";
 import {
   restoreCachedWorkspaceDocuments,
   restoreWorkspaceDocuments,
+  flushDocumentAutosave,
   saveWorkspaceDocuments,
   useDocumentStore,
 } from "@/features/document/documentStore";
@@ -145,6 +146,14 @@ export async function closeWorkspace(id: string): Promise<void> {
     if (!res.wasActive) {
       await useWorkspaceStore.getState().loadOpenWorkspaces();
       return;
+    }
+    // Persist the closing workspace's tabs (e.g. "close all") before dropping
+    // its root, so reopening it later does not resurrect stale tabs.
+    const closing = useWorkspaceStore.getState();
+    if (closing.workspaceRoot) {
+      flushDocumentAutosave();
+      saveWorkspaceDocuments(closing.workspaceRoot, closing.hostProfileId);
+      saveWorkspaceAgents(closing.workspaceRoot, closing.hostProfileId);
     }
     // Drop the closed root first so activateWorkspace does not re-save its views.
     useWorkspaceStore.setState({

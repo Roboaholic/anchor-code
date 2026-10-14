@@ -434,6 +434,7 @@ export interface SkillInstallResult {
 export interface AnchorApi {
   shell: {
     getVersion: () => Promise<AppVersionInfo>;
+    flushStorage?: () => Promise<void>;
     menuAction: (action: string) => Promise<boolean>;
     onCommand: (cb: (cmd: { type: string; path?: string; hostProfileId?: string }) => void) => () => void;
     setAgentInputFocused: (focused: boolean) => void;

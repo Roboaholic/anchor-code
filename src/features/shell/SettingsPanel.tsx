@@ -157,7 +157,7 @@ export function SettingsPanel() {
   useEffect(() => {
     if (!open) return;
     if (!window.anchor?.remote?.getInfo) {
-      setRemoteError("桌面主进程版本过旧，请完全退出并重新启动 Anchor Code。");
+      setRemoteError("The desktop main process is outdated. Quit Anchor Code completely and restart it.");
       return;
     }
     setRemoteError(null);
@@ -214,7 +214,7 @@ export function SettingsPanel() {
 
   const saveRemote = useCallback(async (enabled?: boolean) => {
     if (!window.anchor?.remote?.update) {
-      setRemoteError("桌面主进程版本过旧，请完全退出并重新启动 Anchor Code。");
+      setRemoteError("The desktop main process is outdated. Quit Anchor Code completely and restart it.");
       return;
     }
     setRemoteBusy(true);

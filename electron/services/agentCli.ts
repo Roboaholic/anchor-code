@@ -14,6 +14,7 @@ export const BUILTIN_AGENT_CANDIDATES: Omit<
   { id: "codex", name: "Codex", command: "codex", args: [] },
   { id: "grok", name: "Grok", command: "grok", args: [] },
   { id: "omp", name: "OMP", command: "omp", args: [] },
+  { id: "pi", name: "Pi", command: "pi", args: [] },
   { id: "aider", name: "Aider", command: "aider", args: [] },
   { id: "goose", name: "Goose", command: "goose", args: [] },
   { id: "cursor-agent", name: "Cursor Agent", command: "cursor-agent", args: [] },

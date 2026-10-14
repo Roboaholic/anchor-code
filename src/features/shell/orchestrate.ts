@@ -334,6 +334,8 @@ export async function addCommentFromSelection(input: {
   afterContext: string;
   lineText?: string;
   body: string;
+  /** Initial status for the new comment (default discussing). */
+  status?: CommentRecord["status"];
   /** End current session (export) and open a fresh one before saving. */
   forceNewSession?: boolean;
 }): Promise<void> {
@@ -366,6 +368,7 @@ export async function addCommentFromSelection(input: {
     afterContext: input.afterContext,
     lineText: input.lineText,
     body: input.body,
+    status: input.status,
   });
 }
 

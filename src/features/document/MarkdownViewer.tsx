@@ -31,10 +31,18 @@ import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
 import { elementAnchor, openAsk } from "@/features/ask/askStore";
+import type { AskAnchorRect } from "@/features/ask/askPrompt";
+import { NewCommentPopover } from "@/features/annotations/NewCommentPopover";
 
 type ComposerState = MarkdownSourceAnchor & {
   forceNewSession: boolean;
+  anchor: AskAnchorRect | null;
 };
+
+function rangeAnchor(rect: DOMRect | null | undefined): AskAnchorRect | null {
+  if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+  return { top: rect.bottom - 1, bottom: rect.bottom, left: rect.left, startTop: rect.top };
+}
 
 type BubbleState = {
   commentId: string;
@@ -289,9 +297,9 @@ function RenderedMarkdownPane({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
-  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const bubbleRef = useRef<BubbleState | null>(null);
   const pendingSelectionTextRef = useRef<string | null>(null);
+  const pendingSelectionRectRef = useRef<DOMRect | null>(null);
   const handledRevealRef = useRef<string | null>(null);
   const fontSize = useThemeStore((s) => s.fontSize);
   const mdFontSize = markdownFontSize(fontSize);
@@ -304,8 +312,6 @@ function RenderedMarkdownPane({
   const activeSession = useAnnotationsStore((s) => s.activeSession);
 
   const [composer, setComposer] = useState<ComposerState | null>(null);
-  const [body, setBody] = useState("");
-  const [saving, setSaving] = useState(false);
   const [selToolbar, setSelToolbar] = useState<SelToolbar | null>(null);
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [marks, setMarks] = useState<MdMarkRect[]>([]);
@@ -429,6 +435,7 @@ function RenderedMarkdownPane({
     );
     // Cache selected text: clicking the chip can clear the live DOM selection.
     pendingSelectionTextRef.current = sel.text;
+    pendingSelectionRectRef.current = rect;
     setSelToolbar({ left, top, text: sel.text });
   }, []);
 
@@ -463,9 +470,8 @@ function RenderedMarkdownPane({
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target;
       if (!(target instanceof Element)) return;
-      if (target.closest(".composer")) return;
+      if (target.closest(".comment-pop")) return;
       setComposer(null);
-      setBody("");
       setLocateError(null);
       pendingSelectionTextRef.current = null;
       setSelToolbar(null);
@@ -494,28 +500,20 @@ function RenderedMarkdownPane({
         );
         return;
       }
+      const liveRect = readDomSelectionIn(bodyRef.current)?.range.getBoundingClientRect();
+      const popAnchor = rangeAnchor(liveRect) ?? rangeAnchor(pendingSelectionRectRef.current);
       setLocateError(null);
       setBubble(null);
       pendingSelectionTextRef.current = null;
+      pendingSelectionRectRef.current = null;
       setSelToolbar(null);
-      setComposer({ ...anchor, forceNewSession });
-      setBody("");
+      setComposer({ ...anchor, forceNewSession, anchor: popAnchor });
       // Clear DOM selection so highlight doesn't fight the composer.
       window.getSelection()?.removeAllRanges();
     },
     [content],
   );
 
-  useEffect(() => {
-    if (!composer) return;
-    const input = composerInputRef.current;
-    const container = scrollRef.current;
-    if (!input || !container) return;
-    const scrollTop = container.scrollTop;
-    const scrollLeft = container.scrollLeft;
-    input.focus({ preventScroll: true });
-    container.scrollTo({ top: scrollTop, left: scrollLeft });
-  }, [composer]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -545,10 +543,13 @@ function RenderedMarkdownPane({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openComposer]);
 
-  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
-    if (!composer || !body.trim()) return;
-    setSaving(true);
-    try {
+  const submit = async (
+    text: string,
+    status: CommentRecord["status"],
+    forceNewSession: boolean,
+  ) => {
+    if (!composer || !text.trim()) return;
+    {
       await addCommentFromSelection({
         filePath: path,
         kind: "markdown",
@@ -560,14 +561,12 @@ function RenderedMarkdownPane({
         beforeContext: composer.beforeContext,
         afterContext: composer.afterContext,
         lineText: composer.lineText,
-        body: body.trim(),
+        body: text.trim(),
+        status,
         forceNewSession,
       });
       setComposer(null);
-      setBody("");
       // marks refresh via store → fileComments
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -731,49 +730,15 @@ function RenderedMarkdownPane({
       ) : null}
 
       {composer ? (
-        <div className="composer">
-          <div className="composer__meta">
-            L{composer.startLine}–{composer.endLine}:{" "}
-            <code>{composer.selectedText.slice(0, 80)}</code>
-            {composer.forceNewSession ? (
-              <span className="composer__badge">new session</span>
-            ) : null}
-          </div>
-          <textarea
-            ref={composerInputRef}
-            className="composer__input"
-            rows={3}
-            placeholder="Write feedback for the AI CLI…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
-          <div className="composer__actions">
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              onClick={() => setComposer(null)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              disabled={!body.trim() || saving}
-              onClick={() => void submit(true)}
-              title="End the active session and save this comment in a new session"
-            >
-              Save comment (new session)
-            </button>
-            <button
-              type="button"
-              className="btn btn--accent btn--small"
-              disabled={!body.trim() || saving}
-              onClick={() => void submit(false)}
-            >
-              {saving ? "Saving…" : "Save comment"}
-            </button>
-          </div>
-        </div>
+        <NewCommentPopover
+          path={path}
+          startLine={composer.startLine}
+          endLine={composer.endLine}
+          anchor={composer.anchor}
+          initialNewSession={composer.forceNewSession}
+          onSubmit={submit}
+          onClose={() => setComposer(null)}
+        />
       ) : null}
 
       {ctxMenu ? (

@@ -130,6 +130,8 @@ export interface AnnotationsState {
     afterContext: string;
     lineText?: string;
     body: string;
+    /** Initial status (default discussing). */
+    status?: CommentRecord["status"];
   }) => Promise<void>;
   setStatus: (
     commentId: string,

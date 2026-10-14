@@ -202,7 +202,8 @@ function RepoCard({
   const toggleExpanded = useHistoryStore((s) => s.toggleExpanded);
   const toggleChanges = useHistoryStore((s) => s.toggleChanges);
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
-  const refreshLog = useHistoryStore((s) => s.refreshLog);
+  const refreshRepo = useHistoryStore((s) => s.refreshRepo);
+  const refreshing = useHistoryStore((s) => s.refreshingRepos[card.root] === true);
   const loadMoreLog = useHistoryStore((s) => s.loadMoreLog);
   const toggleCompares = useHistoryStore((s) => s.toggleCompares);
   const toggleCommit = useHistoryStore((s) => s.toggleCommit);
@@ -372,6 +373,21 @@ function RepoCard({
             <span className="repo-row__count is-muted">…</span>
           ) : null}
         </span>
+        <button
+          type="button"
+          className={`icon-btn repo-row__refresh${refreshing ? " is-spinning" : ""}`}
+          disabled={refreshing}
+          aria-busy={refreshing}
+          onClick={(e) => {
+            // Header row toggles collapse; refresh must not.
+            e.stopPropagation();
+            void refreshRepo(card.root);
+          }}
+          title="Refresh"
+          aria-label="Refresh"
+        >
+          <Icon name="refresh" />
+        </button>
       </div>
 
       {card.expanded ? (
@@ -429,15 +445,6 @@ function RepoCard({
                       {commitOpen ? "Cancel" : "Commit"}
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => void refreshStatus(card.root)}
-                    title="Refresh working tree status"
-                    aria-label="Refresh working tree status"
-                  >
-                    <Icon name="refresh" />
-                  </button>
                 </div>
               ) : null}
             </div>
@@ -572,16 +579,6 @@ function RepoCard({
                     }
                   >
                     {card.comparing ? "Comparing…" : "Compare"}
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    disabled={card.logStatus === "loading"}
-                    onClick={() => void refreshLog(card.root)}
-                    title="Refresh commit history"
-                    aria-label="Refresh commit history"
-                  >
-                    <Icon name="refresh" />
                   </button>
                 </div>
               ) : null}

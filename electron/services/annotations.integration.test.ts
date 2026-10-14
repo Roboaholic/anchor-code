@@ -95,6 +95,27 @@ describe("annotationsService (integration, YAML on disk)", () => {
     expect(onDisk).toContain("avoid legacy");
   });
 
+  it("creates a comment with an initial status (default discussing)", async () => {
+    await ensureActiveSession(host, root);
+    const input = {
+      repoRoot: root,
+      filePath,
+      kind: "source" as const,
+      startLine: 2,
+      endLine: 2,
+      startColumn: 1,
+      endColumn: 6,
+      selectedText: "const",
+      beforeContext: "line1",
+      afterContext: "line3",
+    };
+    await addComment(host, { ...input, body: "plain" });
+    const withStatus = await addComment(host, { ...input, body: "fix it", status: "need_modify" });
+    expect(withStatus.comments.map((c) => c.status)).toEqual(["discussing", "need_modify"]);
+    const onDisk = await fs.readFile(await copyYamlPath(host, root), "utf8");
+    expect(onDisk).toContain("status: need_modify");
+  });
+
   it("edits, sets status, deletes comments", async () => {
     await ensureActiveSession(host, root);
     const withComment = await addComment(host, {

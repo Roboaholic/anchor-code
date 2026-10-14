@@ -4088,6 +4088,22 @@ body.terminal-session-rail-resizing {
   color: var(--text-secondary);
 }
 
+/* Single per-repo Refresh (status + history + compares), far right of header. */
+.repo-row__refresh {
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+}
+
+.repo-row__meta + .repo-row__refresh {
+  margin-left: 0;
+}
+
+.repo-row__refresh.is-spinning .codicon {
+  animation: topbar-update-spin 0.9s linear infinite;
+}
+
 .repo-row__count {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
@@ -8363,4 +8379,33 @@ select.field__input {
   align-items: center;
   gap: 4px;
   font-size: 12px;
+}
+
+/* New-comment popover (reuses .ask-pop). */
+.comment-pop__status {
+  max-width: 130px;
+}
+.comment-pop__newsession {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.comment-pop__spacer {
+  flex: 1 1 auto;
+}
+.comment-pop__error {
+  color: var(--danger, #e5534b);
+  font-size: 12px;
+}
+
+/* Smooth scrolling (Settings › Smooth scrolling; off under prefers-reduced-motion).
+   Covers wheel-independent programmatic scrolls too (reveal / scrollIntoView). */
+html.smooth-scroll .files-tree-scroll,
+html.smooth-scroll .files-search-results__body,
+html.smooth-scroll .repo-card-list,
+html.smooth-scroll .comments-pane,
+html.smooth-scroll .comment-list {
+  scroll-behavior: smooth;
 }

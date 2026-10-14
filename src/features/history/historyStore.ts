@@ -59,6 +59,8 @@ export interface HistoryState {
   /** Flat list for workspace; UI filters by repoRoot. */
   recentCompares: HistoryCompareEntry[];
   toast: string | null;
+  /** Repo roots with a header Refresh in flight (spinner / disabled). */
+  refreshingRepos: Record<string, true>;
 
   /** Uses the main-process repo cache unless `force` (Rescan). */
   discover: (workspaceRoot: string, opts?: { force?: boolean }) => Promise<void>;
@@ -78,6 +80,12 @@ export interface HistoryState {
   toggleExpanded: (repoRoot: string) => void;
   toggleChanges: (repoRoot: string) => void;
   toggleHistory: (repoRoot: string) => Promise<void>;
+  /**
+   * Header Refresh: working-tree status, commit log (if History was loaded)
+   * and the workspace's recent compares, together. Concurrent calls for the
+   * same repo are coalesced.
+   */
+  refreshRepo: (repoRoot: string) => Promise<void>;
   /** Reload commit log for an open History section (incremental when possible). */
   refreshLog: (repoRoot: string) => Promise<void>;
   /** Fetch next page of commits (--skip). */
@@ -213,6 +221,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   repos: [],
   recentCompares: [],
   toast: null,
+  refreshingRepos: {},
 
   reset: () =>
     set({
@@ -222,7 +231,32 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       repos: [],
       recentCompares: [],
       toast: null,
+      refreshingRepos: {},
     }),
+
+  refreshRepo: async (repoRoot) => {
+    if (get().refreshingRepos[repoRoot]) return;
+    set((s) => ({ refreshingRepos: { ...s.refreshingRepos, [repoRoot]: true } }));
+    try {
+      const card = findCard(get().repos, repoRoot);
+      const workspaceRoot = get().workspaceRoot;
+      const tasks: Promise<unknown>[] = [
+        get().refreshStatus(repoRoot, { badgeOnly: false }),
+      ];
+      // Don't force a full log load for a History section never opened.
+      if (card && (card.historyOpen || card.commits.length > 0)) {
+        tasks.push(get().refreshLog(repoRoot));
+      }
+      if (workspaceRoot) tasks.push(get().loadRecent(workspaceRoot));
+      await Promise.allSettled(tasks);
+    } finally {
+      set((s) => {
+        const next = { ...s.refreshingRepos };
+        delete next[repoRoot];
+        return { refreshingRepos: next };
+      });
+    }
+  },
 
   clearToast: () => set({ toast: null }),
 

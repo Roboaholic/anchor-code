@@ -26,7 +26,10 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
+import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
+import type { AskAnchorRect } from "@/features/ask/askPrompt";
+import { NewCommentPopover } from "@/features/annotations/NewCommentPopover";
 
 type BubbleState = {
   commentId: string;
@@ -243,6 +246,7 @@ export function CodeViewer({
   const activeSession = useAnnotationsStore((s) => s.activeSession);
   const expandedSessionId = useAnnotationsStore((s) => s.expandedSessionId);
   const sessions = useAnnotationsStore((s) => s.sessions);
+  const smoothScrolling = useSmoothScrollStore((s) => s.effective);
 
   const [composer, setComposer] = useState<{
     startLine: number;
@@ -254,27 +258,16 @@ export function CodeViewer({
     afterContext: string;
     lineText: string;
     forceNewSession: boolean;
+    anchor: AskAnchorRect | null;
   } | null>(null);
-  const [body, setBody] = useState("");
-  const [saving, setSaving] = useState(false);
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [selToolbar, setSelToolbar] = useState<SelectionToolbarState | null>(
     null,
   );
   const [blameLines, setBlameLines] = useState<BlameLine[]>([]);
   const [activeBlameLine, setActiveBlameLine] = useState<number | null>(null);
-  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
-
-  useEffect(() => {
-    if (!composer) return;
-    // Monaco steals focus after selection; re-focus the bar on the next frame.
-    const id = window.requestAnimationFrame(() => {
-      composerInputRef.current?.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [composer]);
 
 
   const liveComment = (id: string): CommentRecord | null => {
@@ -727,8 +720,8 @@ export function CodeViewer({
       afterContext,
       lineText,
       forceNewSession,
+      anchor: monacoLineAnchor(ed, endLine, null, startLine) ?? null,
     });
-    setBody("");
   };
 
   const onMount: OnMount = (ed) => {
@@ -764,7 +757,6 @@ export function CodeViewer({
           // New click / reselect while comment bar is open → dismiss bar.
           if (composerOpenRef.current) {
             setComposer(null);
-            setBody("");
           }
         }
       }),
@@ -874,11 +866,13 @@ export function CodeViewer({
     applyDecorations();
   };
 
-  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
-    if (!composer || !body.trim()) return;
-    setSaving(true);
-    try {
-      await addCommentFromSelection({
+  const submit = async (
+    text: string,
+    status: CommentRecord["status"],
+    forceNewSession: boolean,
+  ) => {
+    if (!composer || !text.trim()) return;
+    await addCommentFromSelection({
         filePath: path,
         kind,
         startLine: composer.startLine,
@@ -889,15 +883,12 @@ export function CodeViewer({
         beforeContext: composer.beforeContext,
         afterContext: composer.afterContext,
         lineText: composer.lineText,
-        body: body.trim(),
+        body: text.trim(),
+        status,
         forceNewSession,
       });
-      setComposer(null);
-      setBody("");
-      applyDecorations();
-    } finally {
-      setSaving(false);
-    }
+    setComposer(null);
+    applyDecorations();
   };
 
   const bubbleComment = bubble ? liveComment(bubble.commentId) : null;
@@ -923,6 +914,7 @@ export function CodeViewer({
           onMount={onMount}
           options={{
             readOnly: true,
+            smoothScrolling,
             // Keep DOM editable enough for reliable select + copy; edits still blocked.
             domReadOnly: false,
             minimap: { enabled: false },
@@ -1034,59 +1026,15 @@ export function CodeViewer({
       </div>
 
       {composer ? (
-        <div className="composer">
-          <div className="composer__meta">
-            L{composer.startLine}–{composer.endLine}:{" "}
-            <code>{composer.selectedText.slice(0, 80)}</code>
-            {composer.forceNewSession ? (
-              <span className="composer__badge" title="Will end the active session (export) and write this comment into a new session">
-                new session
-              </span>
-            ) : null}
-          </div>
-          {composer.forceNewSession ? (
-            <p className="composer__hint">
-              Saves under a <strong>new session</strong>: current active session
-              is ended (export written), then this comment is the first note in
-              the fresh session.
-            </p>
-          ) : null}
-          <textarea
-            ref={composerInputRef}
-            className="composer__input"
-            rows={3}
-            placeholder="Write feedback for the AI CLI…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            autoFocus
-          />
-          <div className="composer__actions">
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              onClick={() => setComposer(null)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--small"
-              disabled={!body.trim() || saving}
-              onClick={() => void submit(true)}
-              title="End the active session and save this comment in a new session"
-            >
-              Save comment (new session)
-            </button>
-            <button
-              type="button"
-              className="btn btn--accent btn--small"
-              disabled={!body.trim() || saving}
-              onClick={() => void submit(false)}
-            >
-              {saving ? "Saving…" : "Save comment"}
-            </button>
-          </div>
-        </div>
+        <NewCommentPopover
+          path={path}
+          startLine={composer.startLine}
+          endLine={composer.endLine}
+          anchor={composer.anchor}
+          initialNewSession={composer.forceNewSession}
+          onSubmit={submit}
+          onClose={() => setComposer(null)}
+        />
       ) : null}
     </div>
   );

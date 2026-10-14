@@ -37,7 +37,10 @@ import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
+import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
+import type { AskAnchorRect } from "@/features/ask/askPrompt";
+import { NewCommentPopover } from "@/features/annotations/NewCommentPopover";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
 
@@ -51,6 +54,7 @@ type ComposerState = {
   afterContext: string;
   lineText: string;
   forceNewSession: boolean;
+  anchor: AskAnchorRect | null;
 };
 
 const DIFF_FILES_WIDTH_STORAGE_KEY = "anchor.diffFilesWidth";
@@ -227,6 +231,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const activeSession = useAnnotationsStore((s) => s.activeSession);
   const expandedSessionId = useAnnotationsStore((s) => s.expandedSessionId);
   const sessions = useAnnotationsStore((s) => s.sessions);
+  const smoothScrolling = useSmoothScrollStore((s) => s.effective);
   const loadForRepo = useAnnotationsStore((s) => s.loadForRepo);
   const activePath = item.activeFilePath;
   const activeMeta = item.files.find((f) => f.path === activePath);
@@ -243,8 +248,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [filesWidth, setFilesWidth] = useState(loadDiffFilesWidth);
   const [resizingFiles, setResizingFiles] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
-  const [body, setBody] = useState("");
-  const [saving, setSaving] = useState(false);
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [selToolbar, setSelToolbar] = useState<SelectionToolbarState | null>(
     null,
@@ -287,18 +290,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const pointerOverAnnoRef = useRef(false);
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
-  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const filesResizeStartRef = useRef<{ x: number; width: number } | null>(null);
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
 
-  useEffect(() => {
-    if (!composer) return;
-    const id = window.requestAnimationFrame(() => {
-      composerInputRef.current?.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [composer]);
 
 
   useEffect(() => {
@@ -604,8 +599,8 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       afterContext,
       lineText,
       forceNewSession,
+      anchor: monacoLineAnchor(ed, endLine, null, startLine) ?? null,
     });
-    setBody("");
   };
 
   const liveComment = (id: string): CommentRecord | null => {
@@ -901,7 +896,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
           // New click / reselect while comment bar is open → dismiss bar.
           if (composerOpenRef.current) {
             setComposer(null);
-            setBody("");
           }
         }
       }),
@@ -1034,10 +1028,13 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     };
   }, []);
 
-  const submit = async (forceNewSession = composer?.forceNewSession ?? false) => {
-    if (!composer || !body.trim() || !activePath || !sideBySide) return;
-    setSaving(true);
-    try {
+  const submit = async (
+    text: string,
+    status: CommentRecord["status"],
+    forceNewSession: boolean,
+  ) => {
+    if (!composer || !text.trim() || !activePath || !sideBySide) return;
+    {
       const abs = joinPath(item.repoRoot, activePath);
       const prefix = buildDiffCommentPrefix({
         branch: item.branch,
@@ -1058,14 +1055,12 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         beforeContext: composer.beforeContext,
         afterContext: composer.afterContext,
         lineText: composer.lineText,
-        body: `${prefix}${body.trim()}`,
+        body: `${prefix}${text.trim()}`,
+        status,
         forceNewSession,
       });
       setComposer(null);
-      setBody("");
       requestAnimationFrame(() => applyDecorations());
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1264,6 +1259,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 onMount={onDiffMount}
                 options={{
                   readOnly: true,
+                  smoothScrolling,
                   // Keep DOM selectable for reliable copy; edits still blocked.
                   domReadOnly: false,
                   renderSideBySide: sideBySide,
@@ -1381,77 +1377,16 @@ export function DiffViewer({ item }: { item: DiffItem }) {
             </>
           )}
         </div>
-        {composer && sideBySide ? (
-          <div className="composer">
-            <div className="composer__meta">
-              L{composer.startLine}–{composer.endLine}:{" "}
-              <code>{composer.selectedText.slice(0, 80)}</code>
-              {composer.forceNewSession ? (
-                <span
-                  className="composer__badge"
-                  title="Will end the active session (export) and write this comment into a new session"
-                >
-                  new session
-                </span>
-              ) : null}
-            </div>
-            <p className="composer__hint">
-              Comment targets the <strong>right (newer)</strong> column
-              {item.branch ? (
-                <>
-                  {" "}
-                  · branch <code>{item.branch}</code>
-                </>
-              ) : null}
-              {" · "}
-              <code>{shortRev(item.base)}</code> →{" "}
-              <code>
-                {item.head === "worktree" ? "worktree" : shortRev(item.head)}
-              </code>
-              . Branch and commit range are prepended to the comment body.
-              {composer.forceNewSession ? (
-                <>
-                  {" "}
-                  Saves under a <strong>new session</strong>.
-                </>
-              ) : null}
-            </p>
-            <textarea
-              ref={composerInputRef}
-              className="composer__input"
-              rows={3}
-              placeholder="Write feedback for the AI CLI…"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              autoFocus
-            />
-            <div className="composer__actions">
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                onClick={() => setComposer(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                disabled={!body.trim() || saving}
-                onClick={() => void submit(true)}
-                title="End the active session and save this comment in a new session"
-              >
-                Save comment (new session)
-              </button>
-              <button
-                type="button"
-                className="btn btn--accent btn--small"
-                disabled={!body.trim() || saving}
-                onClick={() => void submit(false)}
-              >
-                {saving ? "Saving…" : "Save comment"}
-              </button>
-            </div>
-          </div>
+        {composer && sideBySide && activePath ? (
+          <NewCommentPopover
+            path={activePath}
+            startLine={composer.startLine}
+            endLine={composer.endLine}
+            anchor={composer.anchor}
+            initialNewSession={composer.forceNewSession}
+            onSubmit={submit}
+            onClose={() => setComposer(null)}
+          />
         ) : null}
       </div>
       {fileListMenu ? (

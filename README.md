@@ -17,9 +17,11 @@ Anchor Code puts the codebase, technical documents, Git history, diffs, review c
 
 Select code or rendered Markdown and leave a comment in an inline bubble anchored to the selection, choosing its status as you write it. Review sessions track each thread as a question (`discussing`), a change request (`need_modify`), or resolved (`closed`), and **Feedback** hands the whole session to an agent, which can reply in the thread and update the status.
 
-![Comment bubble anchored to the selected lines, with a need_modify review comment being written](docs/images/comment-bubble.png)
+![Selecting lines, writing a review comment in the comment bubble, and adding it](docs/images/comment-bubble.gif)
 
 ![Review session with line-anchored comments and replies from the Pi agent](docs/images/comments.png)
+
+![Sending a review session to Pi with Feedback; Pi's reply appears in the comment thread](docs/images/feedback-reply.gif)
 
 ### Worktree diffs
 
@@ -45,11 +47,15 @@ Start a new session from the agent picker (Claude Code, Codex, Grok, OMP, Pi, an
 
 ![Three Pi sessions in the agent panel; one has just written and run a new test](docs/images/agent-sessions.png)
 
+![Starting a new Pi session that edits code and runs the tests](docs/images/agent-working.gif)
+
 ### Ask about a selection
 
 Select lines and press **?** to ask an agent about them in a small popover anchored to the selection. Send to an idle session or start a new one; **Read-only** (on by default) launches new agents in their plan / read-only mode. `Ctrl+Enter` sends.
 
 ![Ask popover anchored below the selected lines](docs/images/ask.png)
+
+![Selecting code, asking Pi about it, and getting the answer in the agent panel](docs/images/ask-answer.gif)
 
 ### Markdown and Mermaid
 

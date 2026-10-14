@@ -37,7 +37,7 @@ import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
-import { openAsk } from "@/features/ask/askStore";
+import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
 
 type DiffItem = Extract<OpenItem, { kind: "diff" }>;
 
@@ -1341,6 +1341,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                       startLine: sel.startLineNumber,
                       endLine: sel.endLineNumber,
                       snippet: model.getValueInRange(sel),
+                anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
                       diff: {
                         repoRoot: item.repoRoot,
                         branch: item.branch ?? null,

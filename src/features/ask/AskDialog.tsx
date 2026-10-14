@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/shared/Icon";
 import { useShellStore } from "@/features/shell/shellStore";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import {
+  askDraftKey,
   askLineLabel,
   askPasteChunks,
+  askPopoverPosition,
+  askSessionLabel,
   buildAskPrompt,
   isAskSessionSelectable,
 } from "./askPrompt";
@@ -17,7 +20,13 @@ function revealAgentRail() {
   if (shell.leftMode !== "agent") shell.setAgentVisible(true);
 }
 
-/** Ask a one-off question about a selection; answer lives in the Agent workspace. */
+const POPOVER_WIDTH = 420;
+const MAX_TEXTAREA_PX = 200;
+
+/**
+ * Anchored popover (no backdrop) for a one-off question about a selection.
+ * The answer lives in the Agent workspace. Drafts are kept per selection.
+ */
 export function AskDialog() {
   const context = useAskStore((s) => s.context);
   const close = useAskStore((s) => s.close);
@@ -30,9 +39,18 @@ export function AskDialog() {
   const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
 
-  const [question, setQuestion] = useState("");
+  const drafts = useAskStore((s) => s.drafts);
+  const setDraft = useAskStore((s) => s.setDraft);
+  const clearDraft = useAskStore((s) => s.clearDraft);
+  const draftKey = context ? askDraftKey(context) : "";
+  const question = drafts[draftKey] ?? "";
+  const setQuestion = (text: string) => setDraft(draftKey, text);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; placement: string } | null>(null);
   const [readOnly, setReadOnly] = useState(true);
   const [target, setTarget] = useState("");
+  const dismissRef = useRef<() => void>(() => {});
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -53,13 +71,85 @@ export function AskDialog() {
 
   useEffect(() => {
     if (!context) return;
-    setQuestion("");
+    restoreFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setError(null);
     setSending(false);
     setReadOnly(true);
     void loadAgentProfiles();
-    requestAnimationFrame(() => inputRef.current?.focus());
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
   }, [context, loadAgentProfiles]);
+
+  const dismiss = () => {
+    close();
+    const prev = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    if (prev && document.contains(prev)) prev.focus();
+  };
+
+  // Auto-grow the textarea (2 rows min, capped).
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
+  }, [question, context]);
+
+  // Position below the anchor line, flip above when needed; re-measure on growth.
+  useLayoutEffect(() => {
+    if (!context) return;
+    const el = popRef.current;
+    if (!el) return;
+    const vp = { width: window.innerWidth, height: window.innerHeight };
+    const anchor = context.anchor ?? {
+      top: vp.height / 3,
+      bottom: vp.height / 3,
+      left: (vp.width - POPOVER_WIDTH) / 2,
+    };
+    const next = askPopoverPosition(
+      anchor,
+      { width: el.offsetWidth || POPOVER_WIDTH, height: el.offsetHeight },
+      vp,
+    );
+    setPos((prev) =>
+      prev &&
+      prev.top === next.top &&
+      prev.left === next.left &&
+      prev.placement === next.placement
+        ? prev
+        : next,
+    );
+  }, [context, question, error]);
+
+  // Click outside, wheel-scrolling the content underneath, or resizing closes
+  // (draft kept). Deliberately NOT generic `scroll` events: Monaco fires them on
+  // its hidden textarea / scrollables during normal rendering (e.g. right as the
+  // selection toolbar unmounts), which closed the popover the instant it opened.
+  useEffect(() => {
+    if (!context) return;
+    const inside = (t: EventTarget | null) =>
+      t instanceof Node && !!popRef.current?.contains(t);
+    const onDown = (e: MouseEvent) => {
+      if (!inside(e.target)) dismissRef.current();
+    };
+    const onScroll = (e: Event) => {
+      if (!inside(e.target)) dismissRef.current();
+    };
+    const onResize = () => dismissRef.current();
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("wheel", onScroll, { capture: true, passive: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("wheel", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [context]);
 
   // Default target: active idle session in this group, else new session with default CLI.
   useEffect(() => {
@@ -83,6 +173,8 @@ export function AskDialog() {
     // Only when the dialog (re)opens or profiles first arrive.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [context, enabledProfiles.length]);
+
+  dismissRef.current = dismiss;
 
   if (!context) return null;
 
@@ -124,129 +216,138 @@ export function AskDialog() {
         store.markAgentWorking(targetTab.id);
         store.focusAgentTab(targetTab.id);
       }
+      clearDraft(askDraftKey(context));
       revealAgentRail();
-      close();
+      dismiss();
     } catch (err) {
       setSending(false);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
+  const fileName = context.path.split(/[\\/]/).pop() || context.path;
+  const profileName = (id?: string) =>
+    profiles.find((p) => p.id === id)?.name || id;
+
   return (
     <div
-      className="modal-backdrop"
-      role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) close();
+      ref={popRef}
+      className={`ask-pop ask-pop--${pos?.placement ?? "below"}`}
+      role="dialog"
+      aria-modal="false"
+      aria-label={`Ask agent about ${fileName} ${askLineLabel(context)}`}
+      style={{
+        top: pos?.top ?? -9999,
+        left: pos?.left ?? -9999,
+        visibility: pos ? "visible" : "hidden",
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          dismiss();
+        }
       }}
     >
-      <div
-        className="modal modal--ask"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ask-agent-title"
+      <div className="ask-pop__head">
+        <span
+          className="ask-pop__loc"
+          title={
+            context.diff
+              ? `${context.path}\nbase ${context.diff.base} → head ${context.diff.head}`
+              : context.path
+          }
+        >
+          <span className="ask-pop__file">{fileName}</span>{" "}
+          <span className="ask-pop__lines">{askLineLabel(context)}</span>
+          {context.diff ? <span className="ask-pop__diff"> · diff</span> : null}
+        </span>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Close"
+          onClick={dismiss}
+        >
+          <Icon name="close" />
+        </button>
+      </div>
+
+      <textarea
+        ref={inputRef}
+        className="ask-pop__question"
+        aria-label="Question about the selection"
+        placeholder="Ask about this selection… (Ctrl/⌘+Enter to send)"
+        value={question}
+        rows={2}
+        onChange={(e) => setQuestion(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") close();
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void send();
+          }
         }}
-      >
-        <div className="modal__header">
-          <h2 id="ask-agent-title" className="modal__title">
-            Ask agent
-          </h2>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={close}>
-            <Icon name="close" />
-          </button>
-        </div>
+      />
+      {error ? (
+        <p className="pane-hint pane-hint--error" role="alert">
+          {error}
+        </p>
+      ) : null}
 
-        <div className="ask__context" aria-label="Selection context">
-          <div className="ask__context-meta">
-            <span className="ask__path" title={context.path}>
-              {context.path}
-            </span>
-            <span className="ask__lines">{askLineLabel(context)}</span>
-          </div>
-          {context.diff ? (
-            <div className="ask__context-meta ask__context-meta--diff">
-              {context.diff.branch ? <span>branch {context.diff.branch}</span> : null}
-              <span>base {context.diff.base}</span>
-              <span>head {context.diff.head}</span>
-            </div>
-          ) : null}
-          <pre className="ask__snippet">{context.snippet}</pre>
-        </div>
-
-        <textarea
-          ref={inputRef}
-          className="ask__question"
-          placeholder="Ask a question about this selection…"
-          value={question}
-          rows={4}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        {error ? <p className="pane-hint pane-hint--error">{error}</p> : null}
-
-        <div className="modal__footer">
-          <select
-            className="agent-new__select ask__target"
-            aria-label="Agent session"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-          >
-            {groupSessions.length > 0 ? (
-              <optgroup label="Sessions in this group">
-                {groupSessions.map((t) => {
-                  const ok = isAskSessionSelectable(t, activity[t.id]);
-                  return (
-                    <option key={t.id} value={t.id} disabled={!ok}>
-                      {t.title}
-                      {ok ? "" : t.status === "exited" ? " (exited)" : " (busy)"}
-                    </option>
-                  );
-                })}
-              </optgroup>
-            ) : null}
-            <optgroup label="+ New session">
-              {enabledProfiles.map((p) => (
-                <option key={p.id} value={`${NEW_PREFIX}${p.id}`}>
-                  + New {p.name || p.id}
-                </option>
-              ))}
+      <div className="ask-pop__footer">
+        <select
+          className="agent-new__select ask-pop__target"
+          aria-label="Agent session"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          {groupSessions.length > 0 ? (
+            <optgroup label="Sessions in this group">
+              {groupSessions.map((t, i) => {
+                const ok = isAskSessionSelectable(t, activity[t.id]);
+                return (
+                  <option key={t.id} value={t.id} disabled={!ok} title={t.title}>
+                    {askSessionLabel(t, i, activity[t.id], profileName(t.agentId))}
+                  </option>
+                );
+              })}
             </optgroup>
-          </select>
-          <label
-            className="ask__readonly"
-            title={
-              isNew
-                ? "Launch with the CLI's read-only / plan mode when supported"
-                : "Existing session: adds a read-only instruction to the prompt"
-            }
-          >
-            <input
-              type="checkbox"
-              checked={readOnly}
-              onChange={(e) => setReadOnly(e.target.checked)}
-            />
-            Read-only
-          </label>
-          <div className="agent-new__footer-spacer" />
-          <button type="button" className="btn btn--ghost" onClick={close}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={!canSend}
-            onClick={() => void send()}
-          >
-            {sending ? "Asking…" : "Ask"}
-          </button>
-        </div>
+          ) : null}
+          <optgroup label="+ New session">
+            {enabledProfiles.map((p) => (
+              <option key={p.id} value={`${NEW_PREFIX}${p.id}`}>
+                + New {p.name || p.id}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        <label
+          className="ask__readonly"
+          title={
+            isNew
+              ? "Launch with the CLI's read-only / plan mode when supported"
+              : "Existing session: adds a read-only instruction to the prompt"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(e) => setReadOnly(e.target.checked)}
+          />
+          Read-only
+        </label>
+        <div className="agent-new__footer-spacer" />
+        <button type="button" className="btn btn--ghost" onClick={dismiss}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={!canSend}
+          title="Ctrl/⌘+Enter"
+          onClick={() => void send()}
+        >
+          {sending ? "Asking…" : "Ask"}
+        </button>
       </div>
     </div>
   );

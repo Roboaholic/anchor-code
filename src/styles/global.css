@@ -8289,55 +8289,65 @@ select.field__input {
 
 /* Ask agent (one-off question about a selection) */
 /* Ask chip shares .anno-sel-chip styling with the comment chip. */
-.modal--ask {
-  width: min(640px, calc(100vw - 48px));
-}
-.ask__context {
-  margin: 0 16px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-muted);
-  overflow: hidden;
-}
-.ask__context-meta {
+.ask-pop {
+  position: fixed;
+  z-index: 60;
+  width: min(420px, calc(100vw - 16px));
+  box-sizing: border-box;
   display: flex;
-  gap: 10px;
-  padding: 6px 10px;
-  font-size: 11px;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
 }
-.ask__path {
+.ask-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.ask-pop__loc {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ask__snippet {
-  margin: 0;
-  padding: 8px 10px;
-  max-height: 180px;
-  overflow: auto;
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  white-space: pre;
+.ask-pop__file {
+  color: var(--text);
+  font-weight: 600;
 }
-.ask__question {
+.ask-pop__lines {
+  font-family: var(--font-mono, monospace);
+}
+.ask-pop__question {
   display: block;
   box-sizing: border-box;
-  width: calc(100% - 32px);
-  margin: 0 16px 10px;
-  padding: 8px 10px;
-  resize: vertical;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  resize: none;
+  overflow-y: auto;
   font: inherit;
+  font-size: 13px;
   color: var(--text);
-  background: var(--bg-panel);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-.ask__target {
-  max-width: 260px;
+.ask-pop__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ask-pop__target {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 200px;
 }
 .ask__readonly {
   display: inline-flex;

@@ -30,7 +30,7 @@ import { relativeToRoot } from "@/core/workspace/paths";
 import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
-import { openAsk } from "@/features/ask/askStore";
+import { elementAnchor, openAsk } from "@/features/ask/askStore";
 
 type ComposerState = MarkdownSourceAnchor & {
   forceNewSession: boolean;
@@ -683,6 +683,13 @@ function RenderedMarkdownPane({
               ).trim();
               if (!text) return;
               const anchor = locateSelectionInMarkdown(content, text);
+              const selectionEndAnchor = () => {
+                const s = window.getSelection();
+                if (!s || s.rangeCount === 0) return null;
+                const rects = s.getRangeAt(0).getClientRects();
+                const last = rects[rects.length - 1];
+                return last ? { top: last.top, bottom: last.bottom, left: rects[0].left, startTop: rects[0].top } : null;
+              };
               pendingSelectionTextRef.current = null;
               setSelToolbar(null);
               openAsk({
@@ -690,6 +697,7 @@ function RenderedMarkdownPane({
                 startLine: anchor?.startLine ?? 1,
                 endLine: anchor?.endLine ?? anchor?.startLine ?? 1,
                 snippet: anchor?.selectedText ?? text,
+                anchor: selectionEndAnchor() ?? elementAnchor(e.currentTarget),
               });
             }}
             onClick={(e) => {

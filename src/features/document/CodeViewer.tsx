@@ -26,7 +26,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
-import { openAsk } from "@/features/ask/askStore";
+import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
 
 type BubbleState = {
   commentId: string;
@@ -1000,6 +1000,7 @@ export function CodeViewer({
                 startLine: sel.startLineNumber,
                 endLine: sel.endLineNumber,
                 snippet: model.getValueInRange(sel),
+                anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
               });
             }}
           >

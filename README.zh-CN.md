@@ -1,97 +1,119 @@
 # Anchor Code
 
-**Agent 编程流程中的 Human-in-the-loop Reviewer。**
+[English](README.md) · **中文**
 
-**让 Agent 执行，让人 Review，让反馈回到 Agent。**
+**面向 Agent 编程的人在回路（human-in-the-loop）审阅工具。**
+**Agent it. Review it. Feed it back.**
 
-Anchor Code 将代码库、技术文档、文件管理、Git History、Diff、Review Comment 和 Agent CLI 集中到同一个界面。Agent 继续在原生终端环境中工作，人负责检查上下文、指导修改、反馈问题，并决定结果是否可以交付。
+Anchor Code 把代码、技术文档、Git 历史、Diff、审阅评论和你在用的 Agent CLI 放进同一个桌面应用。Agent 继续在原生终端里工作，你在这里阅读上下文、针对具体行讨论、发送结构化反馈，并决定结果是否可以交付。
 
-[English](README.md) · [下载 Anchor Code](https://github.com/Roboaholic/anchor-code/releases)
+**[下载最新版本 →](https://github.com/Roboaholic/anchor-code/releases/latest)**（Windows · macOS · Linux）
 
-![集成文件、文档、Git History、Review Comment 和 Agent Terminal 的 Anchor Code 工作区](assets/screenshot.png)
+![Anchor Code：文件树、带审阅高亮的源码，以及侧栏中的 Agent 会话](docs/images/hero.png)
 
-## 让 Agent 保持速度，让人始终掌握方向
+## 功能
 
-Agent 编程显著提高了实现速度，围绕它的人工工作流依然分散：代码在编辑器里，方案在 Markdown 里，改动在 Git 里，反馈留在聊天中，Agent 则运行在终端里。
+### 锚定到具体行的评论
 
-Anchor Code 将这些界面重新连接起来。浏览代码库与技术文档、运行熟悉的 Agent、检查真实改动、针对准确位置展开讨论、发送结构化反馈，并由人决定结果何时可以交付。
+选中代码或渲染后的 Markdown，即可在锚定于选区的行内气泡中写评论，并在写的同时选择状态。审阅会话把每条评论标记为问题（`discussing`）、修改请求（`need_modify`）或已解决（`closed`）；点击 **Feedback** 把整个会话交给 Agent，Agent 可以在原线程回复并更新状态。
 
-| 代码与文档阅读 | Agent CLI | Git 与 Diff | Comment 与 Feedback |
-|---|---|---|---|
-| 浏览文件、搜索代码，阅读源代码、Markdown 和 Mermaid 技术文档。 | 在当前项目中运行原生 Agent CLI/TUI，并选择模型和推理配置。 | 查看 Commit History、分支与 Worktree 状态，通过 Side-by-side 或 Inline Diff 检查完整改动。 | 评论准确的代码选区，将 Review Session 交给 Agent，并在原线程中验证回复和修改。 |
+![锚定在选中行旁的评论气泡，正在撰写一条 need_modify 审阅意见](docs/images/comment-bubble.png)
 
-## 为审查而设计的 Git History
+![带行锚定评论和 Pi Agent 回复的审阅会话](docs/images/comments.png)
 
-选择任意两个 Commit，或将某个 Commit 与当前 Worktree 对比。Anchor Code 在一个专注的工作台中展示完整变更文件集合与 Diff，并支持 Side-by-side 和 Inline 两种阅读方式。
+### 工作区 Diff
 
-分支状态、版本、文件、源码行和 Comment 始终处于同一个上下文。写在 Diff 上的 Comment 会保留 branch、base、head、file 和 line range，为人和 Agent 提供准确引用。
+在 **History → Changes** 里打开任意改动文件，即可并排或行内查看未提交的 Diff，并附带行内 blame。
 
-![包含变更文件和锚点 Review Comment 的 Side-by-side Diff 工作台](assets/review-diff-workbench.png)
+![未提交改动的并排 Diff](docs/images/diff.png)
 
-## 反馈交给 Agent，处理结果回到原线程
+### 为审阅设计的 Git 历史
 
-Comment 可以锚定到源代码或渲染后 Markdown 的准确选区。Review Session 使用 `discussing` 表示讨论，使用 `need_modify` 表示明确修改要求，使用 `closed` 表示问题已经解决。
+任选两个提交，或一个提交与当前工作区，点击 **Compare** 就能在一个 Diff 工作台里看到完整的改动文件列表。在 Diff 中创建的评论会保留分支、base、head、文件和行范围上下文。
 
-点击 **Feedback** 即可将结构化 Session 交给选定的 Agent。Agent 可以在原线程回复、执行修改并更新状态。下一轮 Diff 和完整讨论记录继续保留，供人检查和验收。
+![History：选中两个提交并对比，显示改动文件列表](docs/images/history.png)
 
-![包含线程 Comment、状态跟踪和 Agent Feedback 的 Review Session](assets/review-session-feedback.png)
+### Agent CLI 会话
 
-## 为什么选择 Anchor Code
+在项目里以原生终端 / TUI 运行 Claude Code、Codex、Gemini CLI 等 Agent CLI，可放在侧栏，也可用全宽的 **Agent** 工作台。CLI 支持时，可选择模型、推理强度并恢复会话。
 
-Zed 和 VS Code 以代码编辑体验为中心，Warp 以终端和 Agent 体验为中心。Anchor Code 将文件、文档、Git 审查、Review 上下文和 Agent CLI 连接成连续的 Human-in-the-loop 工作流。
+![运行中的 Agent 会话（Agent 工作台）](docs/images/agent.png)
 
-`✅` 内置支持 · `△` 需要组合其他工作流、集成或扩展 · `❌` 缺少对应工作流
+在 Agent 选择器中新建会话（Claude Code、Codex、Grok、OMP、Pi 等），选择模型与推理强度，或从列表中恢复之前的会话。多个会话可以同时运行，通过会话列表切换。
 
-| 能力 | Anchor Code | Zed | VS Code | Warp |
-|---|---|---|---|---|
-| 文件、代码与 Markdown | ✅ 内置 | ✅ 内置 | ✅ 内置 | △ 以终端为主 |
-| 集成终端与 Agent CLI | ✅ 原生 CLI/TUI | ✅ 集成终端 | ✅ 集成终端 | ✅ 核心体验 |
-| Git Commit History | ✅ 面向 Review 的 History | ✅ 项目/文件 History | ✅ Source Control Graph | △ CLI 与集成 |
-| Commit ↔ Commit / Worktree 对比 | ✅ 一等 Diff 工作台 | △ Commit 与文件 Diff | △ 原生 Git 视图；GitLens 提供深度比较 | △ 主要通过 CLI |
-| 锚定到代码与 Diff 的 Comment | ✅ Review Session | △ 编辑器/协作工作流 | △ 扩展或 PR 集成 | ❌ |
-| 返回 CLI Agent 的结构化反馈 | ✅ 有状态 Feedback 闭环 | △ Agent/编辑器上下文 | △ 取决于 Agent 扩展 | △ 终端对话 |
+![新建 Agent 会话对话框：已选择 Pi，显示其 DeepSeek 模型和可恢复的 Pi 会话](docs/images/agent-picker.png)
 
-真正的差异体现在 Diff 周围的完整流程。Anchor Code 将范围比较、代码锚点讨论、Agent 交接和人工验收组成一条原生主路径。
+![Agent 面板中的三个 Pi 会话，其中一个刚编写并运行了新测试](docs/images/agent-sessions.png)
 
-对比资料来源：[Zed Git](https://zed.dev/docs/git)、[VS Code Source Control](https://code.visualstudio.com/docs/sourcecontrol/overview)、[GitLens 功能](https://help.gitkraken.com/gitlens/gitlens-features/) 和 [Warp 文档](https://docs.warp.dev/)。
+### 针对选区提问（Ask）
 
-## 离开电脑，也能继续参与工作流
+选中几行后点 **?**，在锚定于选区旁的小气泡里向 Agent 提问。可以发给空闲会话，也可以新建会话；**Read-only**（默认勾选）会让新建的 Agent 以 plan / 只读模式启动。按 `Ctrl+Enter` 发送。
 
-**Anchor Mobile** 将同一工作区扩展到 Android 手机和平板。你可以远程 Review 代码和 Markdown、检查 Worktree Diff、管理 Comment，并操作运行在 PC 上的 Agent Terminal Session。
+![锚定在选中行下方的 Ask 气泡](docs/images/ask.png)
 
-扫描二维码即可通过端到端加密的 Anchor Relay 完成配对。文件、Git 操作、Shell 和 Agent 继续运行在 PC 上，Relay 负责转发加密帧。设置与 APK 说明见 [Anchor Mobile](mobile/README.md)，部署说明见 [Anchor Relay](relay/cloudflare/README.md)。
+### Markdown 与 Mermaid
 
-## 支持的 Agent 与环境
+技术文档原地渲染，包括 Mermaid 图，渲染后的文字也能像代码一样评论。
 
-**Agent CLI：** Claude Code、Codex、Gemini CLI、Aider、Grok、OMP、Cursor Agent 和自定义 Profile。
+![渲染后的设计文档与 Mermaid 流程图](docs/images/markdown.png)
 
-**工作区：** Local、WSL 和 SSH。
+### 搜索与快速打开
 
-**桌面系统：** Windows、macOS 和 Linux。
+内容搜索在 ripgrep 找到结果时流式显示；`Ctrl+P` 对文件路径做模糊匹配。两者都遵守 `.anchorignore` 和每个工作区的排除规则。
 
-**移动端：** Android 手机和平板。
+![侧栏中的内容搜索结果](docs/images/search.png)
 
-## 快速开始
+![Ctrl+P 快速打开与模糊匹配](docs/images/quick-open.png)
 
-1. 从 [Releases](https://github.com/Roboaholic/anchor-code/releases) 下载 Anchor Code。
-2. 打开 Local、WSL 或 SSH 工作区。
-3. 在内置 Terminal 中启动 Agent CLI，或打开已有改动的代码仓库。
-4. 阅读代码和技术文档，然后在 **History** 中检查 Commit 或 Worktree。
-5. 针对准确选区添加 Comment，将明确修改要求标记为 `need_modify`。
-6. 点击 **Feedback** 将 Session 交给 Agent，再检查下一轮 Diff 并关闭已解决线程。
+## 工作区
 
-从 **Settings → Agent skill** 安装 **Anchor Review** Skill，也可以接受打开工作区时的安装提示。它会指导兼容 Agent 读取 Anchor Code Session、处理 `need_modify` Comment、回复线程并更新 Review 状态。
-
-## 下载
-
-| 平台 | 安装包 | Portable / 其他 |
+| 工作区 | 文件、Git 与 Agent 运行位置 | 说明 |
 |---|---|---|
-| Windows | `Anchor.Code-*-win-x64.exe`（NSIS 安装包） | `Anchor.Code-*-win-x64-portable.exe` |
-| macOS | `Anchor.Code-*-mac-*.dmg` | `.zip` |
-| Linux | `.AppImage` 或 `.deb` | - |
+| **Local** | 本机 | 文件树通过系统文件监听自动刷新。 |
+| **WSL**（Windows） | WSL 发行版内 | 在 WSL 内使用辅助进程加速搜索和 Git。 |
+| **SSH** | 通过 SSH 连接的远程主机 | 远程主机需要安装 `git`。 |
 
-Anchor Code 要求所选 Host 的 PATH 中可以使用 `git`。WSL 与 SSH 工作区需要对应 Host 环境和连接可用。
+Anchor Code 启动时会重新打开上次的工作区（可在 **Settings → Appearance → Startup** 关闭）；如果它不可用，就停留在欢迎页。
 
-## License
+**支持的 Agent CLI：** Claude Code、Codex、Gemini CLI、Grok、OMP、Pi、Aider、Goose、Cursor Agent，以及自定义配置。
+
+## 安装
+
+从 [Releases](https://github.com/Roboaholic/anchor-code/releases/latest) 下载：
+
+| 平台 | 文件 |
+|---|---|
+| Windows（x64） | `Anchor.Code-<version>-win-x64.exe`（安装版）或 `Anchor.Code-<version>-win-x64-portable.exe`（便携版） |
+| macOS（Apple 芯片） | `Anchor.Code-<version>-mac-arm64.zip` |
+| Linux（x64） | `Anchor.Code-<version>-linux-x86_64.AppImage` 或 `Anchor.Code-<version>-linux-amd64.deb` |
+
+要求：所打开的主机（本机、WSL 或 SSH）上装有 `git`，以及你想使用的 Agent CLI。更新通过 GitHub Releases 检查（**Settings → Updates**）。
+
+## 快速上手
+
+1. 安装并启动 Anchor Code，点击 **Open Workspace**（Local、WSL 或 SSH）。
+2. 用 **New agent session** 启动 Agent，或打开一个已有改动的仓库。
+3. 阅读代码和文档；用 **History** 查看工作区改动或对比提交。
+4. 选中代码行添加评论，需要修改的标为 `need_modify`。
+5. 点击 **Feedback** 把会话交给 Agent，然后审阅下一版 Diff，关闭已解决的线程。
+
+在 **Settings → Agent skill** 安装 **Anchor Review** 技能（或接受工作区里的提示）。它教会兼容的 Agent 读取 Anchor Code 会话、处理 `need_modify` 评论、在线程中回复并更新状态。
+
+## 从源码构建
+
+需要 Node.js 22 和 Git。
+
+```bash
+git clone https://github.com/Roboaholic/anchor-code.git
+cd anchor-code
+npm ci            # 同时准备 node-pty 和内置的 ripgrep
+npm run dev       # 以热更新方式运行
+
+npm run typecheck && npm run lint && npm test
+
+npm run pack:linux   # 或 pack:win / pack:mac，安装包输出到 release/
+```
+
+## 许可证
 
 [Apache License 2.0](LICENSE)

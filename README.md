@@ -1,96 +1,118 @@
 # Anchor Code
 
-**The human-in-the-loop reviewer for agentic coding.**
+**English** · [中文](README.zh-CN.md)
 
+**The human-in-the-loop reviewer for agentic coding.**
 **Agent it. Review it. Feed it back.**
 
-Anchor Code gives human reviewers the codebase, technical documents, file management, Git history, diffs, review comments, and agent CLIs in one place. Agents keep working in their native terminal environment while you inspect the context, direct changes, send feedback, and decide whether the result is ready.
+Anchor Code puts the codebase, technical documents, Git history, diffs, review comments, and your agent CLIs in one desktop app. Agents keep working in their native terminal while you read the context, discuss exact lines, send structured feedback, and decide when the result is ready.
 
-[中文](README.zh-CN.md) · [Download Anchor Code](https://github.com/Roboaholic/anchor-code/releases)
+**[Download the latest release →](https://github.com/Roboaholic/anchor-code/releases/latest)** (Windows · macOS · Linux)
 
-![Anchor Code workspace with files, documents, Git history, review comments, and agent terminals](assets/screenshot.png)
+![Anchor Code: file tree, source with review highlights, and an agent session in the side panel](docs/images/hero.png)
 
-## Keep agents moving. Keep humans in control.
+## Features
 
-Agentic coding has accelerated implementation, but the surrounding human workflow remains fragmented. Code lives in an editor, plans live in Markdown, changes live in Git, feedback lives in chat, and the agent runs in a terminal.
+### Comments anchored to exact lines
 
-Anchor Code reconnects these surfaces. Browse the codebase and technical documents, run the agents you already use, inspect their actual changes, discuss exact lines, send structured feedback, and decide when the result is ready.
+Select code or rendered Markdown and leave a comment in an inline bubble anchored to the selection, choosing its status as you write it. Review sessions track each thread as a question (`discussing`), a change request (`need_modify`), or resolved (`closed`), and **Feedback** hands the whole session to an agent, which can reply in the thread and update the status.
 
-| Code and documentation | Agent CLI sessions | Git and Diff | Comments and Feedback |
-|---|---|---|---|
-| Browse files, search code, and read source, Markdown, and Mermaid documents. | Run native Agent CLI and TUI sessions in the current project, with model selection and reasoning settings. | Review commit history, branch and worktree state, and complete changes in side-by-side or inline diffs. | Comment on exact code selections, send review sessions to agents, and verify replies and revisions in the original context. |
+![Comment bubble anchored to the selected lines, with a need_modify review comment being written](docs/images/comment-bubble.png)
 
-## Git history built for inspection
+![Review session with line-anchored comments and replies from the Pi agent](docs/images/comments.png)
 
-Select any two commits, or compare a commit with the current worktree. Anchor Code presents the complete changed-file set and diff in one focused workspace, with side-by-side and inline viewing modes.
+### Worktree diffs
 
-Branch state, revisions, files, source lines, and comments stay together. A comment created in a diff retains its branch, base, head, file, and line-range context, giving both the human and the agent an exact reference.
+Open any changed file from **History → Changes** to see the uncommitted diff side by side or inline, with inline blame for context.
 
-![Side-by-side Diff Workbench with changed files and anchored review comments](assets/review-diff-workbench.png)
+![Side-by-side diff of an uncommitted change](docs/images/diff.png)
 
-## Feedback that returns with an answer
+### Git history built for inspection
 
-Comments are anchored to exact selections in source code and rendered Markdown. Review sessions distinguish questions (`discussing`), concrete change requests (`need_modify`), and resolved threads (`closed`).
+Pick any two commits, or a commit and the current worktree, and **Compare** opens the complete changed-file set in one diff workspace. Comments made in a diff keep their branch, base, head, file, and line-range context.
 
-The **Feedback** action sends the structured session to the selected agent. The agent can reply in the original thread, implement requested changes, and update its status. The next diff and the full discussion remain available for human verification.
+![History: two commits selected and compared, with the changed-file list](docs/images/history.png)
 
-![Review sessions with threaded comments, status tracking, and Agent Feedback](assets/review-session-feedback.png)
+### Agent CLI sessions
 
-## Why Anchor Code
+Run Claude Code, Codex, Gemini CLI, and other agent CLIs as native terminal/TUI sessions in the project, in the side panel or the full-width **Agent** workbench. Model and reasoning-effort selection and session resume are available where the CLI supports them.
 
-Zed and VS Code center the editing experience. Warp centers the terminal and agent experience. Anchor Code connects files, documents, Git inspection, review context, and Agent CLIs around a continuous human-in-the-loop workflow.
+![Agent workbench with a running agent session](docs/images/agent.png)
 
-`✅` built in · `△` available through a broader workflow, integration, or extension · `❌` no comparable workflow
+Start a new session from the agent picker (Claude Code, Codex, Grok, OMP, Pi, and more), choose the model and effort, or resume a previous session from the list. Several sessions can run side by side; the session list switches between them.
 
-| Capability | Anchor Code | Zed | VS Code | Warp |
-|---|---|---|---|---|
-| Files, code, and Markdown | ✅ Built in | ✅ Built in | ✅ Built in | △ Terminal-oriented |
-| Integrated terminal and Agent CLI | ✅ Native CLI/TUI | ✅ Integrated terminal | ✅ Integrated terminal | ✅ Core experience |
-| Git commit history | ✅ Review-oriented history | ✅ Project/file history | ✅ Source Control Graph | △ CLI and integrations |
-| Commit ↔ Commit / Worktree comparison | ✅ First-class Diff workspace | △ Commit and file diffs | △ Built-in Git views; GitLens adds deeper comparison | △ Primarily CLI-driven |
-| Comments anchored to code and diffs | ✅ Review Sessions | △ Editor/collaboration workflows | △ Extensions or PR integrations | ❌ |
-| Structured feedback returned to CLI agents | ✅ Stateful feedback loop | △ Agent/editor context | △ Depends on Agent extensions | △ Terminal conversation |
+![New agent session dialog with Pi selected, its DeepSeek models, and resumable Pi sessions](docs/images/agent-picker.png)
 
-The difference is what happens around the diff. Anchor Code makes comparison, code-anchored discussion, Agent handoff, and human verification one native path.
+![Three Pi sessions in the agent panel; one has just written and run a new test](docs/images/agent-sessions.png)
 
-Comparison references: [Zed Git](https://zed.dev/docs/git), [VS Code Source Control](https://code.visualstudio.com/docs/sourcecontrol/overview), [GitLens features](https://help.gitkraken.com/gitlens/gitlens-features/), and [Warp documentation](https://docs.warp.dev/).
+### Ask about a selection
 
-## Stay in the loop away from your desk
+Select lines and press **?** to ask an agent about them in a small popover anchored to the selection. Send to an idle session or start a new one; **Read-only** (on by default) launches new agents in their plan / read-only mode. `Ctrl+Enter` sends.
 
-**Anchor Mobile** extends the workspace to Android phones and tablets. Review code and Markdown, inspect worktree diffs, manage comments, and operate Agent terminal sessions running on your PC.
+![Ask popover anchored below the selected lines](docs/images/ask.png)
 
-Pair with a QR code through the end-to-end encrypted Anchor Relay. Files, Git operations, shells, and agents remain on the PC; the Relay forwards encrypted frames. See [Anchor Mobile](mobile/README.md) for setup and APK instructions, and [Anchor Relay](relay/cloudflare/README.md) for deployment details.
+### Markdown and Mermaid
 
-## Supported agents and environments
+Technical documents render in place, including Mermaid diagrams, and you can comment on rendered text just like code.
 
-**Agent CLIs:** Claude Code, Codex, Gemini CLI, Aider, Grok, OMP, Cursor Agent, and custom profiles.
+![Rendered Markdown design doc with a Mermaid flowchart](docs/images/markdown.png)
 
-**Workspaces:** Local, WSL, and SSH.
+### Search and quick open
 
-**Desktop:** Windows, macOS, and Linux.
+Content search streams results as ripgrep finds them; `Ctrl+P` fuzzy-matches file paths. Both honour `.anchorignore` and the per-workspace exclude filters.
 
-**Companion:** Android phones and tablets.
+![Content search results in the sidebar](docs/images/search.png)
+
+![Ctrl+P quick open with fuzzy matches](docs/images/quick-open.png)
+
+## Workspaces
+
+| Workspace | Where files, Git, and agents run | Notes |
+|---|---|---|
+| **Local** | This computer | File tree updates via native file watching. |
+| **WSL** (Windows) | Inside a WSL distro | Uses a helper process inside WSL for fast search and Git. |
+| **SSH** | A remote host over SSH | Requires `git` on the remote host. |
+
+Anchor Code reopens the last active workspace on launch (toggle in **Settings → Appearance → Startup**) and falls back to the Welcome page if it is unavailable.
+
+**Supported agent CLIs:** Claude Code, Codex, Gemini CLI, Grok, OMP, Pi, Aider, Goose, Cursor Agent, and custom profiles.
+
+## Install
+
+Download from [Releases](https://github.com/Roboaholic/anchor-code/releases/latest):
+
+| Platform | File |
+|---|---|
+| Windows (x64) | `Anchor.Code-<version>-win-x64.exe` (installer) or `Anchor.Code-<version>-win-x64-portable.exe` |
+| macOS (Apple silicon) | `Anchor.Code-<version>-mac-arm64.zip` |
+| Linux (x64) | `Anchor.Code-<version>-linux-x86_64.AppImage` or `Anchor.Code-<version>-linux-amd64.deb` |
+
+Requirements: `git` on the host you open (local, WSL, or SSH), plus whichever agent CLIs you want to use on that host. Updates are checked against GitHub Releases (**Settings → Updates**).
 
 ## Quick start
 
-1. Download Anchor Code from [Releases](https://github.com/Roboaholic/anchor-code/releases).
-2. Open a Local, WSL, or SSH workspace.
-3. Launch an Agent CLI in the built-in terminal, or open a repository with existing changes.
-4. Read the code and documentation, then use **History** to inspect commits or the worktree.
-5. Add comments to exact selections and mark actionable requests as `need_modify`.
-6. Use **Feedback** to hand the session to an agent, then inspect the next diff and close resolved threads.
+1. Install and launch Anchor Code, then **Open Workspace** (Local, WSL, or SSH).
+2. Start an agent with **New agent session**, or open a repository that already has changes.
+3. Read the code and docs; use **History** to inspect the worktree or compare commits.
+4. Select lines to comment, and mark actionable ones as `need_modify`.
+5. Press **Feedback** to hand the session to the agent, then review the next diff and close resolved threads.
 
-Install the **Anchor Review** skill from **Settings → Agent skill**, or accept the workspace prompt. It teaches compatible agents how to read Anchor Code sessions, process `need_modify` comments, reply to threads, and update review status.
+Install the **Anchor Review** skill from **Settings → Agent skill** (or accept the workspace prompt). It teaches compatible agents to read Anchor Code sessions, apply `need_modify` comments, reply in threads, and update status.
 
-## Download
+## Build from source
 
-| Platform | Installer | Portable / other |
-|---|---|---|
-| Windows | `Anchor.Code-*-win-x64.exe` (NSIS setup) | `Anchor.Code-*-win-x64-portable.exe` |
-| macOS | `Anchor.Code-*-mac-*.dmg` | `.zip` |
-| Linux | `.AppImage` or `.deb` | - |
+Requires Node.js 22 and Git.
 
-Anchor Code requires system `git` on the selected host. WSL and SSH workspaces require their corresponding host environment and connection to be available.
+```bash
+git clone https://github.com/Roboaholic/anchor-code.git
+cd anchor-code
+npm ci            # also prepares node-pty and the bundled ripgrep
+npm run dev       # run the app with hot reload
+
+npm run typecheck && npm run lint && npm test
+
+npm run pack:linux   # or pack:win / pack:mac — installers land in release/
+```
 
 ## License
 

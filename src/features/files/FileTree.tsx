@@ -22,6 +22,7 @@ import {
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
 import { joinPath, relativeToRoot } from "@/core/workspace/paths";
+import { setActiveInterval } from "@/shared/appActivity";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 
@@ -234,32 +235,41 @@ export function FileTree() {
       return m;
     };
     let polling = false;
-    const timer = window.setInterval(async () => {
+    const tick = async () => {
       if (polling) return;
       polling = true;
       try {
         const { rootEntries } = useWorkspaceStore.getState();
         const dirs = collectExpandedDirs(rootEntries, [workspaceRoot]);
         const prev = snapshot(rootEntries);
-        for (const dir of dirs) {
-          try {
-            const entries = await window.anchor.workspace.listDir(dir);
-            const sig = entries
-              .map((e) => `${e.type[0]}${e.name}`)
-              .sort()
-              .join("\n");
-            if (prev.get(dir) !== sig) {
-              await refreshDir(dir);
-            }
-          } catch {
-            // Non-fatal: preserve the current tree on remote errors.
+        // One IPC for all expanded dirs (was one round trip per dir).
+        const listed = window.anchor.workspace.listDirs
+          ? await window.anchor.workspace.listDirs(dirs)
+          : await Promise.all(
+              dirs.map(async (path) => ({
+                path,
+                entries: await window.anchor.workspace.listDir(path).catch(() => null),
+              })),
+            );
+        for (const { path: dir, entries } of listed) {
+          // Non-fatal: preserve the current tree on remote errors.
+          if (!entries) continue;
+          const sig = entries
+            .map((e) => `${e.type[0]}${e.name}`)
+            .sort()
+            .join("\n");
+          if (prev.get(dir) !== sig) {
+            await refreshDir(dir);
           }
         }
+      } catch {
+        // Non-fatal.
       } finally {
         polling = false;
       }
-    }, 6000);
-    return () => window.clearInterval(timer);
+    };
+    // Paused while the window is hidden/unfocused; catch-up tick on return.
+    return setActiveInterval(() => void tick(), 6000);
   }, [workspaceRoot, hostKind, refreshDir]);
 
   const openTreeMenu = useCallback(

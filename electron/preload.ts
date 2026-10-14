@@ -331,6 +331,8 @@ const anchor = {
     }> => ipcRenderer.invoke("workspace:close", id),
     getRecent: (): Promise<RecentWorkspace[]> =>
       ipcRenderer.invoke("workspace:getRecent"),
+    getRestoreTarget: (): Promise<{ path: string; hostProfileId: string } | null> =>
+      ipcRenderer.invoke("workspace:getRestoreTarget"),
     listOpenInstances: (): Promise<WorkspaceInstancesState> =>
       ipcRenderer.invoke("workspace:listOpenInstances"),
     ensureDefinition: (): Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }> =>
@@ -428,6 +430,8 @@ const anchor = {
       return () =>
         ipcRenderer.removeListener("workspace:searchContent:meta", listener);
     },
+    listDirs: (paths: string[]): Promise<Array<{ path: string; entries: DirEntry[] | null }>> =>
+      ipcRenderer.invoke("workspace:listDirs", paths),
     /** Start watching the workspace root for file changes (local hosts only). */
     watchStart: (root?: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke("fileWatcher:start", root),
@@ -767,6 +771,10 @@ const anchor = {
       layout: "side" | "top",
     ): Promise<"side" | "top"> =>
       ipcRenderer.invoke("settings:setSessionTabLayout", layout),
+    getRestoreLastWorkspace: (): Promise<boolean> =>
+      ipcRenderer.invoke("settings:getRestoreLastWorkspace"),
+    setRestoreLastWorkspace: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke("settings:setRestoreLastWorkspace", enabled),
     getFontSize: (): Promise<number> =>
       ipcRenderer.invoke("settings:getFontSize"),
     setFontSize: (fontSize: number): Promise<number> =>

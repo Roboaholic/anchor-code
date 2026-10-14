@@ -20,10 +20,12 @@ import { FileWatcherService } from "../services/fileWatcherService.js";
 import {
   ensureWorkspaceDefinition,
   getLiveWorkspaceInstances,
+  loadWorkspaceInstances,
   type WorkspaceDefinition,
   type WorkspaceInstance,
   type WorkspaceInstancesState,
 } from "../services/workspaceState.js";
+import { resolveRestoreTarget, type RestoreTarget } from "../services/workspaceRestore.js";
 import {
   getSkillInstallStatus,
   installSkill,
@@ -40,6 +42,8 @@ import {
 import {
   getHistoryRecentCompares,
   getFontSize,
+  getRestoreLastWorkspace,
+  setRestoreLastWorkspace,
   getHostProfile,
   getWorkspaceFilter,
   getSessionTabLayout,
@@ -536,6 +540,45 @@ export function registerIpc(opts: {
   );
 
   ipcMain.handle(
+    "workspace:getRestoreTarget",
+    async (): Promise<RestoreTarget | null> =>
+      resolveRestoreTarget({
+        enabled: getRestoreLastWorkspace,
+        loadInstances: loadWorkspaceInstances,
+        getHostProfile,
+        probe: async (profile, root) => {
+          // Probe on a throwaway host session so a hung WSL/SSH host can't
+          // wedge the live session; dispose without awaiting.
+          const host = createHostForProfile(profile);
+          try {
+            if (!(await host.exists(root))) return false;
+            return (await host.stat(root)).isDir;
+          } finally {
+            void host.dispose().catch(() => undefined);
+          }
+        },
+        log: (m) => console.warn("[workspace:restore]", m),
+      }),
+  );
+  ipcMain.handle("settings:getRestoreLastWorkspace", async (): Promise<boolean> => {
+    try {
+      return await getRestoreLastWorkspace();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle(
+    "settings:setRestoreLastWorkspace",
+    async (_evt, enabled: unknown): Promise<boolean> => {
+      try {
+        return await setRestoreLastWorkspace(enabled === true);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     "workspace:listOpenInstances",
     async (): Promise<WorkspaceInstancesState> => {
       return getLiveWorkspaceInstances();
@@ -648,6 +691,32 @@ export function registerIpc(opts: {
     } catch (err) {
       rethrowIpc(err);
     }
+  });
+
+  /**
+   * Batched listDir for renderer polling (WSL/SSH file tree): one IPC round
+   * trip per tick instead of one per expanded directory. Per-dir failures
+   * return null so one missing dir doesn't fail the batch.
+   */
+  ipcMain.handle("workspace:listDirs", async (_evt, dirPaths: unknown) => {
+    if (!Array.isArray(dirPaths)) return [];
+    const paths = dirPaths.filter((p): p is string => typeof p === "string").slice(0, 500);
+    const results: Array<{ path: string; entries: Awaited<ReturnType<typeof application.workspace.listDir>> | null }> =
+      new Array(paths.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < paths.length) {
+        const i = next++;
+        const dir = paths[i]!;
+        try {
+          results[i] = { path: dir, entries: await application.workspace.listDir(dir) };
+        } catch {
+          results[i] = { path: dir, entries: null };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, paths.length) }, worker));
+    return results;
   });
 
   ipcMain.handle(

@@ -1,7 +1,6 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { CommentsPane } from "@/features/annotations/CommentsPane";
 import { FileTree } from "@/features/files/FileTree";
-import { HistoryPane } from "@/features/history/HistoryPane";
 import { AgentSidebar } from "@/features/terminal/AgentSidebar";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
@@ -9,6 +8,10 @@ import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
 import type { LeftMode } from "./shellStore";
 import { useShellStore } from "./shellStore";
+
+const HistoryPane = lazy(() =>
+  import("@/features/history/HistoryPane").then((m) => ({ default: m.HistoryPane })),
+);
 
 const REVIEW_MODES: { id: Exclude<LeftMode, "agent">; label: string; icon: CodiconName }[] = [
   { id: "files", label: "FILES", icon: "files" },
@@ -93,7 +96,11 @@ export function LeftNav() {
       <div className="left-nav__body">
         {leftMode === "files" && <FileTree />}
         {leftMode === "comments" && hasWorkspace ? <CommentsPane /> : null}
-        {leftMode === "history" && hasWorkspace ? <HistoryPane /> : null}
+        {leftMode === "history" && hasWorkspace ? (
+          <Suspense fallback={null}>
+            <HistoryPane />
+          </Suspense>
+        ) : null}
         {leftMode === "agent" && hasWorkspace ? <AgentSidebar /> : null}
       </div>
     </aside>

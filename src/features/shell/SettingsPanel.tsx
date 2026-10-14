@@ -109,6 +109,21 @@ export function SettingsPanel() {
   const [remoteError, setRemoteError] = useState<string | null>(null);
 
   const onClose = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
+  const [restoreLastWorkspace, setRestoreLastWorkspaceState] = useState(true);
+
+  useEffect(() => {
+    if (!open || !window.anchor?.settings?.getRestoreLastWorkspace) return;
+    let cancelled = false;
+    void window.anchor.settings
+      .getRestoreLastWorkspace()
+      .then((value) => {
+        if (!cancelled) setRestoreLastWorkspaceState(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -402,6 +417,27 @@ export function SettingsPanel() {
           <div className="settings-modal__main">
             {section === "appearance" ? (
               <section className="settings-section" aria-label="Appearance">
+                <h3 className="settings-section__title">Startup</h3>
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={restoreLastWorkspace}
+                    disabled={!window.anchor?.settings?.setRestoreLastWorkspace}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setRestoreLastWorkspaceState(next);
+                      void window.anchor.settings
+                        .setRestoreLastWorkspace(next)
+                        .then(setRestoreLastWorkspaceState)
+                        .catch(() => setRestoreLastWorkspaceState(!next));
+                    }}
+                  />
+                  <span>Reopen last workspace on launch</span>
+                </label>
+                <p className="settings-section__desc muted">
+                  Falls back to the Welcome page if the folder, WSL distro, or
+                  SSH host is unavailable.
+                </p>
                 <h3 className="settings-section__title">Font size</h3>
                 <p className="settings-section__desc muted">
                   Editor, Markdown, and terminal reading size. Default{" "}

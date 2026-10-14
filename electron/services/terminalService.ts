@@ -50,10 +50,18 @@ interface TabInternal {
   outBuf: BoundedTextBuffer;
   /** Monotonic per-session output cursor used to merge snapshot + live data. */
   outputSeq: number;
+  /** PTY output not yet published (coalesced to cut IPC / xterm write churn). */
+  pending: string[];
+  pendingChars: number;
+  flushTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const REMOTE_REPLAY_MAX_CHARS = 512 * 1024;
 const TERMINAL_EVENT_MAX_CHARS = 64 * 1024;
+/** Coalescing window for PTY output (VS Code uses ~5ms). */
+export const TERMINAL_BATCH_MS = 5;
+/** Flush immediately once this much output is pending. */
+export const TERMINAL_BATCH_MAX_CHARS = 32 * 1024;
 
 /** Chunked ring buffer avoids repeatedly copying a 512 KiB string per PTY write. */
 class BoundedTextBuffer {
@@ -137,12 +145,15 @@ export class TerminalService {
   snapshot(id: string): string | null {
     const tab = this.tabs.get(id);
     if (!tab) return null;
+    this.flushOutput(id);
     return tab.outBuf.toString();
   }
 
   snapshotState(id: string): { data: string; seq: number } | null {
     const tab = this.tabs.get(id);
     if (!tab) return null;
+    // Publish pending output first so snapshot.seq covers everything in data.
+    this.flushOutput(id);
     return { data: tab.outBuf.toString(), seq: tab.outputSeq };
   }
 
@@ -188,22 +199,26 @@ export class TerminalService {
       handle,
       outBuf: new BoundedTextBuffer(REMOTE_REPLAY_MAX_CHARS),
       outputSeq: 0,
+      pending: [],
+      pendingChars: 0,
+      flushTimer: null,
     });
 
     handle.onData((data) => {
       const current = this.tabs.get(handle.id);
-      if (!current) return;
-      current.outBuf.append(data);
-      for (let offset = 0; offset < data.length; offset += TERMINAL_EVENT_MAX_CHARS) {
-        const chunk = data.slice(offset, offset + TERMINAL_EVENT_MAX_CHARS);
-        current.outputSeq += 1;
-        const seq = current.outputSeq;
-        this.send("terminal:data", { id: handle.id, data: chunk, seq });
-        this.emit({ type: "data", id: handle.id, data: chunk, seq });
+      if (!current || !data) return;
+      current.pending.push(data);
+      current.pendingChars += data.length;
+      if (current.pendingChars >= TERMINAL_BATCH_MAX_CHARS) {
+        this.flushOutput(handle.id);
+      } else if (!current.flushTimer) {
+        current.flushTimer = setTimeout(() => this.flushOutput(handle.id), TERMINAL_BATCH_MS);
       }
       // Intentionally no PTY topic inference for agents — TUI noise is unreliable.
     });
     handle.onExit((exitCode) => {
+      // Deliver trailing output before the exit notification.
+      this.flushOutput(handle.id);
       const tab = this.tabs.get(handle.id);
       if (tab) {
         tab.info = { ...tab.info, status: "exited" };
@@ -223,6 +238,31 @@ export class TerminalService {
 
     this.publishInfo("created", info);
     return info;
+  }
+
+  /**
+   * Publish coalesced output. The replay buffer and seq advance together here,
+   * so a snapshot never contains bytes whose seq has not been emitted yet.
+   */
+  private flushOutput(id: string): void {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    if (tab.flushTimer) {
+      clearTimeout(tab.flushTimer);
+      tab.flushTimer = null;
+    }
+    if (tab.pendingChars === 0) return;
+    const data = tab.pending.length === 1 ? tab.pending[0]! : tab.pending.join("");
+    tab.pending = [];
+    tab.pendingChars = 0;
+    tab.outBuf.append(data);
+    for (let offset = 0; offset < data.length; offset += TERMINAL_EVENT_MAX_CHARS) {
+      const chunk = data.slice(offset, offset + TERMINAL_EVENT_MAX_CHARS);
+      tab.outputSeq += 1;
+      const seq = tab.outputSeq;
+      this.send("terminal:data", { id, data: chunk, seq });
+      this.emit({ type: "data", id, data: chunk, seq });
+    }
   }
 
   setAgentSessionId(id: string, agentSessionId: string): TerminalTabInfo | null {
@@ -297,6 +337,8 @@ export class TerminalService {
     const tab = this.tabs.get(id);
     if (!tab) return;
     const kind = tab.info.kind;
+    if (tab.flushTimer) clearTimeout(tab.flushTimer);
+    tab.flushTimer = null;
     try {
       tab.handle.kill();
     } catch {
@@ -486,7 +528,7 @@ export function extractFirstAgentUserPrompt(raw: string): string | null {
   // Codex › (U+203A), ❯, and fullwidth variants. Avoid bare ASCII ">" alone —
   // it collides with residual CSI like "0m>text".
   const strong =
-    /(?:^|\n)[ \t]*(?:[›❯〉]|>>)[ \t\u200b\u200c\u200d\ufeff]*([^\n]+)/g;
+    /(?:^|\n)[ \t]*(?:[›❯〉]|>>)(?:[ \t\u200b\u200c\ufeff]|\u200d)*([^\n]+)/g;
   let m: RegExpExecArray | null;
   const candidates: string[] = [];
   while ((m = strong.exec(plain))) {

@@ -6777,6 +6777,15 @@ select.field__input {
   color: var(--text-muted);
 }
 
+.settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
 .settings-section__desc {
   margin: 0 0 4px;
   font-size: 12.5px;

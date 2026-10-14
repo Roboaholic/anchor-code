@@ -1,3 +1,4 @@
+import { isAppActive } from "@/shared/appActivity";
 import {
   useEffect,
   useRef,
@@ -60,7 +61,7 @@ export function HistoryPane() {
     const tick = () => {
       // Pane is only mounted while HISTORY is the visible left mode.
       if (cancelled || historyPollInFlight) return;
-      if (document.visibilityState !== "visible") return;
+      if (!isAppActive()) return;
       historyPollInFlight = true;
       // Quiet badge refresh only — no commit logs, no loading flicker.
       void softRefreshStatuses().finally(() => {

@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { setActiveInterval } from "@/shared/appActivity";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { resolveAnchor } from "@/core/annotations/anchor";
 import { commentBodyForDisplay } from "@/core/history/diffComment";
 import type {
@@ -271,28 +273,60 @@ function sessionsFingerprint(sessions: SessionRecord[]): string {
     .join(";");
 }
 
-let diskWatchTimer: number | null = null;
+let diskWatchStop: (() => void) | null = null;
 let diskWatchRoot: string | null = null;
 
+/** Fallback poll while a native watcher covers the repo (watchers can drop events). */
+const DISK_POLL_WATCHED_MS = 15_000;
+/** Poll for WSL/SSH where fs.watch is unavailable. */
+const DISK_POLL_UNWATCHED_MS = 2_000;
+
 function stopDiskWatch() {
-  if (diskWatchTimer != null) {
-    window.clearInterval(diskWatchTimer);
-    diskWatchTimer = null;
-  }
+  diskWatchStop?.();
+  diskWatchStop = null;
   diskWatchRoot = null;
+}
+
+function normSlash(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/** True when an fs.watch change path is inside `<repoRoot>/.anchor-code/`. */
+export function isAnnotationsChange(repoRoot: string, changedPath: string): boolean {
+  const root = normSlash(repoRoot);
+  const changed = normSlash(changedPath);
+  return changed.startsWith(`${root}/.anchor-code/`) || changed === `${root}/.anchor-code`;
 }
 
 function startDiskWatch(repoRoot: string) {
   if (typeof window === "undefined") return;
-  if (diskWatchRoot === repoRoot && diskWatchTimer != null) return;
+  if (diskWatchRoot === repoRoot && diskWatchStop != null) return;
   stopDiskWatch();
   diskWatchRoot = repoRoot;
-  // Poll .anchor-code YAML for agent/external writes (WSL/SSH safe, no native watch).
-  diskWatchTimer = window.setInterval(() => {
+  const refresh = () => {
     const root = useAnnotationsStore.getState().repoRoot;
     if (!root || root !== diskWatchRoot) return;
     void useAnnotationsStore.getState().refreshFromDisk(root);
-  }, 2000);
+  };
+  // Local hosts: the workspace fs.watch (FileWatcherService) reports
+  // .anchor-code YAML writes; keep a slow poll as a safety net. WSL/SSH have
+  // no native watch, so poll .anchor-code YAML like before. Either way polls
+  // pause while the window is hidden/unfocused (catch-up tick on return).
+  const watched = useWorkspaceStore.getState().hostKind === "local";
+  const offWatch = watched
+    ? (window.anchor?.workspace?.onFileChange?.(({ dir, changes }) => {
+        const paths = [dir, ...(changes ?? []).map((c) => c.path)];
+        if (paths.some((p) => isAnnotationsChange(repoRoot, p))) refresh();
+      }) ?? (() => undefined))
+    : () => undefined;
+  const offPoll = setActiveInterval(
+    refresh,
+    watched ? DISK_POLL_WATCHED_MS : DISK_POLL_UNWATCHED_MS,
+  );
+  diskWatchStop = () => {
+    offWatch();
+    offPoll();
+  };
 }
 
 

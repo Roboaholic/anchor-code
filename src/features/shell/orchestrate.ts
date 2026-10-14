@@ -78,6 +78,32 @@ export async function openWorkspacePath(
   }
 }
 
+let launchRestoreStarted = false;
+
+/**
+ * Reopen the last active workspace once per app launch (setting "Restore last
+ * workspace", default on). Main process probes reachability with a timeout;
+ * any failure leaves the Welcome page as-is and never surfaces as an error.
+ */
+export async function restoreLastWorkspaceOnLaunch(): Promise<void> {
+  if (launchRestoreStarted) return;
+  launchRestoreStarted = true;
+  try {
+    const target = await window.anchor?.workspace?.getRestoreTarget?.();
+    if (!target) return;
+    // The user may have opened something while we probed.
+    if (useWorkspaceStore.getState().workspaceRoot) return;
+    await openWorkspacePath(target.path, target.hostProfileId);
+    const ws = useWorkspaceStore.getState();
+    if (!ws.workspaceRoot && ws.status === "error") {
+      console.warn("[shell] restore last workspace failed:", ws.error);
+      useWorkspaceStore.setState({ status: "idle", error: null });
+    }
+  } catch (err) {
+    console.warn("[shell] restore last workspace skipped:", err);
+  }
+}
+
 export async function activateWorkspace(id: string): Promise<void> {
   try {
     const previous = useWorkspaceStore.getState();

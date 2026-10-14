@@ -105,6 +105,8 @@ export interface AppSettings {
     fontSize?: number;
     /** Whole-workbench zoom percentage. Default 100. Clamped 80–150. */
     uiScale?: number;
+    /** Reopen the last active workspace on launch. Default true. */
+    restoreLastWorkspace?: boolean;
   };
 }
 
@@ -437,6 +439,18 @@ export async function setUiTheme(theme: UiTheme): Promise<UiTheme> {
   settings.ui = { ...settings.ui, theme: next };
   await saveSettings(settings);
   return next;
+}
+
+export async function getRestoreLastWorkspace(): Promise<boolean> {
+  const settings = await loadSettings();
+  return settings.ui?.restoreLastWorkspace !== false;
+}
+
+export async function setRestoreLastWorkspace(enabled: boolean): Promise<boolean> {
+  const settings = await loadSettings();
+  settings.ui = { ...settings.ui, restoreLastWorkspace: enabled === true };
+  await saveSettings(settings);
+  return settings.ui.restoreLastWorkspace !== false;
 }
 
 export type SessionTabLayout = "side" | "top";

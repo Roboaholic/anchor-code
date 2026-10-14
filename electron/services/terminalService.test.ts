@@ -278,3 +278,103 @@ describe("TerminalService remote replay bounds", () => {
     expect(service.snapshot("bounded-terminal")?.length).toBe(512 * 1024);
   });
 });
+
+describe("TerminalService output batching", () => {
+  function setup() {
+    const callbacks: { data?: (data: string) => void; exit?: (code: number) => void } = {};
+    const handle: PtyHandle = {
+      id: "batch-terminal",
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData(callback) { callbacks.data = callback; },
+      onExit(callback) { callbacks.exit = callback; },
+    };
+    const host = {
+      kind: "local",
+      profileId: "local-default",
+      workspaceRoot: os.tmpdir(),
+      openPty: vi.fn(async () => handle),
+    } as unknown as HostSession;
+    const sent: Array<{ channel: string; payload: unknown }> = [];
+    const win = {
+      isDestroyed: () => false,
+      webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+    };
+    const service = new TerminalService(() => win as never, () => host);
+    const events: Array<{ type: string; data?: string; seq?: number }> = [];
+    service.subscribe((event) => {
+      if (event.type === "data") events.push({ type: "data", data: event.data, seq: event.seq });
+      if (event.type === "exit") events.push({ type: "exit" });
+    });
+    return { service, callbacks, events, sent };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("coalesces small writes into one event after the batch window", async () => {
+    vi.useFakeTimers();
+    const { service, callbacks, events, sent } = setup();
+    await service.create({ cwd: os.tmpdir() });
+    for (let i = 1; i <= 100; i += 1) callbacks.data?.(`${i}\n`);
+    expect(events).toHaveLength(0);
+    vi.advanceTimersByTime(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.seq).toBe(1);
+    expect(events[0]?.data?.split("\n").filter(Boolean)).toHaveLength(100);
+    expect(sent.filter((m) => m.channel === "terminal:data")).toHaveLength(1);
+  });
+
+  it("flushes immediately at 32K and keeps seq monotonic and output complete", async () => {
+    vi.useFakeTimers();
+    const { service, callbacks, events } = setup();
+    await service.create({ cwd: os.tmpdir() });
+    const lines: string[] = [];
+    for (let i = 1; i <= 200_000; i += 1) lines.push(`${i}\n`);
+    // Feed in uneven PTY-sized pieces.
+    const all = lines.join("");
+    for (let o = 0; o < all.length; o += 4093) callbacks.data?.(all.slice(o, o + 4093));
+    vi.advanceTimersByTime(10);
+    const joined = events.map((e) => e.data).join("");
+    expect(joined).toBe(all);
+    expect(joined.trimEnd().split("\n").at(-1)).toBe("200000");
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    // Far fewer events than raw PTY callbacks.
+    expect(events.length).toBeLessThan(Math.ceil(all.length / 4093) / 4);
+  });
+
+  it("snapshot flushes pending output so snapshot seq + later live data never overlap", async () => {
+    vi.useFakeTimers();
+    const { service, callbacks, events } = setup();
+    await service.create({ cwd: os.tmpdir() });
+    callbacks.data?.("a");
+    callbacks.data?.("b");
+    const snap = service.snapshotState("batch-terminal");
+    expect(snap).toEqual({ data: "ab", seq: 1 });
+    callbacks.data?.("c");
+    vi.advanceTimersByTime(10);
+    const live = events.filter((e) => (e.seq ?? 0) > snap!.seq).map((e) => e.data).join("");
+    expect(snap!.data + live).toBe("abc");
+  });
+
+  it("delivers trailing output before exit", async () => {
+    vi.useFakeTimers();
+    const { service, callbacks, events } = setup();
+    await service.create({ cwd: os.tmpdir() });
+    callbacks.data?.("bye\n");
+    callbacks.exit?.(0);
+    expect(events.map((e) => e.type)).toEqual(["data", "exit"]);
+  });
+
+  it("drops pending timer on kill", async () => {
+    vi.useFakeTimers();
+    const { service, callbacks, events } = setup();
+    await service.create({ cwd: os.tmpdir() });
+    callbacks.data?.("x");
+    service.kill("batch-terminal");
+    vi.advanceTimersByTime(10);
+    expect(events.filter((e) => e.type === "data")).toHaveLength(0);
+  });
+});

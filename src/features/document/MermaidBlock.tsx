@@ -1,5 +1,4 @@
 import { useEffect, useId, useState } from "react";
-import mermaid from "mermaid";
 import { isDarkTheme } from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
 import { Icon } from "@/shared/Icon";
@@ -11,8 +10,17 @@ type Props = {
 };
 
 let mermaidConfiguredFor: "dark" | "light" | null = null;
+type MermaidApi = typeof import("mermaid").default;
+let mermaidPromise: Promise<MermaidApi> | null = null;
 
-function ensureMermaid(themeMode: "dark" | "light") {
+/** Lazy-load mermaid (~MBs incl. diagram chunks) only when a diagram is rendered. */
+function loadMermaid(): Promise<MermaidApi> {
+  mermaidPromise ??= import("mermaid").then((m) => m.default);
+  return mermaidPromise;
+}
+
+async function ensureMermaid(themeMode: "dark" | "light"): Promise<MermaidApi> {
+  const mermaid = await loadMermaid();
   if (mermaidConfiguredFor !== themeMode) {
     mermaid.initialize({
       startOnLoad: false,
@@ -23,6 +31,7 @@ function ensureMermaid(themeMode: "dark" | "light") {
     });
     mermaidConfiguredFor = themeMode;
   }
+  return mermaid;
 }
 
 /**
@@ -49,7 +58,7 @@ export function MermaidBlock({ chart, className }: Props) {
 
     void (async () => {
       try {
-        ensureMermaid(themeMode);
+        const mermaid = await ensureMermaid(themeMode);
         // Unique id per render — mermaid mutates/looks up by id.
         const id = `mermaid-${reactId}-${Math.random().toString(36).slice(2, 9)}`;
         const { svg: rendered } = await mermaid.render(id, source);

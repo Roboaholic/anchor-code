@@ -18,6 +18,8 @@ export type AskContext = {
   snippet: string;
   /** Present when asked from a diff view. */
   diff?: AskDiffContext | null;
+  /** Viewport rect of the selection's last line (popover anchor). */
+  anchor?: AskAnchorRect | null;
 };
 
 export type AskPromptInput = {
@@ -85,4 +87,83 @@ export function askPasteChunks(prompt: string): [string, string] {
   // Strip any embedded paste terminators so the prompt can't break out.
   const safe = prompt.split(PASTE_END).join("").split(PASTE_START).join("");
   return [`${PASTE_START}${safe}${PASTE_END}`, "\r"];
+}
+
+export type AskSessionLabelTab = {
+  title: string;
+  status: "running" | "exited";
+  agentId?: string;
+  titleSource?: "default" | "user" | "inferred";
+};
+
+const SHORT_TITLE_MAX = 24;
+
+/**
+ * Readable session-selector label: `agent · title-or-index · status`.
+ * Default/inferred titles are often the raw launch prompt, so fall back to
+ * "会话 N" unless the user (or Ask itself) named the tab.
+ */
+export function askSessionLabel(
+  tab: AskSessionLabelTab,
+  index: number,
+  activity: AgentActivityState | undefined,
+  agentName?: string,
+): string {
+  const agent = agentName || tab.agentId || "agent";
+  const raw = tab.title.replace(/\s+/g, " ").trim();
+  const named = tab.titleSource === "user" || raw.startsWith("Ask ·");
+  const short = named && raw
+    ? raw.length > SHORT_TITLE_MAX
+      ? `${raw.slice(0, SHORT_TITLE_MAX - 1)}…`
+      : raw
+    : `会话 ${index + 1}`;
+  const status =
+    tab.status === "exited"
+      ? "已退出"
+      : (activity ?? "idle") === "working"
+        ? "忙碌"
+        : "空闲";
+  return `${agent} · ${short} · ${status}`;
+}
+
+/** Stable key so a draft survives close/reopen of the same selection. */
+export function askDraftKey(ctx: Pick<AskContext, "path" | "startLine" | "endLine">): string {
+  return `${ctx.path}#${ctx.startLine}-${ctx.endLine}`;
+}
+
+export type AskAnchorRect = {
+  /** Top of the selection's last line. */
+  top: number;
+  /** Bottom of the selection's last line (below-placement anchor). */
+  bottom: number;
+  left: number;
+  /** Top of the selection's first line (above-placement anchor). */
+  startTop?: number;
+};
+
+/**
+ * Place the popover below the anchor line; flip above when it doesn't fit.
+ * Clamped horizontally into the viewport.
+ */
+export function askPopoverPosition(
+  anchor: AskAnchorRect,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+  gap = 6,
+  margin = 8,
+): { top: number; left: number; placement: "below" | "above" } {
+  const belowTop = anchor.bottom + gap;
+  const fitsBelow = belowTop + size.height <= viewport.height - margin;
+  const aboveTop = (anchor.startTop ?? anchor.top) - gap - size.height;
+  let placement: "below" | "above" = "below";
+  let top = belowTop;
+  if (!fitsBelow && aboveTop >= margin) {
+    placement = "above";
+    top = aboveTop;
+  } else if (!fitsBelow) {
+    top = Math.max(margin, viewport.height - margin - size.height);
+  }
+  const maxLeft = Math.max(margin, viewport.width - margin - size.width);
+  const left = Math.min(Math.max(anchor.left, margin), maxLeft);
+  return { top, left, placement };
 }

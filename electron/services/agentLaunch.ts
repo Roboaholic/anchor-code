@@ -1077,7 +1077,7 @@ export function parseOmpModelsYml(text: string): AgentModelOption[] {
     const line = raw.replace(/\t/g, "  ");
     if (/^providers:\s*$/.test(line)) continue;
 
-    const prov = line.match(/^  ([A-Za-z0-9._-]+):\s*$/);
+    const prov = line.match(/^ {2}([A-Za-z0-9._-]+):\s*$/);
     if (prov && raw.startsWith("  ") && !raw.startsWith("    ")) {
       flush();
       provider = prov[1]!;
@@ -1091,7 +1091,7 @@ export function parseOmpModelsYml(text: string): AgentModelOption[] {
     }
     if (!inModels || !provider) continue;
 
-    if (/^  [A-Za-z]/.test(raw) && !raw.startsWith("    ")) {
+    if (/^ {2}[A-Za-z]/.test(raw) && !raw.startsWith("    ")) {
       flush();
       inModels = false;
       continue;

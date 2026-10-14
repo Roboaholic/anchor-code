@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["electron", "contracts", "vite.config.ts", "vitest.config.ts", "vitest.emulator.config.ts"]
+}

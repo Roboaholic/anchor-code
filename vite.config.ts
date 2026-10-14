@@ -64,12 +64,39 @@ export default defineConfig({
     strictPort: true,
   },
   optimizeDeps: {
-    include: ["monaco-editor", "@monaco-editor/react"],
+    include: ["@monaco-editor/react"],
   },
   worker: {
     format: "es",
   },
   build: {
     outDir: "dist",
+    // Monaco alone is ~3 MB; it is loaded on first document open (lazy viewers).
+    chunkSizeWarningLimit: 4000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Vite's preload helper must not land inside a lazy vendor chunk, or
+          // the entry would statically import that whole chunk.
+          if (id.includes("vite/preload-helper") || id.includes("commonjsHelpers")) return "runtime";
+          if (!id.includes("node_modules")) return undefined;
+          // Keep big vendors in stable, separately cached chunks. Mermaid and its
+          // diagram/katex/cytoscape deps are left to Rollup's dynamic-import split.
+          if (id.includes("/monaco-editor/") || id.includes("/@monaco-editor/")) return "monaco";
+          if (id.includes("/@xterm/")) return "xterm";
+          if (
+            id.includes("/react-markdown/") ||
+            id.includes("/remark-") ||
+            id.includes("/mdast-") ||
+            id.includes("/micromark") ||
+            id.includes("/unified/") ||
+            id.includes("/hast-")
+          )
+            return "markdown";
+          if (/\/node_modules\/(react|react-dom|scheduler|zustand)\//.test(id)) return "react";
+          return undefined;
+        },
+      },
+    },
   },
 });

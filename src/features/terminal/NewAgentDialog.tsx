@@ -452,7 +452,7 @@ export function NewAgentDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
-                  submit();
+                  void submit();
                 }
               }}
             />

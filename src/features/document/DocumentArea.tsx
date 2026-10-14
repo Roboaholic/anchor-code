@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -8,9 +10,22 @@ import {
 } from "react";
 import { Icon } from "@/shared/Icon";
 import type { CodiconName } from "@/shared/Icon";
-import { CodeViewer } from "./CodeViewer";
-import { DiffViewer } from "./DiffViewer";
-import { MarkdownViewer } from "./MarkdownViewer";
+
+// Viewers pull in Monaco / react-markdown; load them on first document open so
+// the shell (welcome page, tree, terminals) paints without parsing them.
+const CodeViewer = lazy(() =>
+  import("./CodeViewer").then((m) => ({ default: m.CodeViewer })),
+);
+const DiffViewer = lazy(() =>
+  import("./DiffViewer").then((m) => ({ default: m.DiffViewer })),
+);
+const MarkdownViewer = lazy(() =>
+  import("./MarkdownViewer").then((m) => ({ default: m.MarkdownViewer })),
+);
+
+function ViewerFallback() {
+  return <div className="empty-center muted">Loading…</div>;
+}
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
 
@@ -428,7 +443,11 @@ function ActiveView({
   }
 
   if (item.kind === "diff") {
-    return <DiffViewer item={item} />;
+    return (
+      <Suspense fallback={<ViewerFallback />}>
+        <DiffViewer item={item} />
+      </Suspense>
+    );
   }
 
   if (item.error) {
@@ -442,6 +461,7 @@ function ActiveView({
 
   if (item.isMarkdown) {
     return (
+      <Suspense fallback={<ViewerFallback />}>
       <MarkdownViewer
         path={item.path}
         content={item.content}
@@ -453,10 +473,12 @@ function ActiveView({
         revealNonce={item.revealNonce}
         searchHighlight={item.searchHighlight}
       />
+      </Suspense>
     );
   }
 
   return (
+    <Suspense fallback={<ViewerFallback />}>
     <CodeViewer
       path={item.path}
       content={item.content}
@@ -468,6 +490,7 @@ function ActiveView({
       searchHighlight={item.searchHighlight}
       kind="source"
     />
+    </Suspense>
   );
 }
 

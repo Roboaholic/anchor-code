@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type RefObject } from "react";
 import {
   Panel,
   PanelGroup,
@@ -27,7 +27,6 @@ import {
   scheduleFitXtermSession,
 } from "@/features/terminal/xtermSessionPool";
 import { TerminalPanel } from "./TerminalPanel";
-import { SettingsPanel } from "./SettingsPanel";
 import { TopBar } from "./TopBar";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
@@ -244,6 +243,7 @@ export function Shell() {
     }
     void loadVersion();
     void loadRecent();
+    void import("./orchestrate").then((m) => m.restoreLastWorkspaceOnLaunch());
 
     const applyFontSizeCommand = (type: string): boolean => {
       const { fontSize, setFontSize } = useThemeStore.getState();
@@ -673,7 +673,26 @@ export function Shell() {
       <AskDialog />
 
       {/* Floating overlay — not a center tab */}
-      <SettingsPanel />
+      <LazySettingsPanel />
     </div>
+  );
+}
+
+const SettingsPanel = lazy(() =>
+  import("./SettingsPanel").then((m) => ({ default: m.SettingsPanel })),
+);
+
+/** Mount the settings panel only after it is first opened (then keep it mounted). */
+function LazySettingsPanel() {
+  const open = useThemeStore((s) => s.settingsOpen);
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
+  if (!mounted && !open) return null;
+  return (
+    <Suspense fallback={null}>
+      <SettingsPanel />
+    </Suspense>
   );
 }

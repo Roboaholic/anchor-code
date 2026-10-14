@@ -490,6 +490,8 @@ export interface AnchorApi {
       workspaceInstance: WorkspaceInstance;
     }>;
     getRecent: () => Promise<RecentWorkspace[]>;
+    /** Last active workspace if restore-on-launch is on and it is reachable. */
+    getRestoreTarget: () => Promise<{ path: string; hostProfileId: string } | null>;
     listOpenInstances: () => Promise<WorkspaceInstancesState>;
     /** Close an open workspace instance (persists removal). */
     close: (id: string) => Promise<{
@@ -561,6 +563,8 @@ export interface AnchorApi {
       }) => void,
     ) => () => void;
     /** Start watching the workspace root for file changes (local hosts only). */
+    /** Batched listDir (one IPC); entries is null for dirs that failed. */
+    listDirs: (paths: string[]) => Promise<Array<{ path: string; entries: DirEntry[] | null }>>;
     watchStart: (root?: string) => Promise<{ ok: boolean }>;
     watchStop: () => Promise<{ ok: boolean }>;
     /** A directory's contents changed (debounced by the main process). */
@@ -742,6 +746,8 @@ export interface AnchorApi {
     setSessionTabLayout: (
       layout: SessionTabLayout,
     ) => Promise<SessionTabLayout>;
+    getRestoreLastWorkspace: () => Promise<boolean>;
+    setRestoreLastWorkspace: (enabled: boolean) => Promise<boolean>;
     getFontSize: () => Promise<number>;
     setFontSize: (fontSize: number) => Promise<number>;
     getUiScale: () => Promise<number>;

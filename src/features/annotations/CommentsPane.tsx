@@ -122,17 +122,6 @@ export function CommentsPane() {
   }, [workspaceRoot, loadForRepo]);
 
 
-  if (!workspaceRoot) {
-    return (
-      <div className="empty-pane">
-        <h2 className="empty-pane__title">Comments</h2>
-        <p className="empty-pane__hint">
-          Open a workspace to manage annotations.
-        </p>
-      </div>
-    );
-  }
-
   const ensureWritable = async (session: SessionRecord) => {
     if (session.status === "active") return;
     await useAnnotationsStore.getState().restoreSession(session.id);
@@ -226,6 +215,20 @@ export function CommentsPane() {
     },
     [repoRoot, openAgentMenu],
   );
+
+  // Early return must follow every hook (rules-of-hooks): toggling
+  // workspaceRoot used to change the hook count and crash the pane.
+  if (!workspaceRoot) {
+    return (
+      <div className="empty-pane">
+        <h2 className="empty-pane__title">Comments</h2>
+        <p className="empty-pane__hint">
+          Open a workspace to manage annotations.
+        </p>
+      </div>
+    );
+  }
+
 
 
   return (

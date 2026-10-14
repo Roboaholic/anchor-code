@@ -12,7 +12,7 @@ function editor(contentWidth: number, usedWidth: number) {
 describe("fitBlameText", () => {
   it("truncates with an ellipsis to fit the remaining line width", () => {
     const text = fitBlameText(editor(200, 80), 1, "Author · 2d ago · a very long title", 13);
-    expect(text).toMatch(/^  Author/);
+    expect(text).toMatch(/^ {2}Author/);
     expect(text).toMatch(/…$/);
   });
 

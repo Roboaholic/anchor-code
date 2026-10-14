@@ -277,7 +277,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(async () => {
+void app.whenReady().then(async () => {
   const automatedWorkspace = process.env.ANCHOR_REMOTE_WORKSPACE?.trim();
   if (automatedWorkspace) {
     hosts.session.workspaceRoot = automatedWorkspace;

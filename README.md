@@ -13,13 +13,21 @@ Anchor Code puts the codebase, technical documents, Git history, diffs, review c
 
 ## Features
 
+The loop is the same every time: the agent writes, you read the exact lines, you mark what still needs work, and **Feedback** sends that session back. Screenshots below show the layout. Clips show the motion.
+
 ### Comments anchored to exact lines
 
-Select code or rendered Markdown and leave a comment in an inline bubble anchored to the selection, choosing its status as you write it. Review sessions track each thread as a question (`discussing`), a change request (`need_modify`), or resolved (`closed`), and **Feedback** hands the whole session to an agent, which can reply in the thread and update the status.
+Select code or rendered Markdown and leave a comment in an inline bubble anchored to the selection. Each thread is a question (`discussing`), a change request (`need_modify`), or resolved (`closed`).
+
+A review session keeps those threads next to the file. The agent replies in the same thread and can update the status. It does not start a new chat somewhere else.
+
+![Review session with line-anchored comments and replies from the Pi agent](docs/images/comments.png)
+
+Writing a comment stays on the selection. Pick the status while you type, then add it.
 
 ![Selecting lines, writing a review comment in the comment bubble, and adding it](docs/images/comment-bubble.gif)
 
-![Review session with line-anchored comments and replies from the Pi agent](docs/images/comments.png)
+**Feedback** hands the whole session to the agent. The reply lands back in the thread, with the files it touched and which threads are still open.
 
 ![Sending a review session to Pi with Feedback; Pi's reply appears in the comment thread](docs/images/feedback-reply.gif)
 
@@ -37,37 +45,45 @@ Pick any two commits, or a commit and the current worktree, and **Compare** open
 
 ### Agent CLI sessions
 
-Run Claude Code, Codex, Gemini CLI, and other agent CLIs as native terminal/TUI sessions in the project, in the side panel or the full-width **Agent** workbench. Model and reasoning-effort selection and session resume are available where the CLI supports them.
+Agents stay in their own terminal. Anchor Code hosts that session in the side panel or the full-width **Agent** workbench, so the review and the CLI share one window.
 
 ![Agent workbench with a running agent session](docs/images/agent.png)
 
-Start a new session from the agent picker (Claude Code, Codex, Grok, OMP, Pi, and more), choose the model and effort, or resume a previous session from the list. Several sessions can run side by side; the session list switches between them.
+Start a session from the picker — Claude Code, Codex, Gemini CLI, Grok, OMP, Pi, and others — or resume one the CLI already knows. Model and reasoning effort show up when the CLI supports them.
 
 ![New agent session dialog with Pi selected, its DeepSeek models, and resumable Pi sessions](docs/images/agent-picker.png)
 
+Several sessions can run at once. The list in the panel is how you switch. Each one keeps its own terminal.
+
 ![Three Pi sessions in the agent panel; one has just written and run a new test](docs/images/agent-sessions.png)
+
+A session is just the CLI. Below, a new Pi session edits the file and runs the tests without leaving the workbench.
 
 ![Starting a new Pi session that edits code and runs the tests](docs/images/agent-working.gif)
 
 ### Ask about a selection
 
-Select lines and press **?** to ask an agent about them in a small popover anchored to the selection. Send to an idle session or start a new one; **Read-only** (on by default) launches new agents in their plan / read-only mode. `Ctrl+Enter` sends.
+Select lines and press **?** when you want an answer, not a review thread. The question sits in a small popover on the selection. Send it to an idle session, or start a new one. **Read-only** is on by default, so a new agent starts in plan / read-only mode. `Ctrl+Enter` sends.
 
 ![Ask popover anchored below the selected lines](docs/images/ask.png)
+
+The answer comes back in the agent panel, still tied to the lines you selected.
 
 ![Selecting code, asking Pi about it, and getting the answer in the agent panel](docs/images/ask-answer.gif)
 
 ### Markdown and Mermaid
 
-Technical documents render in place, including Mermaid diagrams, and you can comment on rendered text just like code.
+Technical documents render in place, including Mermaid diagrams. Rendered text can be commented on the same way as code.
 
 ![Rendered Markdown design doc with a Mermaid flowchart](docs/images/markdown.png)
 
 ### Search and quick open
 
-Content search streams results as ripgrep finds them; `Ctrl+P` fuzzy-matches file paths. Both honour `.anchorignore` and the per-workspace exclude filters.
+Content search streams matches as ripgrep finds them. Search and quick open both honour `.anchorignore` and the per-workspace exclude filters.
 
 ![Content search results in the sidebar](docs/images/search.png)
+
+`Ctrl+P` is the file picker: fuzzy-match a path, then open it.
 
 ![Ctrl+P quick open with fuzzy matches](docs/images/quick-open.png)
 

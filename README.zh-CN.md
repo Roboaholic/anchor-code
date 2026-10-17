@@ -13,13 +13,21 @@ Anchor Code 把代码、技术文档、Git 历史、Diff、审阅评论和你在
 
 ## 功能
 
+每次循环都一样：Agent 写代码，你对着具体行看，标出还要改的地方，再点 **Feedback** 把这次审阅交回去。下面的截图是界面，动图是操作过程。
+
 ### 锚定到具体行的评论
 
-选中代码或渲染后的 Markdown，即可在锚定于选区的行内气泡中写评论，并在写的同时选择状态。审阅会话把每条评论标记为问题（`discussing`）、修改请求（`need_modify`）或已解决（`closed`）；点击 **Feedback** 把整个会话交给 Agent，Agent 可以在原线程回复并更新状态。
+选中代码或渲染后的 Markdown，在钉住选区的行内气泡里写评论。每条线程是问题（`discussing`）、修改请求（`need_modify`）或已解决（`closed`）。
+
+审阅会话把这些线程和文件放在一起。Agent 在原线程里回复，也可以改状态，不会另开一段对话。
+
+![带行锚定评论和 Pi Agent 回复的审阅会话](docs/images/comments.png)
+
+写评论时选区还在。边写边选状态，然后添加。
 
 ![选中代码行，在评论气泡中撰写审阅意见并添加](docs/images/comment-bubble.gif)
 
-![带行锚定评论和 Pi Agent 回复的审阅会话](docs/images/comments.png)
+**Feedback** 把整个会话交给 Agent。回复回到原线程，并带上改了哪些文件、哪些线程还开着。
 
 ![通过 Feedback 把审阅会话交给 Pi，Pi 的回复出现在评论线程中](docs/images/feedback-reply.gif)
 
@@ -37,37 +45,45 @@ Anchor Code 把代码、技术文档、Git 历史、Diff、审阅评论和你在
 
 ### Agent CLI 会话
 
-在项目里以原生终端 / TUI 运行 Claude Code、Codex、Gemini CLI 等 Agent CLI，可放在侧栏，也可用全宽的 **Agent** 工作台。CLI 支持时，可选择模型、推理强度并恢复会话。
+Agent 仍跑在自己的终端里。Anchor Code 把它放进侧栏，或全宽的 **Agent** 工作台，审阅和 CLI 共用一个窗口。
 
 ![运行中的 Agent 会话（Agent 工作台）](docs/images/agent.png)
 
-在 Agent 选择器中新建会话（Claude Code、Codex、Grok、OMP、Pi 等），选择模型与推理强度，或从列表中恢复之前的会话。多个会话可以同时运行，通过会话列表切换。
+从选择器新建会话（Claude Code、Codex、Gemini CLI、Grok、OMP、Pi 等），或恢复 CLI 里已有的会话。CLI 支持时，可以选择模型和推理强度。
 
 ![新建 Agent 会话对话框：已选择 Pi，显示其 DeepSeek 模型和可恢复的 Pi 会话](docs/images/agent-picker.png)
 
+多个会话可以同时跑。面板里的列表用来切换，每个会话保留自己的终端。
+
 ![Agent 面板中的三个 Pi 会话，其中一个刚编写并运行了新测试](docs/images/agent-sessions.png)
+
+会话就是那个 CLI。下面是新建一个 Pi 会话、改代码并跑测试，不用离开工作台。
 
 ![新建 Pi 会话，修改代码并运行测试](docs/images/agent-working.gif)
 
 ### 针对选区提问（Ask）
 
-选中几行后点 **?**，在锚定于选区旁的小气泡里向 Agent 提问。可以发给空闲会话，也可以新建会话；**Read-only**（默认勾选）会让新建的 Agent 以 plan / 只读模式启动。按 `Ctrl+Enter` 发送。
+想要一个答案、而不是一条审阅线程时，选中几行后点 **?**。问题出现在钉住选区的小气泡里，可以发给空闲会话，也可以新建。**Read-only** 默认勾选，新建的 Agent 会以 plan / 只读模式启动。按 `Ctrl+Enter` 发送。
 
 ![锚定在选中行下方的 Ask 气泡](docs/images/ask.png)
+
+回答回到 Agent 面板，仍然对着你选中的那几行。
 
 ![选中代码向 Pi 提问，答案出现在 Agent 面板中](docs/images/ask-answer.gif)
 
 ### Markdown 与 Mermaid
 
-技术文档原地渲染，包括 Mermaid 图，渲染后的文字也能像代码一样评论。
+技术文档原地渲染，包括 Mermaid 图。渲染后的文字也能像代码一样评论。
 
 ![渲染后的设计文档与 Mermaid 流程图](docs/images/markdown.png)
 
 ### 搜索与快速打开
 
-内容搜索在 ripgrep 找到结果时流式显示；`Ctrl+P` 对文件路径做模糊匹配。两者都遵守 `.anchorignore` 和每个工作区的排除规则。
+内容搜索会在 ripgrep 找到结果时流式显示。搜索和快速打开都遵守 `.anchorignore` 和每个工作区的排除规则。
 
 ![侧栏中的内容搜索结果](docs/images/search.png)
+
+`Ctrl+P` 是文件选择器：对路径做模糊匹配，然后打开。
 
 ![Ctrl+P 快速打开与模糊匹配](docs/images/quick-open.png)
 

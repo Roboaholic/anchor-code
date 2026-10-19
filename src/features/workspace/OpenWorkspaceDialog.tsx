@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
+import "./OpenWorkspaceDialog.css";
 import {
   filterBrowseDirs,
   isWindowsClient,
@@ -27,6 +28,12 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const [kind, setKind] = useState<HostKind>(win ? "wsl" : "local");
   const [selectedDistro, setSelectedDistro] = useState<string>("");
   const [browsePath, setBrowsePath] = useState<string>("/");
+  const [pathInput, setPathInput] = useState("/");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const folderHeadingRef = useRef<HTMLHeadingElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [dirs, setDirs] = useState<DirEntry[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,6 +91,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       const onlyDirs = filterBrowseDirs(entries);
       setDirs(onlyDirs);
       setBrowsePath(path);
+      setPathInput(path);
       return true;
     } catch (err) {
       if (version === requestVersion.current) setError(err instanceof Error ? err.message : String(err));
@@ -99,6 +107,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     setBusy(false);
     setDirs([]);
     setBrowsePath("/");
+    setPathInput("/");
     setBrowseLoading(false);
     setConnectedSshProfileId(null);
     const interaction = interactionVersion.current;
@@ -184,9 +193,57 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     };
   }, [selectedDistro, open, kind, win, loadBrowse]);
 
+  // Keep keyboard navigation inside the dialog and restore the launcher's focus.
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLElement>('input[type="radio"]:checked')?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (!committingWorkspace.current) {
+          event.preventDefault();
+          requestVersion.current += 1;
+          onCloseRef.current();
+        }
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("*")).filter((element) =>
+        element.matches('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]')
+        && (!element.closest('details:not([open])') || element.tagName === "SUMMARY"),
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault(); first?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || kind !== "ssh") return;
+    if (connectedSshProfileId) folderHeadingRef.current?.focus();
+    else dialogRef.current?.querySelector<HTMLInputElement>('.workspace-dialog__connection input')?.focus();
+  }, [open, kind, sshMode, connectedSshProfileId]);
+
+  useEffect(() => {
+    if (open && error) errorRef.current?.focus();
+  }, [open, error]);
+
   if (!open) return null;
 
   async function chooseLocal() {
+    if (busy || committingWorkspace.current) return;
+    committingWorkspace.current = true;
+    setOpeningWorkspace(true);
     setBusy(true);
     setError(null);
     try {
@@ -205,16 +262,21 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      committingWorkspace.current = false;
+      setOpeningWorkspace(false);
       setBusy(false);
     }
   }
 
   async function chooseWsl() {
+    if (busy || committingWorkspace.current) return;
     const path = browsePath.trim();
     if (!path.startsWith("/")) {
       setError("Select a folder under WSL");
       return;
     }
+    committingWorkspace.current = true;
+    setOpeningWorkspace(true);
     setBusy(true);
     setError(null);
     try {
@@ -239,6 +301,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      committingWorkspace.current = false;
+      setOpeningWorkspace(false);
       setBusy(false);
     }
   }
@@ -248,6 +312,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     setConnectedSshProfileId(null);
     setDirs([]);
     setBrowsePath("/");
+    setPathInput("/");
     setBrowseLoading(false);
     setError(null);
   }
@@ -335,185 +400,216 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   }
 
   const parent = parentPosix(browsePath);
-  const canGoUp = parent !== null;
+  const connectedProfile = profiles.find((profile) => profile.id === connectedSshProfileId);
+  const connectedLabel = connectedProfile?.label ?? (sshMode === "config" ? configAlias : `${sshUsername}@${sshHost}`);
+  const selectingFolder = kind === "wsl" || (kind === "ssh" && !!connectedSshProfileId);
+  const connectionReady = sshMode === "config"
+    ? !!configAlias.trim()
+    : !!sshHost.trim() && !!sshUsername.trim();
+  const pathChanged = pathInput.trim() !== browsePath;
+
+  function browseFolder(path: string) {
+    const next = path.trim();
+    if (!next.startsWith("/")) {
+      setError("Enter an absolute folder path starting with /.");
+      return;
+    }
+    if (kind === "ssh" && connectedSshProfileId) {
+      void loadBrowse(next, "", "ssh", connectedSshProfileId);
+    } else if (kind === "wsl") {
+      void loadBrowse(next, selectedDistro);
+    }
+  }
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={closeDialog}>
       <div
-        className="modal modal--wide"
+        ref={dialogRef}
+        className="modal workspace-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="open-ws-title"
-        onClick={(e) => e.stopPropagation()}
+        aria-describedby="open-ws-description"
+        onClick={(event) => event.stopPropagation()}
       >
         <header className="modal__header">
-          <h2 id="open-ws-title" className="modal__title">
-            Open Workspace
-          </h2>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon"
-            aria-label="Close"
-            disabled={openingWorkspace}
-            onClick={closeDialog}
-          >
+          <div>
+            <h2 id="open-ws-title" className="modal__title">Open Workspace</h2>
+            <p id="open-ws-description" className="modal__hint">Choose where your project lives.</p>
+          </div>
+          <button type="button" className="btn btn--ghost btn--icon" aria-label="Close" disabled={openingWorkspace} onClick={closeDialog}>
             <Icon name="close" />
           </button>
         </header>
 
-        <p className="modal__hint">
-          Choose where the workspace lives. Terminal, git, and comments all run
-          on that host.
-        </p>
-
-        <div className="host-choice" role="radiogroup" aria-label="Host">
-          <label
-            className={`host-choice__card${kind === "local" ? " is-selected" : ""}`}
-          >
-            <input
-              type="radio"
-              name="host-kind"
-              checked={kind === "local"}
-              disabled={busy} onChange={() => changeKind("local")}
-            />
-            <span className="host-choice__title">Local</span>
-            <span className="host-choice__desc">
-              Folder on this machine (native path)
-            </span>
-          </label>
-
-          {win ? (
-            <label className={`host-choice__card${kind === "wsl" ? " is-selected" : ""}`}>
-              <input type="radio" name="host-kind" checked={kind === "wsl"} disabled={busy} onChange={() => changeKind("wsl")} />
-              <span className="host-choice__title">WSL</span>
-              <span className="host-choice__desc">Linux distro via wsl.exe — POSIX paths, shell inside WSL</span>
+        <div className="workspace-dialog__content">
+          <div className="host-choice" role="radiogroup" aria-label="Host">
+            <label className={`host-choice__card${kind === "local" ? " is-selected" : ""}`}>
+              <input type="radio" name="host-kind" checked={kind === "local"} disabled={busy} onChange={() => changeKind("local")} />
+              <Icon name="device-desktop" />
+              <span><span className="host-choice__title">Local</span><span className="host-choice__desc">This computer</span></span>
             </label>
-          ) : null}
-          <label className={`host-choice__card${kind === "ssh" ? " is-selected" : ""}`}>
-            <input type="radio" name="host-kind" checked={kind === "ssh"} disabled={busy} onChange={() => changeKind("ssh")} />
-            <span className="host-choice__title">SSH</span>
-            <span className="host-choice__desc">Remote Linux host via SSH — POSIX paths</span>
-          </label>
-        </div>
-        <div className={`modal__body${kind === "ssh" ? " modal__body--ssh" : ""}`}>
+            {win ? (
+              <label className={`host-choice__card${kind === "wsl" ? " is-selected" : ""}`}>
+                <input type="radio" name="host-kind" checked={kind === "wsl"} disabled={busy} onChange={() => changeKind("wsl")} />
+                <Icon name="terminal-linux" />
+                <span><span className="host-choice__title">WSL</span><span className="host-choice__desc">Linux on Windows</span></span>
+              </label>
+            ) : null}
+            <label className={`host-choice__card${kind === "ssh" ? " is-selected" : ""}`}>
+              <input type="radio" name="host-kind" checked={kind === "ssh"} disabled={busy} onChange={() => changeKind("ssh")} />
+              <Icon name="remote" />
+              <span><span className="host-choice__title">SSH</span><span className="host-choice__desc">Remote server</span></span>
+            </label>
+          </div>
 
           {kind === "ssh" ? (
-            <div className="modal__fields">
-              <div className="field field--ssh-full">
-                <div className="wsl-browser__toolbar">
-                  <button type="button" className="btn btn--ghost btn--small" disabled={busy} aria-pressed={sshMode === "config"} onClick={() => { invalidateSsh(); setSshMode("config"); }}>Use SSH config</button>
-                  <button type="button" className="btn btn--ghost btn--small" disabled={busy} aria-pressed={sshMode === "manual"} onClick={() => { invalidateSsh(); setSshMode("manual"); }}>Add / manual connection</button>
-                </div>
-                {configWarning ? <p className="modal__hint">{configWarning}</p> : null}
-              </div>
-              {sshMode === "config" ? <>
-                <label className="field field--ssh-full">
-                  <span className="field__label">SSH config host</span>
-                  <input className="field__input" list="ssh-config-hosts" value={configAlias} disabled={busy} onChange={(e) => { invalidateSsh(); setConfigAlias(e.target.value); }} placeholder="Select or type a host alias" />
-                </label>
-                <datalist id="ssh-config-hosts">{configHosts.map((h) => <option key={h.alias} value={h.alias}>{h.source}</option>)}</datalist>
-                <p className="modal__hint">Uses this computer’s OpenSSH config, including jump hosts, keys and agent. Connect only to aliases you trust: SSH config may run local commands. Unknown keys must be verified in a terminal first. Key/agent authentication is required; load encrypted keys into ssh-agent. For password authentication, use a manual connection.</p>
-                {configHosts.length === 0 ? <p className="modal__hint">No named hosts found. Type an alias or add a manual connection.</p> : null}
-              </> : <>
-                <label className="field field--ssh-full">
-                  <span className="field__label">Saved manual connection</span>
-                  <select className="field__input" value={sshProfileId ?? ""} disabled={busy} onChange={(e) => selectManualProfile(e.target.value)}>
-                    <option value="">New connection</option>
-                    {profiles.filter((p) => p.kind === "ssh" && !p.ssh?.configHost).map((p) => <option key={p.id} value={p.id}>{p.label ?? p.ssh?.host ?? p.id}</option>)}
-                  </select>
-                </label>
-                <label className="field field--ssh-host">
-                  <span className="field__label">Host</span>
-                  <input className="field__input" value={sshHost} disabled={busy} onChange={(e) => { invalidateSsh(); setSshHost(e.target.value); }} />
-                </label>
-                <label className="field field--ssh-port">
-                  <span className="field__label">Port</span>
-                  <input className="field__input" inputMode="numeric" value={sshPort} disabled={busy} onChange={(e) => { invalidateSsh(); setSshPort(e.target.value); }} />
-                </label>
-                <label className="field field--ssh-username">
-                  <span className="field__label">Username</span>
-                  <input className="field__input" value={sshUsername} disabled={busy} onChange={(e) => { invalidateSsh(); setSshUsername(e.target.value); }} />
-                </label>
-                <label className="field field--ssh-key">
-                  <span className="field__label">Private key path (optional)</span>
-                  <input className="field__input" value={sshPrivateKeyPath} disabled={busy} onChange={(e) => { invalidateSsh(); setSshPrivateKeyPath(e.target.value); }} />
-                </label>
-                <label className="field field--ssh-password">
-                  <span className="field__label">Password (this session only)</span>
-                  <input className="field__input" type="password" value={sshPassword} disabled={busy} onChange={(e) => { invalidateSsh(); setSshPassword(e.target.value); }} autoComplete="new-password" />
-                </label>
-                <label className="field field--ssh-full">
-                  <span className="field__label">Host key verification</span>
-                  <select className="field__input" value={sshPolicy} disabled={busy} onChange={(e) => { invalidateSsh(); setSshPolicy(e.target.value as "strict" | "accept-new"); }}>
-                    <option value="strict">Strict: require a known host key</option>
-                    <option value="accept-new">Trust first key automatically; reject changed keys</option>
-                  </select>
-                </label>
-              </>}
-              <div className="field field--ssh-full"><button type="button" className="btn btn--accent" disabled={busy || browseLoading} onClick={() => void connectSsh()}>{busy ? "Connecting…" : connectedSshProfileId ? "Reconnect" : "Connect"}</button></div>
-              <div className="field field--grow">
-                <span className="field__label">Remote POSIX folder</span>
-                <div className="wsl-browser">
-                  <div className="wsl-browser__toolbar">
-                    <button type="button" className="btn btn--ghost btn--small" disabled={!connectedSshProfileId || !canGoUp || browseLoading || busy} onClick={() => { if (parent && connectedSshProfileId) void loadBrowse(parent, "", "ssh", connectedSshProfileId); }}>Up</button>
-                    <span className="wsl-browser__path">{browsePath}</span>
+            <>
+              <ol className="workspace-dialog__steps" aria-label="SSH workspace steps">
+                <li className={!connectedSshProfileId ? "is-current" : "is-complete"} aria-current={!connectedSshProfileId ? "step" : undefined}>
+                  <span aria-hidden="true">{connectedSshProfileId ? <Icon name="check" /> : "1"}</span>Connection
+                </li>
+                <li className={connectedSshProfileId ? "is-current" : ""} aria-current={connectedSshProfileId ? "step" : undefined}>
+                  <span aria-hidden="true">2</span>Folder
+                </li>
+              </ol>
+              {connectedSshProfileId ? (
+                <div className="workspace-dialog__connected">
+                  <Icon name="remote" />
+                  <div className="workspace-dialog__host-summary">
+                    <strong title={connectedLabel}>{connectedLabel}</strong>
+                    <span role="status"><span className="workspace-dialog__status-dot" />Connected · {sshMode === "config" ? "SSH config" : "Manual SSH"}</span>
                   </div>
-                  <div className={`wsl-browser__list${browseLoading ? " is-loading" : ""}`} role="listbox" aria-label="Remote folders">
-                    {dirs.length === 0 && browseLoading ? <div className="wsl-browser__empty">Loading…</div> : dirs.length === 0 ? <div className="wsl-browser__empty">{connectedSshProfileId ? "No subfolders" : "Connect to browse remote folders"}</div> : dirs.map((d) => (
-                      <button key={d.name} type="button" role="option" className="wsl-browser__row" disabled={browseLoading || busy || !connectedSshProfileId} onClick={() => { if (connectedSshProfileId) void loadBrowse(joinPosix(browsePath, d.name), "", "ssh", connectedSshProfileId); }}>
+                  <button type="button" className="btn btn--ghost btn--small" disabled={busy || browseLoading} onClick={invalidateSsh}>Change connection</button>
+                </div>
+              ) : (
+                <form id="ssh-connection-form" className="workspace-dialog__connection" aria-labelledby="ssh-connection-title" onSubmit={(event) => { event.preventDefault(); if (connectionReady) void connectSsh(); }}>
+                  <h3 id="ssh-connection-title" className="workspace-dialog__section-title">Connect to a host</h3>
+                  <div className="workspace-dialog__modes" role="group" aria-label="Connection method">
+                    <button type="button" disabled={busy} aria-pressed={sshMode === "config"} onClick={() => { invalidateSsh(); setSshMode("config"); }}>Use SSH config</button>
+                    <button type="button" disabled={busy} aria-pressed={sshMode === "manual"} onClick={() => { invalidateSsh(); setSshMode("manual"); }}>Manual connection</button>
+                  </div>
+                  {sshMode === "config" ? (
+                    <>
+                      <label className="field">
+                        <span className="field__label">SSH config host</span>
+                        <input className="field__input" list="ssh-config-hosts" value={configAlias} disabled={busy} onChange={(event) => { invalidateSsh(); setConfigAlias(event.target.value); }} placeholder="Select or type a host alias" autoCapitalize="none" spellCheck={false} />
+                      </label>
+                      <datalist id="ssh-config-hosts">{configHosts.map((host) => <option key={host.alias} value={host.alias}>{host.source}</option>)}</datalist>
+                      <p className="modal__hint">Uses your OpenSSH config, keys, agent and jump hosts.</p>
+                      {configHosts.length === 0 ? <p className="modal__hint">No named hosts found. Type an alias or use a manual connection.</p> : null}
+                      <div className="workspace-dialog__security-note"><Icon name="shield" /><p>Only connect to hosts you trust. Unknown host keys must be verified in a terminal first.</p></div>
+                      <details className="workspace-dialog__details">
+                        <summary>Authentication &amp; security details</summary>
+                        <p>SSH config may run local commands. Key or agent authentication is required; load encrypted keys into ssh-agent. For password authentication, use a manual connection. Changed host keys are always rejected.</p>
+                      </details>
+                    </>
+                  ) : (
+                    <div className="workspace-dialog__manual-fields">
+                      {profiles.some((profile) => profile.kind === "ssh" && !profile.ssh?.configHost) ? (
+                        <label className="field workspace-dialog__full-width">
+                          <span className="field__label">Saved manual connection</span>
+                          <select className="field__input" value={sshProfileId ?? ""} disabled={busy} onChange={(event) => selectManualProfile(event.target.value)}>
+                            <option value="">New connection</option>
+                            {profiles.filter((profile) => profile.kind === "ssh" && !profile.ssh?.configHost).map((profile) => <option key={profile.id} value={profile.id}>{profile.label ?? profile.ssh?.host ?? profile.id}</option>)}
+                          </select>
+                        </label>
+                      ) : null}
+                      <div className="workspace-dialog__host-fields workspace-dialog__full-width">
+                        <label className="field">
+                          <span className="field__label">Host</span>
+                          <input className="field__input" value={sshHost} disabled={busy} onChange={(event) => { invalidateSsh(); setSshHost(event.target.value); }} placeholder="example.com" autoCapitalize="none" spellCheck={false} />
+                        </label>
+                        <label className="field">
+                          <span className="field__label">Port</span>
+                          <input className="field__input" inputMode="numeric" value={sshPort} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPort(event.target.value); }} />
+                        </label>
+                      </div>
+                      <label className="field">
+                        <span className="field__label">Username</span>
+                        <input className="field__input" value={sshUsername} disabled={busy} onChange={(event) => { invalidateSsh(); setSshUsername(event.target.value); }} placeholder="Your server username" autoCapitalize="none" spellCheck={false} />
+                      </label>
+                      <label className="field">
+                        <span className="field__label">Password (this session only)</span>
+                        <input className="field__input" type="password" value={sshPassword} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPassword(event.target.value); }} autoComplete="new-password" placeholder="Optional" />
+                      </label>
+                      <details className="workspace-dialog__details workspace-dialog__full-width">
+                        <summary>Private key &amp; host verification</summary>
+                        <div className="workspace-dialog__advanced-fields">
+                          <label className="field">
+                            <span className="field__label">Private key path (optional)</span>
+                            <input className="field__input" value={sshPrivateKeyPath} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPrivateKeyPath(event.target.value); }} placeholder="Path on this computer" spellCheck={false} />
+                          </label>
+                          <label className="field">
+                            <span className="field__label">Host key verification</span>
+                            <select className="field__input" value={sshPolicy} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPolicy(event.target.value as "strict" | "accept-new"); }}>
+                              <option value="strict">Strict: require a known host key</option>
+                              <option value="accept-new">Trust first key automatically; reject changed keys</option>
+                            </select>
+                          </label>
+                        </div>
+                      </details>
+                      <div className="workspace-dialog__security-note workspace-dialog__full-width"><Icon name="shield" /><p>{sshPolicy === "strict" ? "Host keys are checked against known hosts. Unknown keys must be verified before connecting." : "The first host key will be trusted automatically. Changed keys are always rejected."}</p></div>
+                    </div>
+                  )}
+                  {configWarning ? <details className="workspace-dialog__details workspace-dialog__warning"><summary>SSH config discovery notice</summary><p>{configWarning}</p></details> : null}
+                </form>
+              )}
+            </>
+          ) : null}
+
+          {selectingFolder ? (
+            <section className="workspace-dialog__folder" aria-labelledby="workspace-folder-title">
+              {kind === "wsl" && win ? (
+                distros.length > 0 ? <label className="field"><span className="field__label">Distro</span><select className="field__input" value={selectedDistro} disabled={busy} onChange={(event) => setSelectedDistro(event.target.value)}>{distros.map((distro) => <option key={distro} value={distro}>{distro}</option>)}</select></label> : <p className="modal__hint">No distros listed. The default WSL distro will be used.</p>
+              ) : null}
+              <div>
+                <h3 ref={folderHeadingRef} tabIndex={-1} id="workspace-folder-title" className="workspace-dialog__section-title">Choose a folder</h3>
+                <p className="modal__hint">Browse to your project, or enter its full path.</p>
+              </div>
+              <div className="wsl-browser">
+                <form className="wsl-browser__toolbar" onSubmit={(event) => { event.preventDefault(); if (!browseLoading && !busy) browseFolder(pathInput); }}>
+                  <button type="button" className="btn btn--ghost btn--icon" aria-label="Up" title="Parent folder" disabled={!parent || browseLoading || busy} onClick={() => { if (parent) browseFolder(parent); }}><Icon name="arrow-up" /></button>
+                  <input className="field__input wsl-browser__path" aria-label="Folder path" value={pathInput} disabled={browseLoading || busy} onChange={(event) => setPathInput(event.target.value)} autoCapitalize="none" spellCheck={false} />
+                  <button type="submit" className="btn btn--ghost btn--small" disabled={!pathChanged || browseLoading || busy}>Go</button>
+                </form>
+                <ul className={`wsl-browser__list${browseLoading ? " is-loading" : ""}`} aria-label={kind === "ssh" ? "Remote folders" : "Folders"} aria-busy={browseLoading}>
+                  {browseLoading ? <li className="wsl-browser__empty" role="status">Loading folders…</li> : dirs.length === 0 ? <li className="wsl-browser__empty">No subfolders. You can open this folder.</li> : dirs.map((directory) => (
+                    <li key={directory.name}>
+                      <button type="button" className="wsl-browser__row" disabled={busy || browseLoading} onClick={() => browseFolder(joinPosix(browsePath, directory.name))}>
                         <Icon name="folder" className="wsl-browser__icon" />
-                        <span className="wsl-browser__name">{d.name}</span>
+                        <span className="wsl-browser__name">{directory.name}</span>
+                        <Icon name="chevron-right" className="wsl-browser__chevron" />
                       </button>
-                    ))}
-                  </div>
-                </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
+              {pathChanged ? <p className="modal__hint">Press Enter or Go to load this path before opening it.</p> : null}
+            </section>
+          ) : kind === "local" ? (
+            <div className="workspace-dialog__local">
+              <Icon name="folder-opened" />
+              <strong>Local workspace</strong>
+              <p className="modal__hint">Choose a project folder on this computer.<br />Your terminal, Git and comments will stay local.</p>
             </div>
-          ) : kind === "wsl" && win ? (
-            <div className="modal__fields">
-              {distros.length > 0 ? <label className="field"><span className="field__label">Distro</span><select className="field__input" value={selectedDistro} onChange={(e) => setSelectedDistro(e.target.value)}>{distros.map((d) => <option key={d} value={d}>{d}</option>)}</select></label> : <p className="modal__hint">No distros listed — default WSL distro will be used.</p>}
-              <div className="field field--grow">
-                <span className="field__label">Workspace folder</span>
-                <div className="wsl-browser">
-                  <div className="wsl-browser__toolbar"><button type="button" className="btn btn--ghost btn--small" disabled={!canGoUp || browseLoading} onClick={() => { if (parent) void loadBrowse(parent, selectedDistro); }}>Up</button><span className="wsl-browser__path">{browsePath}</span></div>
-                  <div className="wsl-browser__list" role="listbox" aria-label="Folders">{browseLoading ? <div className="wsl-browser__empty">Loading…</div> : dirs.length === 0 ? <div className="wsl-browser__empty">No subfolders</div> : dirs.map((d) => <button key={d.name} type="button" role="option" className="wsl-browser__row" onClick={() => void loadBrowse(joinPosix(browsePath, d.name), selectedDistro)}><Icon name="folder" className="wsl-browser__icon" /><span className="wsl-browser__name">{d.name}</span></button>)}</div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="modal__body-local"><strong>Local workspace</strong><span>Use the system folder picker to choose a directory on this machine.</span></div>
-          )}
+          ) : null}
+          {error ? <p ref={errorRef} tabIndex={-1} className="modal__error" role="alert">{error}</p> : null}
         </div>
 
-        {error ? <p className="modal__error">{error}</p> : null}
-
-        <footer className="modal__footer">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={closeDialog}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-          {kind === "local" ? (
-            <button
-              type="button"
-              className="btn btn--accent"
-              disabled={busy}
-              onClick={() => void chooseLocal()}
-            >
-              {busy ? "Opening…" : "Choose folder…"}
+        <footer className="modal__footer workspace-dialog__footer">
+          <div className="workspace-dialog__footer-context" aria-live="polite">
+            {selectingFolder ? <><span>Selected folder</span><strong title={browsePath}>{browsePath}</strong></> : <span>{kind === "ssh" ? (busy ? "Connecting to your host…" : "Next: choose a project folder") : "Select a folder to get started"}</span>}
+          </div>
+          <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
+          {kind === "ssh" && !connectedSshProfileId ? (
+            <button type="submit" form="ssh-connection-form" className="btn btn--accent workspace-dialog__primary" disabled={busy || !connectionReady}>
+              {busy ? "Connecting…" : "Connect"}{!busy ? <Icon name="arrow-right" /> : null}
             </button>
+          ) : kind === "local" ? (
+            <button type="button" className="btn btn--accent workspace-dialog__primary" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
           ) : (
-            <button
-              type="button"
-              className="btn btn--accent"
-              disabled={busy || !browsePath.startsWith("/") || browseLoading || (kind === "ssh" && !connectedSshProfileId)}
-              onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}
-            >
-              {busy ? "Opening…" : "Open Workspace"}
-            </button>
+            <button type="button" className="btn btn--accent workspace-dialog__primary" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
           )}
         </footer>
       </div>

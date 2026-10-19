@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { spawnLocalPty } from "./localPty.js";
+import { scheduleSshCommand } from "./openSshScheduler.js";
 import { HostError } from "./types.js";
 import type {
   DirEntry,
@@ -27,6 +28,9 @@ interface ActiveRun {
 
 const STOP_GRACE_MS = 250;
 const PTY_BUFFER_LIMIT = 512 * 1024;
+const FILE_READ_RETRIES = 2;
+const HOST_KEY_FAILURE = /host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .+ host key is known|Offending .+ key/i;
+const AUTH_FAILURE = /permission denied|no supported authentication methods|too many authentication failures|signing failed|agent refused operation/i;
 
 /**
  * Local system OpenSSH transport. OpenSSH owns config evaluation, agent/key
@@ -41,6 +45,7 @@ export class OpenSshHostSession implements HostSession {
   workspaceRoot: string | null = null;
 
   private disposed = false;
+  private readonly shutdown = new AbortController();
   private readonly runs = new Set<ActiveRun>();
   private readonly ptys = new Set<PtyHandle>();
 
@@ -86,20 +91,9 @@ export class OpenSshHostSession implements HostSession {
     const sshArgs = this.sshArgs(false, `bash -c ${shellQuote(script)}`);
 
     return new Promise<RunResult>((resolve, reject) => {
-      let child: ReturnType<typeof spawn>;
-      try {
-        child = spawn("ssh", sshArgs, {
-          shell: false,
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
-          // Include a native ProxyCommand's descendants in local cancellation.
-          detached: process.platform !== "win32",
-        });
-      } catch (err) {
-        reject(spawnError(err));
-        return;
-      }
-
+      let child: ReturnType<typeof spawn> | undefined;
+      let cancelQueued: (() => void) | undefined = undefined;
+      let releaseSlot: (() => void) | undefined;
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -111,7 +105,7 @@ export class OpenSshHostSession implements HostSession {
       const errDecoder = new StringDecoder("utf8");
       let markDone!: () => void;
       const active: ActiveRun = {
-        stop: () => fail(new HostError("disconnected", "SSH session closed while a command was running.")),
+        stop: () => fail(new HostError("disconnected", "SSH session closed while a command was pending or running.")),
         done: new Promise<void>((done) => { markDone = done; }),
       };
 
@@ -123,10 +117,13 @@ export class OpenSshHostSession implements HostSession {
         if (closed) return;
         closed = true;
         clearTimeout(killTimer);
+        cancelQueued?.();
         this.runs.delete(active);
         markDone();
+        releaseSlot?.();
       };
       const sendSignal = (signal: NodeJS.Signals) => {
+        if (!child) return;
         if (process.platform !== "win32" && child.pid) {
           try {
             process.kill(-child.pid, signal);
@@ -140,13 +137,15 @@ export class OpenSshHostSession implements HostSession {
       const terminate = () => {
         if (closed || stopping) return;
         stopping = true;
+        if (!child) { release(); return; }
         child.stdin?.destroy();
         sendSignal("SIGTERM");
+        if (closed) return;
         killTimer = setTimeout(() => {
           sendSignal("SIGKILL");
-          child.stdout?.destroy();
-          child.stderr?.destroy();
-          child.unref();
+          child?.stdout?.destroy();
+          child?.stderr?.destroy();
+          child?.unref();
           release();
         }, STOP_GRACE_MS);
         killTimer.unref?.();
@@ -171,65 +170,105 @@ export class OpenSshHostSession implements HostSession {
       };
 
       this.runs.add(active);
-      child.on("error", (err) => {
-        fail(spawnError(err));
-        // A failed spawn has no process to await or kill.
-        if (!child.pid) release();
-      });
-      child.on("close", (code) => {
-        // close means this process has already exited; reporting its failure
-        // must not signal a potentially recycled process id.
-        release();
-        if (!settled) {
-          const tail = outDecoder.end();
-          stdout += tail;
-          stderr += errDecoder.end();
-          if (tail) {
-            try { opts.onStdoutChunk?.(tail, stdout); } catch { /* Observers cannot break cleanup. */ }
-          }
-          if (code === 255) fail(connectionError(this.configHost, stderr));
-          else finish(code ?? 1);
-        }
-      });
-      child.stdout?.on("data", (chunk: Buffer) => {
-        if (settled) return;
-        const text = outDecoder.write(chunk);
-        if (!text) return;
-        stdout += text;
-        try { opts.onStdoutChunk?.(text, stdout); } catch { /* Observer only. */ }
-        if (settled) return; // A chunk observer may synchronously abort the run.
-        try {
-          if (opts.earlyExit?.(stdout, stderr)) {
-            finish(0, { earlyExit: true });
-            terminate();
-          }
-        } catch (err) {
-          fail(new HostError("failed", "SSH output callback failed.", errorMessage(err)));
-        }
-      });
-      child.stderr?.on("data", (chunk: Buffer) => {
-        if (!settled) stderr += errDecoder.write(chunk);
-      });
-      // Remote commands can exit before consuming their input.
-      child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code !== "EPIPE" && err.code !== "ECONNRESET") {
-          fail(new HostError("failed", "Cannot write to SSH command stdin.", err.message));
-        }
-      });
       opts.signal?.addEventListener("abort", onAbort, { once: true });
       if (opts.signal?.aborted) { onAbort(); return; }
+      // Include queue time so a blocked host cannot leave requests waiting forever.
       const timeoutMs = opts.timeoutMs ?? 45_000;
       if (timeoutMs > 0) {
         timer = setTimeout(() => fail(new HostError("timeout", `SSH command timed out after ${timeoutMs}ms: ${command}`)), timeoutMs);
       }
-      // Always send EOF, including when stdin was omitted, so readers cannot hang.
-      try { child.stdin?.end(opts.stdin ?? ""); }
-      catch (err) { fail(new HostError("failed", "Cannot write to SSH command stdin.", errorMessage(err))); }
+      cancelQueued = scheduleSshCommand(this.configHost, (releaseCommand) => {
+        releaseSlot = releaseCommand;
+        if (this.disposed) { active.stop(); return; }
+        if (opts.signal?.aborted) { onAbort(); return; }
+        child = spawn("ssh", sshArgs, {
+          shell: false,
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+          // Include a native ProxyCommand's descendants in local cancellation.
+          detached: process.platform !== "win32",
+        });
+        child.on("error", (err) => {
+          fail(spawnError(err));
+          // A failed spawn has no process to await or kill.
+          if (!child?.pid) release();
+        });
+        child.on("close", (code) => {
+          // close means this process has already exited; reporting its failure
+          // must not signal a potentially recycled process id.
+          release();
+          if (!settled) {
+            const tail = outDecoder.end();
+            stdout += tail;
+            stderr += errDecoder.end();
+            if (tail) {
+              try { opts.onStdoutChunk?.(tail, stdout); } catch { /* Observers cannot break cleanup. */ }
+            }
+            if (code === 255) fail(connectionError(this.configHost, stderr));
+            else finish(code ?? 1);
+          }
+        });
+        child.stdout?.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          const text = outDecoder.write(chunk);
+          if (!text) return;
+          stdout += text;
+          try { opts.onStdoutChunk?.(text, stdout); } catch { /* Observer only. */ }
+          if (settled) return; // A chunk observer may synchronously abort the run.
+          try {
+            if (opts.earlyExit?.(stdout, stderr)) {
+              finish(0, { earlyExit: true });
+              terminate();
+            }
+          } catch (err) {
+            fail(new HostError("failed", "SSH output callback failed.", errorMessage(err)));
+          }
+        });
+        child.stderr?.on("data", (chunk: Buffer) => {
+          if (!settled) stderr += errDecoder.write(chunk);
+        });
+        // Remote commands can exit before consuming their input.
+        child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+          if (err.code !== "EPIPE" && err.code !== "ECONNRESET") {
+            fail(new HostError("failed", "Cannot write to SSH command stdin.", err.message));
+          }
+        });
+        // Always send EOF, including when stdin was omitted, so readers cannot hang.
+        try { child.stdin?.end(opts.stdin ?? ""); }
+        catch (err) { fail(new HostError("failed", "Cannot write to SSH command stdin.", errorMessage(err))); }
+      }, (err) => fail(spawnError(err)));
     });
   }
 
-  private async fileCommand(script: string, message: string, stdin?: string): Promise<string> {
-    const result = await this.run("~", "bash", ["-c", `export LC_ALL=C; ${script}`], { stdin });
+  private async waitForReadRetry(attempt: number): Promise<void> {
+    this.assertActive();
+    await new Promise<void>((resolve, reject) => {
+      const onShutdown = () => {
+        clearTimeout(timer);
+        this.shutdown.signal.removeEventListener("abort", onShutdown);
+        reject(new HostError("disconnected", "SSH session closed while a file read was waiting to retry."));
+      };
+      const timer = setTimeout(() => {
+        this.shutdown.signal.removeEventListener("abort", onShutdown);
+        resolve();
+      }, 150 * 2 ** attempt + Math.floor(Math.random() * 100));
+      this.shutdown.signal.addEventListener("abort", onShutdown, { once: true });
+    });
+  }
+
+  private async fileCommand(script: string, message: string, opts: { stdin?: string; retryRead?: boolean } = {}): Promise<string> {
+    let result: RunResult;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        result = await this.run("~", "bash", ["-c", `export LC_ALL=C; ${script}`], { stdin: opts.stdin });
+        break;
+      } catch (error) {
+        // Only known read-only operations may be replayed. A dropped connection
+        // does not establish whether a remote command or mutation already ran.
+        if (!opts.retryRead || attempt >= FILE_READ_RETRIES || !isTransientReadFailure(error)) throw error;
+        await this.waitForReadRetry(attempt);
+      }
+    }
     if (result.code !== 0) {
       const detail = (result.stderr || result.stdout).trim();
       if (/permission denied|operation not permitted|__ANCHOR_PERMISSION__/i.test(detail)) {
@@ -244,13 +283,13 @@ export class OpenSshHostSession implements HostSession {
   }
 
   async readFile(filePath: string): Promise<string> {
-    return this.fileCommand(`exec cat -- ${remotePath(filePath)}`, `Cannot read file: ${filePath}`);
+    return this.fileCommand(`exec cat -- ${remotePath(filePath)}`, `Cannot read file: ${filePath}`, { retryRead: true });
   }
 
   async writeFile(filePath: string, data: string): Promise<void> {
     await this.fileCommand(
       `mkdir -p -- ${remotePath(path.posix.dirname(filePath))} && cat > ${remotePath(filePath)}`,
-      `Cannot write file: ${filePath}`, data,
+      `Cannot write file: ${filePath}`, { stdin: data },
     );
   }
 
@@ -260,7 +299,7 @@ export class OpenSshHostSession implements HostSession {
       `if [ ! -r . ] || [ ! -x . ]; then printf '__ANCHOR_PERMISSION__\\n' >&2; exit 73; fi; ` +
       `unset GLOBIGNORE; set +f; shopt -u failglob; shopt -s dotglob nullglob; for item in *; do ` +
       `if [ -d "$item" ]; then printf 'd\\0%s\\0' "$item"; else printf 'f\\0%s\\0' "$item"; fi; done`,
-      `Cannot list directory: ${dirPath}`,
+      `Cannot list directory: ${dirPath}`, { retryRead: true },
     );
     if (!output) return [];
     const fields = output.split("\0");
@@ -286,7 +325,7 @@ export class OpenSshHostSession implements HostSession {
       `meta=$(stat -L -c '%s|%Y' -- "$p" 2>/dev/null) || ` +
       `{ meta=$(stat -L -f '%z|%m' "$p") || exit $?; }; ` +
       `printf '%s|%s\\n' "$kind" "$meta"`,
-      `Cannot stat: ${filePath}`,
+      `Cannot stat: ${filePath}`, { retryRead: true },
     );
     const match = /^(file|dir|other)\|(\d+)\|(-?\d+)\n?$/.exec(output);
     if (!match || !Number.isSafeInteger(Number(match[2])) || !Number.isFinite(Number(match[3]) * 1000)) {
@@ -385,6 +424,7 @@ export class OpenSshHostSession implements HostSession {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.shutdown.abort();
     this.workspaceRoot = null;
     const runs = [...this.runs];
     for (const run of runs) run.stop();
@@ -421,11 +461,18 @@ function spawnError(error: unknown): HostError {
 }
 
 function connectionError(alias: string, detail: string): HostError {
-  if (/host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .+ host key is known|Offending .+ key/i.test(detail)) {
+  if (HOST_KEY_FAILURE.test(detail)) {
     return new HostError("disconnected", `SSH host key verification failed for "${alias}". Verify the server fingerprint with a trusted source, then connect using ssh ${shellQuote(alias)} in a normal terminal to review or update the trusted key, and retry.`, detail.trim());
   }
-  if (/permission denied|no supported authentication methods|too many authentication failures|signing failed|agent refused operation/i.test(detail)) {
+  if (AUTH_FAILURE.test(detail)) {
     return new HostError("disconnected", `SSH authentication failed for "${alias}". Config-host connections use key or agent authentication without prompts. Load encrypted keys into your SSH agent with ssh-add, or use a manual SSH profile for password authentication.`, detail.trim());
   }
   return new HostError("disconnected", `OpenSSH could not connect to "${alias}"${detail.trim() ? `: ${detail.trim()}` : ". Check the alias, network, and SSH authentication in a normal terminal."}`, detail.trim());
+}
+
+function isTransientReadFailure(error: unknown): boolean {
+  if (!(error instanceof HostError) || error.code !== "disconnected") return false;
+  const detail = error.causeDetail ?? "";
+  if (HOST_KEY_FAILURE.test(detail) || AUTH_FAILURE.test(detail)) return false;
+  return /(?:kex_exchange_identification|ssh_exchange_identification):[^\n]*(?:Connection (?:closed|reset)|Broken pipe)|Connection (?:closed|reset) by |client_loop: send disconnect: Broken pipe|ssh_dispatch_run_fatal:[^\n]*(?:Connection (?:closed|reset)|Broken pipe)/i.test(detail);
 }

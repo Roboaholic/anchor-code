@@ -55,6 +55,13 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const [error, setError] = useState<string | null>(null);
   const interactionVersion = useRef(0);
 
+  // All dismissal controls share the same guard and invalidate pending loads.
+  const closeDialog = useCallback(() => {
+    if (committingWorkspace.current) return;
+    requestVersion.current += 1;
+    onCloseRef.current();
+  }, []);
+
   const localProfile = useMemo(
     () =>
       profiles.find((p) => p.kind === "local") ?? {
@@ -203,8 +210,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       if (event.key === "Escape") {
         if (!committingWorkspace.current) {
           event.preventDefault();
-          requestVersion.current += 1;
-          onCloseRef.current();
+          closeDialog();
         }
         return;
       }
@@ -226,7 +232,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       document.removeEventListener("keydown", onKeyDown);
       previousFocus?.focus();
     };
-  }, [open]);
+  }, [open, closeDialog]);
 
   useEffect(() => {
     if (!open || kind !== "ssh") return;
@@ -315,12 +321,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     setPathInput("/");
     setBrowseLoading(false);
     setError(null);
-  }
-
-  function closeDialog() {
-    if (committingWorkspace.current) return;
-    requestVersion.current += 1;
-    onClose();
   }
 
   function changeKind(next: HostKind) {
@@ -422,7 +422,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={closeDialog}>
+    <div className="modal-backdrop workspace-dialog-backdrop" role="presentation" onClick={closeDialog}>
       <div
         ref={dialogRef}
         className="modal workspace-dialog"
@@ -437,7 +437,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
             <h2 id="open-ws-title" className="modal__title">Open Workspace</h2>
             <p id="open-ws-description" className="modal__hint">Choose where your project lives.</p>
           </div>
-          <button type="button" className="btn btn--ghost btn--icon" aria-label="Close" disabled={openingWorkspace} onClick={closeDialog}>
+          <button type="button" className="btn btn--ghost btn--icon workspace-dialog__close" aria-label="Close" title="Close" disabled={openingWorkspace} onClick={closeDialog}>
             <Icon name="close" />
           </button>
         </header>
@@ -486,8 +486,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                 <form id="ssh-connection-form" className="workspace-dialog__connection" aria-labelledby="ssh-connection-title" onSubmit={(event) => { event.preventDefault(); if (connectionReady) void connectSsh(); }}>
                   <h3 id="ssh-connection-title" className="workspace-dialog__section-title">Connect to a host</h3>
                   <div className="workspace-dialog__modes" role="group" aria-label="Connection method">
-                    <button type="button" disabled={busy} aria-pressed={sshMode === "config"} onClick={() => { invalidateSsh(); setSshMode("config"); }}>Use SSH config</button>
-                    <button type="button" disabled={busy} aria-pressed={sshMode === "manual"} onClick={() => { invalidateSsh(); setSshMode("manual"); }}>Manual connection</button>
+                    <button type="button" className={`btn btn--ghost btn--small${sshMode === "config" ? " is-active" : ""}`} disabled={busy} aria-pressed={sshMode === "config"} onClick={() => { invalidateSsh(); setSshMode("config"); }}>Use SSH config</button>
+                    <button type="button" className={`btn btn--ghost btn--small${sshMode === "manual" ? " is-active" : ""}`} disabled={busy} aria-pressed={sshMode === "manual"} onClick={() => { invalidateSsh(); setSshMode("manual"); }}>Manual connection</button>
                   </div>
                   {sshMode === "config" ? (
                     <>
@@ -578,7 +578,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                     <li key={directory.name}>
                       <button type="button" className="wsl-browser__row" disabled={busy || browseLoading} onClick={() => browseFolder(joinPosix(browsePath, directory.name))}>
                         <Icon name="folder" className="wsl-browser__icon" />
-                        <span className="wsl-browser__name">{directory.name}</span>
+                        <span className="wsl-browser__name" title={directory.name}>{directory.name}</span>
                         <Icon name="chevron-right" className="wsl-browser__chevron" />
                       </button>
                     </li>
@@ -603,13 +603,13 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           </div>
           <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
           {kind === "ssh" && !connectedSshProfileId ? (
-            <button type="submit" form="ssh-connection-form" className="btn btn--accent workspace-dialog__primary" disabled={busy || !connectionReady}>
+            <button type="submit" form="ssh-connection-form" className="btn btn--accent" disabled={busy || !connectionReady}>
               {busy ? "Connecting…" : "Connect"}{!busy ? <Icon name="arrow-right" /> : null}
             </button>
           ) : kind === "local" ? (
-            <button type="button" className="btn btn--accent workspace-dialog__primary" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
+            <button type="button" className="btn btn--accent" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
           ) : (
-            <button type="button" className="btn btn--accent workspace-dialog__primary" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
+            <button type="button" className="btn btn--accent" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
           )}
         </footer>
       </div>

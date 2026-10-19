@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpenWorkspaceDialog } from "./OpenWorkspaceDialog";
+import { readFileSync } from "node:fs";
 
 interface AnchorMock {
   host: {
@@ -73,6 +75,14 @@ function setWindowsUa(win: boolean) {
         ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
   });
+}
+
+function ReopenableDialog({ onClose }: { onClose: () => void }) {
+  const [open, setOpen] = useState(true);
+  return <>
+    <button type="button" onClick={() => setOpen(true)}>Reopen workspace dialog</button>
+    <OpenWorkspaceDialog open={open} onOpen={() => {}} onClose={() => { onClose(); setOpen(false); }} />
+  </>;
 }
 
 describe("OpenWorkspaceDialog", () => {
@@ -278,6 +288,74 @@ describe("SSH workspace connections", () => {
     await waitFor(() => expect(anchor.host.browseListDir).toHaveBeenLastCalledWith(expect.objectContaining({ path: "/project" })));
     await user.click(screen.getByRole("button", { name: "Open Workspace" }));
     expect(onOpen).toHaveBeenCalledWith({ path: "/project", hostProfileId: "ssh-config-work", hostKind: "ssh" });
+  });
+
+  it("reuses the application's flat action and mode button styles", async () => {
+    const user = await showSsh();
+    expect(screen.getByRole("button", { name: "Connect" }).className).toBe("btn btn--accent");
+    expect(screen.getByRole("button", { name: "Use SSH config" }).className).toBe("btn btn--ghost btn--small is-active");
+    await user.click(screen.getByRole("button", { name: "Manual connection" }));
+    expect(screen.getByRole("button", { name: "Manual connection" }).className).toBe("btn btn--ghost btn--small is-active");
+    expect(screen.getByRole("button", { name: "Use SSH config" }).className).toBe("btn btn--ghost btn--small");
+  });
+
+  it.each(["Close", "Cancel", "Escape"])("%s dismisses while loading and ignores a late result after reopening", async (control) => {
+    let resolveBrowse!: (value: unknown[]) => void;
+    anchor.host.browseListDir.mockImplementationOnce(() => new Promise((resolve) => { resolveBrowse = resolve; }));
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ReopenableDialog onClose={onClose} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(anchor.host.browseListDir).toHaveBeenCalledTimes(1));
+
+    if (control === "Escape") await user.keyboard("{Escape}");
+    else await user.click(screen.getByRole("button", { name: control }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Reopen workspace dialog" }));
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalledTimes(2));
+    await act(async () => { resolveBrowse([{ name: "stale-folder", type: "dir" }]); });
+    expect(screen.queryByText("stale-folder")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Workspace" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement).disabled).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
+    expect(anchor.host.browseListDir).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["Close", "Cancel", "Escape"])("%s dismisses loaded folders and reopens with a fresh connection", async (control) => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ReopenableDialog onClose={onClose} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
+
+    if (control === "Escape") await user.keyboard("{Escape}");
+    else await user.click(screen.getByRole("button", { name: control }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Reopen workspace dialog" }));
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("project")).toBeNull();
+    expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps Close usable after an error", async () => {
+    anchor.host.browseListDir.mockRejectedValue(new Error("Permission denied"));
+    const onClose = vi.fn();
+    const user = await showSsh(vi.fn(), onClose);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("invalidates a connected profile when selecting a different alias", async () => {
@@ -530,6 +608,7 @@ describe("SSH workspace connections", () => {
     await user.click(screen.getByRole("button", { name: "Open Workspace" }));
     await user.keyboard("{Escape}");
     expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(true);
     expect(onClose).not.toHaveBeenCalled();
     resolveUse({ id: "ssh", kind: "ssh" });
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -546,4 +625,53 @@ describe("SSH workspace connections", () => {
     expect(document.activeElement).toBe(input);
   });
 
+});
+
+// jsdom does not lay out elements or support min()/Electron CSS declarations.
+// Protect the stylesheet contracts here; actual bounds and hit testing require
+// rendered browser/Electron QA.
+describe("workspace dialog layout contracts", () => {
+  const dialogCss = readFileSync("src/features/workspace/OpenWorkspaceDialog.css", "utf8");
+
+  function styleFor(selector: string, css = dialogCss.split("@media")[0]): Record<string, string> {
+    const rules = Array.from(css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g));
+    const matches = rules.filter((rule) => rule[1].trim() === selector || rule[1].split(",").some((part) => part.trim() === selector));
+    expect(matches.length, `Missing CSS rule: ${selector}`).toBeGreaterThan(0);
+    const body = matches.map((rule) => rule[2]).join(";");
+    return Object.fromEntries(body.split(";").filter((declaration) => declaration.includes(":")).map((declaration) => {
+      const colon = declaration.indexOf(":");
+      return [declaration.slice(0, colon).trim(), declaration.slice(colon + 1).trim()];
+    }));
+  }
+
+  it("reserves a viewport-bounded outer height instead of resizing to loaded content", () => {
+    const modal = styleFor(".modal.workspace-dialog");
+    expect(modal.width).toBe("min(520px, calc(100vw - 32px))");
+    expect(modal.height).toBe("min(580px, calc(100dvh - 48px))");
+    expect(modal.overflow).toBe("hidden");
+    const narrow = dialogCss.slice(dialogCss.indexOf("@media (max-width: 520px)"));
+    expect(styleFor(".modal.workspace-dialog", narrow).height).toBe("min(580px, calc(100dvh - 24px))");
+  });
+
+  it("scrolls long forms and folder lists inside the fixed dialog", () => {
+    const content = styleFor(".workspace-dialog__content");
+    expect(content.flex).toBe("1");
+    expect(content["min-height"]).toBe("0");
+    expect(content.overflow).toBe("auto");
+    const list = styleFor(".workspace-dialog .wsl-browser__list");
+    expect(list.flex).toBe("1");
+    expect(list["min-height"]).toBe("0");
+    expect(list.overflow).toBe("auto");
+    expect(styleFor(".workspace-dialog__folder").flex).toBe("1");
+    expect(styleFor(".workspace-dialog .wsl-browser").flex).toBe("1");
+    expect(styleFor(".workspace-dialog .modal__header").flex).toBe("0 0 auto");
+    expect(styleFor(".workspace-dialog__footer.modal__footer").flex).toBe("0 0 auto");
+  });
+
+  it("keeps the modal out of Electron drag regions and reserves the close hit target", () => {
+    const noDrag = styleFor(".workspace-dialog-backdrop,\n.workspace-dialog,\n.workspace-dialog *");
+    expect(noDrag["-webkit-app-region"]).toBe("no-drag");
+    expect(styleFor(".workspace-dialog__close").flex).toBe("0 0 30px");
+    expect(styleFor(".workspace-dialog__close > .codicon")["pointer-events"]).toBe("none");
+  });
 });

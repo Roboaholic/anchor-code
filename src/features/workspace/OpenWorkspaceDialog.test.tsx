@@ -635,7 +635,7 @@ describe("SSH workspace connections", () => {
 // Protect the stylesheet contracts here; actual bounds and hit testing require
 // rendered browser/Electron QA.
 describe("workspace dialog layout contracts", () => {
-  const dialogCss = readFileSync("src/features/workspace/OpenWorkspaceDialog.css", "utf8");
+  const dialogCss = readFileSync("src/features/workspace/OpenWorkspaceDialog.css", "utf8").replace(/\r\n/g, "\n");
 
   function styleFor(selector: string, css = dialogCss.split("@media")[0]): Record<string, string> {
     const rules = Array.from(css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g));

@@ -14,9 +14,11 @@ export interface RecentWorkspace {
 }
 
 export interface SshProfileConfig {
-  host: string;
+  /** OpenSSH alias; options are resolved by the system ssh client at connection time. */
+  configHost?: string;
+  host?: string;
   port?: number;
-  username: string;
+  username?: string;
   privateKeyPath?: string;
   /** Session-only password; never persisted by the settings writer. */
   password?: string;
@@ -151,6 +153,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const MAX_RECENT = 12;
+// Passwords live only in this process. Legacy persisted values are intentionally ignored.
+const sshSessionPasswords = new Map<string, string>();
 
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
@@ -168,7 +172,12 @@ function normalizeProfiles(parsed: HostProfile[] | undefined): HostProfile[] {
   ) {
     list.push({ id: "wsl-default", kind: "wsl", label: "WSL" });
   }
-  return list;
+  return list.map((profile) => {
+    if (!profile.ssh) return profile;
+    const { password: _legacyPassword, ...ssh } = profile.ssh;
+    const password = sshSessionPasswords.get(`${settingsPath()}::${profile.id}`);
+    return { ...profile, ssh: { ...ssh, ...(password ? { password } : {}) } };
+  });
 }
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -201,7 +210,15 @@ export async function loadSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
   const file = settingsPath();
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, JSON.stringify(settings, null, 2), "utf8");
+  const persisted = {
+    ...settings,
+    hostProfiles: settings.hostProfiles.map((profile) => {
+      if (!profile.ssh) return profile;
+      const { password: _password, ...ssh } = profile.ssh;
+      return { ...profile, ssh };
+    }),
+  };
+  await fs.writeFile(file, JSON.stringify(persisted, null, 2), "utf8");
 }
 
 export interface RemoteAccessConfig {
@@ -301,6 +318,9 @@ export async function upsertHostProfile(
   profile: HostProfile,
 ): Promise<HostProfile[]> {
   const settings = await loadSettings();
+  const passwordKey = `${settingsPath()}::${profile.id}`;
+  if (profile.ssh?.password) sshSessionPasswords.set(passwordKey, profile.ssh.password);
+  else sshSessionPasswords.delete(passwordKey);
   const idx = settings.hostProfiles.findIndex((p) => p.id === profile.id);
   if (idx >= 0) {
     settings.hostProfiles[idx] = profile;

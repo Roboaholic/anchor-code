@@ -69,9 +69,10 @@ export interface HostProfile {
   kind: HostKind;
   label?: string;
   ssh?: {
-    host: string;
+    configHost?: string;
+    host?: string;
     port?: number;
-    username: string;
+    username?: string;
     privateKeyPath?: string;
     knownHostsPolicy?: "accept-new" | "strict" | "ignore";
   };
@@ -275,6 +276,8 @@ const anchor = {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),
     listProfiles: (): Promise<HostProfile[]> =>
       ipcRenderer.invoke("host:listProfiles"),
+    listSshConfigHosts: (): Promise<{ hosts: { alias: string; source: string }[]; warnings: string[] }> =>
+      ipcRenderer.invoke("host:listSshConfigHosts"),
     listWslDistros: (): Promise<string[]> =>
       ipcRenderer.invoke("host:listWslDistros"),
     wslHome: (args?: { distro?: string }): Promise<string> =>

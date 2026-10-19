@@ -4,6 +4,7 @@ import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
 import type { RelayConnector } from "../remote/relayConnector.js";
 import type { AnchorApplication } from "../application/anchorApplication.js";
+import { listSshConfigHosts } from "../host/sshConfig.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
   hostJoin,
@@ -228,6 +229,8 @@ export function registerIpc(opts: {
     return settings.hostProfiles;
   });
 
+  ipcMain.handle("host:listSshConfigHosts", async () => listSshConfigHosts());
+
   ipcMain.handle("host:listWslDistros", async (): Promise<string[]> => {
     try {
       return await listWslDistros();
@@ -363,6 +366,9 @@ export function registerIpc(opts: {
     "host:upsertProfile",
     async (_evt, profile: HostProfile): Promise<HostProfile[]> => {
       try {
+        const existing = browseSessions.get(profile.id);
+        browseSessions.delete(profile.id);
+        await existing?.dispose();
         return await upsertHostProfile(profile);
       } catch (err) {
         rethrowIpc(err);

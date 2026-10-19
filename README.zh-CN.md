@@ -87,6 +87,7 @@ Agent 仍跑在自己的终端里。Anchor Code 把它放进侧栏，或全宽�
 
 ![Ctrl+P 快速打开与模糊匹配](docs/images/quick-open.png)
 
+
 ## 工作区
 
 | 工作区 | 文件、Git 与 Agent 运行位置 | 说明 |
@@ -98,6 +99,16 @@ Agent 仍跑在自己的终端里。Anchor Code 把它放进侧栏，或全宽�
 Anchor Code 启动时会重新打开上次的工作区（可在 **Settings → Appearance → Startup** 关闭）；如果它不可用，就停留在欢迎页。
 
 **支持的 Agent CLI：** Claude Code、Codex、Gemini CLI、Grok、OMP、Pi、Aider、Goose、Cursor Agent，以及自定义配置。
+
+### SSH 连接
+
+SSH 工作区默认列出本机 `~/.ssh/config` 及其 `Include` 文件中的主机别名。选择或输入别名后点击 **Connect**；系统 OpenSSH 在连接时解析跳板机、代理命令、密钥和 agent 配置，应用不会修改 SSH config。只使用可信配置，因为 `ProxyCommand` 和 `Match exec` 可以执行本地命令。
+
+配置连接需要本机 OpenSSH，以及无需交互的密钥/agent 认证（`BatchMode=yes`）；加密密钥请先加载到 `ssh-agent`。需要密码时可使用 **Add / manual connection**，密码仅在本次应用会话保留。远程环境需提供 POSIX/Linux shell、常见文件工具和 `git`。
+
+配置连接严格检查已信任的主机密钥。未知主机请先在终端执行 `ssh 别名`，通过可信渠道核对指纹后再连接。已变化的密钥会被拒绝，不会自动替换。手动连接默认严格检查 `known_hosts`，也可明确选择首次自动信任；该选项仍拒绝已变化的密钥。旧的 ignore 配置改为严格检查。以前保存的密码不再读取，并在下次保存设置时移除。
+
+配置连接的各项操作使用独立 SSH 进程，并禁用连接复用、转发和登录提示，避免复用既有连接绕过主机密钥检查。取消或超时会关闭本地 SSH 连接，但远程非交互命令可能继续运行。
 
 ## 安装
 

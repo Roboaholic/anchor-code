@@ -12,6 +12,7 @@ import type {
 } from "./types.js";
 import { HostError } from "./types.js";
 import { hostNormalize } from "./paths.js";
+import { verifySshHostKey } from "./sshKnownHosts.js";
 
 export interface SshHostOptions {
   profileId: string;
@@ -24,6 +25,7 @@ export interface SshHostOptions {
   passphrase?: string;
   password?: string;
   knownHostsPolicy?: "accept-new" | "strict" | "ignore";
+  knownHostsFile?: string;
   readyTimeoutMs?: number;
 }
 
@@ -73,6 +75,8 @@ export class SshHostSession implements HostSession {
 
   private async connect(): Promise<void> {
     const client = new Client();
+    const verification = new AbortController();
+    let verificationError: Error | null = null;
     let privateKey = this.opts.privateKey;
     if (!privateKey && this.opts.privateKeyPath) {
       try {
@@ -88,6 +92,7 @@ export class SshHostSession implements HostSession {
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
+        verification.abort();
         client.end();
         reject(
           new HostError(
@@ -100,15 +105,20 @@ export class SshHostSession implements HostSession {
       client
         .on("ready", () => {
           clearTimeout(timer);
+          if (verification.signal.aborted) {
+            client.end();
+            return;
+          }
           this.client = client;
           resolve();
         })
         .on("error", (err) => {
           clearTimeout(timer);
+          verification.abort();
           this.client = null;
           this.sftp = null;
           reject(
-            new HostError(
+            verificationError ?? new HostError(
               "disconnected",
               `SSH error: ${err.message}`,
               err.message,
@@ -116,10 +126,12 @@ export class SshHostSession implements HostSession {
           );
         })
         .on("end", () => {
+          verification.abort();
           this.client = null;
           this.sftp = null;
         })
         .on("close", () => {
+          verification.abort();
           this.client = null;
           this.sftp = null;
         });
@@ -136,7 +148,23 @@ export class SshHostSession implements HostSession {
         passphrase: this.opts.passphrase,
         password: privateKey ? undefined : this.opts.password,
         readyTimeout: this.opts.readyTimeoutMs ?? 15_000,
-        ...(this.opts.knownHostsPolicy === "ignore" ? { hostVerifier: () => true } : {}),
+        // Without a verifier ssh2 auto-accepts every host key. Keep raw key bytes
+        // (no hostHash) so both type and public key can be checked against trust.
+        hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
+          void verifySshHostKey(key, {
+            host: this.opts.host,
+            port: this.opts.port,
+            knownHostsPolicy: this.opts.knownHostsPolicy,
+            knownHostsFile: this.opts.knownHostsFile,
+            signal: verification.signal,
+          }).then(
+            () => callback(!verification.signal.aborted),
+            (error: unknown) => {
+              verificationError = error instanceof Error ? error : new Error(String(error));
+              callback(false);
+            },
+          );
+        },
         agent: privateKey || this.opts.password ? undefined : process.env.SSH_AUTH_SOCK,
       });
     });

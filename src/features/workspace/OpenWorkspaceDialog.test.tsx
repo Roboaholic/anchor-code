@@ -7,6 +7,7 @@ import { OpenWorkspaceDialog } from "./OpenWorkspaceDialog";
 interface AnchorMock {
   host: {
     listProfiles: ReturnType<typeof vi.fn>;
+    listSshConfigHosts: ReturnType<typeof vi.fn>;
     listWslDistros: ReturnType<typeof vi.fn>;
     wslHome: ReturnType<typeof vi.fn>;
     browseListDir: ReturnType<typeof vi.fn>;
@@ -29,6 +30,7 @@ function installAnchor(pickFolder?: ReturnType<typeof vi.fn>): AnchorMock {
         { id: "local-default", kind: "local" as const, label: "Local" },
         { id: "wsl-default", kind: "wsl" as const, label: "WSL" },
       ]),
+      listSshConfigHosts: vi.fn(async () => ({ hosts: [], warnings: [] })),
       listWslDistros: vi.fn(async () => ["Ubuntu-24.04"]),
       wslHome: vi.fn(async () => "/home/tester"),
       browseListDir: vi.fn(async (args: { path: string }) => {
@@ -241,4 +243,142 @@ describe("OpenWorkspaceDialog", () => {
       expect(getAnchor().host.listWslDistros).not.toHaveBeenCalled();
     });
   });
+});
+
+describe("SSH workspace connections", () => {
+  let anchor: AnchorMock;
+  beforeEach(() => {
+    setWindowsUa(false);
+    anchor = installAnchor();
+    anchor.host.listSshConfigHosts.mockResolvedValue({ hosts: [{ alias: "work", source: "/home/test/.ssh/config" }, { alias: "jump-work", source: "/home/test/.ssh/config.d/work" }], warnings: [] });
+    anchor.host.browseListDir.mockResolvedValue([{ name: "project", type: "dir" }]);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  async function showSsh(onOpen = vi.fn(), onClose = vi.fn()) {
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onOpen={onOpen} onClose={onClose} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByText("SSH").closest("label")!);
+    await waitFor(() => expect((screen.getByLabelText("SSH config host") as HTMLInputElement).value).toBe("work"));
+    return user;
+  }
+
+  it("defaults to discovered aliases and only connects on request", async () => {
+    const onOpen = vi.fn();
+    const user = await showSsh(onOpen);
+    expect(screen.queryByLabelText("Username")).toBeNull();
+    expect(anchor.host.upsertProfile).not.toHaveBeenCalled();
+    expect(anchor.host.browseListDir).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
+    expect(anchor.host.upsertProfile).toHaveBeenCalledWith({ id: "ssh-config-work", kind: "ssh", label: "work", ssh: { configHost: "work" } });
+    await user.click(screen.getByText("project"));
+    await waitFor(() => expect(anchor.host.browseListDir).toHaveBeenLastCalledWith(expect.objectContaining({ path: "/project" })));
+    await user.click(screen.getByRole("button", { name: "Open Workspace" }));
+    expect(onOpen).toHaveBeenCalledWith({ path: "/project", hostProfileId: "ssh-config-work", hostKind: "ssh" });
+  });
+
+  it("invalidates a connected profile when selecting a different alias", async () => {
+    const user = await showSsh();
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy());
+    await user.clear(screen.getByLabelText("SSH config host"));
+    await user.type(screen.getByLabelText("SSH config host"), "jump-work");
+    expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(anchor.host.upsertProfile).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(anchor.host.upsertProfile).toHaveBeenLastCalledWith(expect.objectContaining({ ssh: { configHost: "jump-work" } })));
+  });
+
+  it("keeps adding manual connections available and preserves password until explicit connect", async () => {
+    const user = await showSsh();
+    await user.click(screen.getByRole("button", { name: "Add / manual connection" }));
+    await user.type(screen.getByRole("textbox", { name: "Host" }), "example.test");
+    await user.type(screen.getByLabelText("Username"), "tester");
+    await user.type(screen.getByLabelText("Password (this session only)"), "test-password");
+    expect(anchor.host.upsertProfile).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(anchor.host.upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ ssh: { host: "example.test", port: 22, username: "tester", password: "test-password", knownHostsPolicy: "strict" } })));
+  });
+
+  it("falls back to a manual form when no aliases exist, with direct alias entry still available", async () => {
+    anchor.host.listSshConfigHosts.mockResolvedValue({ hosts: [], warnings: [] });
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onOpen={vi.fn()} onClose={vi.fn()} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByText("SSH").closest("label")!);
+    expect(screen.getByLabelText("Username")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Use SSH config" }));
+    expect(screen.getByLabelText("SSH config host")).toBeTruthy();
+  });
+
+  it("surfaces verification failures without enabling Open Workspace", async () => {
+    anchor.host.browseListDir.mockRejectedValue(new Error("Host key verification failed for work. Verify the fingerprint in a terminal."));
+    const user = await showSsh();
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText(/Host key verification failed for work/)).toBeTruthy());
+    expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("ignores a connection result after Close and avoids duplicate connects", async () => {
+    let resolveBrowse!: (value: unknown[]) => void;
+    anchor.host.browseListDir.mockImplementation(() => new Promise((resolve) => { resolveBrowse = resolve; }));
+    const onOpen = vi.fn(); const onClose = vi.fn();
+    const user = await showSsh(onOpen, onClose);
+    await user.dblClick(screen.getByRole("button", { name: "Connect" }));
+    expect(anchor.host.upsertProfile).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    resolveBrowse([{ name: "late-folder", type: "dir" }]);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("late-folder")).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+  it("does not let a delayed WSL home replace connected SSH folders", async () => {
+    setWindowsUa(true);
+    let resolveHome!: (home: string) => void;
+    anchor.host.wslHome.mockImplementation(() => new Promise<string>((resolve) => { resolveHome = resolve; }));
+    const user = await showSsh();
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
+    await user.click(screen.getByText("project"));
+    await waitFor(() => expect(document.querySelector(".wsl-browser__path")?.textContent).toBe("/project"));
+    resolveHome("/home/wsl-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.querySelector(".wsl-browser__path")?.textContent).toBe("/project");
+    expect(anchor.host.browseListDir).not.toHaveBeenCalledWith(expect.objectContaining({ path: "/home/wsl-user" }));
+  });
+
+  it("preserves user edits when SSH config discovery finishes late", async () => {
+    let resolveConfig!: (value: { hosts: { alias: string; source: string }[]; warnings: string[] }) => void;
+    anchor.host.listSshConfigHosts.mockImplementation(() => new Promise((resolve) => { resolveConfig = resolve; }));
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onOpen={vi.fn()} onClose={vi.fn()} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("button", { name: "Add / manual connection" }));
+    await user.type(screen.getByRole("textbox", { name: "Host" }), "typed-host");
+    resolveConfig({ hosts: [{ alias: "late", source: "config" }], warnings: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((screen.getByRole("textbox", { name: "Host" }) as HTMLInputElement).value).toBe("typed-host");
+    expect(screen.queryByLabelText("SSH config host")).toBeNull();
+  });
+
+  it("cannot dismiss midway through committing the active SSH workspace", async () => {
+    let resolveUse!: (value: unknown) => void;
+    anchor.host.useProfile.mockImplementation(() => new Promise((resolve) => { resolveUse = resolve; }));
+    const onOpen = vi.fn(); const onClose = vi.fn();
+    const user = await showSsh(onOpen, onClose);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Open Workspace" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(document.querySelector(".modal-backdrop")!);
+    expect(onClose).not.toHaveBeenCalled();
+    resolveUse({ id: "ssh", kind: "ssh", profileId: "ssh-config-work" });
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith({ path: "/", hostProfileId: "ssh-config-work", hostKind: "ssh" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
 });

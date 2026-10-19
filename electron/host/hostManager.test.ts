@@ -142,3 +142,24 @@ describe("HostManager", () => {
     expect(local.kind).toBe("local");
   });
 });
+
+describe("SSH config profile routing", () => {
+  it("uses native OpenSSH for aliases without copied host or username", () => {
+    const host = createHostForProfile({ id: "work", kind: "ssh", ssh: { configHost: "work" } });
+    expect(host.kind).toBe("ssh");
+    expect(host.constructor.name).toBe("OpenSshHostSession");
+  });
+
+  it("rejects option-like aliases", () => {
+    expect(() => createHostForProfile({ id: "bad", kind: "ssh", ssh: { configHost: "-oProxyCommand=bad" } })).toThrow(/Invalid SSH config/);
+  });
+
+  it("replaces the session if connection settings for the same profile change", async () => {
+    const mgr = new HostManager();
+    const first = await mgr.useProfile({ id: "work", kind: "ssh", ssh: { configHost: "work" } });
+    expect(await mgr.useProfile({ id: "work", kind: "ssh", ssh: { configHost: "work" } })).toBe(first);
+    const changed = await mgr.useProfile({ id: "work", kind: "ssh", ssh: { configHost: "other" } });
+    expect(changed).not.toBe(first);
+    await mgr.dispose();
+  });
+});

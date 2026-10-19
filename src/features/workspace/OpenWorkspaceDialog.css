@@ -1,0 +1,541 @@
+/* The workspace dialog owns its sizing. Connection forms keep their natural
+   height; only the content region scrolls, leaving header and actions visible. */
+.modal.workspace-dialog {
+  width: min(640px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.workspace-dialog,
+.workspace-dialog * {
+  box-sizing: border-box;
+}
+
+.workspace-dialog .modal__header {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: 22px 24px 18px;
+}
+
+.workspace-dialog .modal__title {
+  margin-bottom: 5px;
+  font-size: 18px;
+}
+
+.workspace-dialog__content {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scrollbar-gutter: stable;
+}
+
+.workspace-dialog__content > * {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.workspace-dialog .host-choice {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.workspace-dialog .host-choice__card {
+  display: flex;
+  align-items: center;
+  position: relative;
+  min-width: 0;
+  padding: 12px;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  cursor: pointer;
+}
+
+.workspace-dialog .host-choice__card:hover {
+  background: var(--bg-hover);
+}
+
+.workspace-dialog .host-choice__card.is-selected {
+  color: var(--accent);
+  border-color: var(--accent-border-strong);
+  background: var(--accent-soft);
+}
+
+.workspace-dialog .host-choice__card input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.workspace-dialog .host-choice__card:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.workspace-dialog .host-choice__card:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.workspace-dialog .host-choice__title,
+.workspace-dialog .host-choice__desc {
+  display: block;
+}
+
+.workspace-dialog .host-choice__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workspace-dialog .host-choice__desc {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.workspace-dialog__steps {
+  display: flex;
+  list-style: none;
+  align-items: center;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-dialog__steps li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.workspace-dialog__steps li + li::before {
+  content: "";
+  width: 32px;
+  height: 1px;
+  background: var(--border-strong);
+  margin-right: 10px;
+}
+
+.workspace-dialog__steps li > span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.workspace-dialog__steps .is-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.workspace-dialog__steps .is-current > span {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-border-strong);
+}
+
+.workspace-dialog__steps .is-complete > span {
+  color: var(--ok);
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.workspace-dialog__connection,
+.workspace-dialog__folder {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.workspace-dialog__section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workspace-dialog__section-title + .modal__hint {
+  margin-top: 5px;
+}
+
+.workspace-dialog__modes {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field-well);
+}
+
+.workspace-dialog__modes button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-dialog__modes button[aria-pressed="true"] {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.workspace-dialog__modes button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.workspace-dialog .field {
+  min-width: 0;
+  gap: 6px;
+}
+
+.workspace-dialog .field__label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workspace-dialog .field__input {
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  height: 36px;
+  font-size: 13px;
+  background: var(--field-well);
+}
+
+.workspace-dialog__security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-dialog__security-note > .codicon {
+  margin-top: 2px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.workspace-dialog__security-note p {
+  margin: 0;
+}
+
+.workspace-dialog__details {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workspace-dialog__details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.workspace-dialog__details summary:hover {
+  color: var(--text);
+}
+
+.workspace-dialog__details p {
+  margin: 10px 0 0;
+}
+
+.workspace-dialog__warning {
+  padding: 10px 12px;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 6px;
+}
+
+.workspace-dialog__warning summary {
+  color: var(--warn);
+}
+
+.workspace-dialog__manual-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.workspace-dialog__full-width {
+  grid-column: 1 / -1;
+}
+
+.workspace-dialog__host-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px;
+  gap: 14px;
+}
+
+.workspace-dialog__advanced-fields {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.workspace-dialog__connected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--field-well);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.workspace-dialog__connected > .codicon {
+  color: var(--text-secondary);
+  font-size: 19px;
+}
+
+.workspace-dialog__host-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.workspace-dialog__host-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workspace-dialog__host-summary > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workspace-dialog__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok-dot);
+  flex-shrink: 0;
+}
+
+.workspace-dialog .wsl-browser {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.workspace-dialog .wsl-browser__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--field-well);
+}
+
+.workspace-dialog .wsl-browser__path {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-panel);
+}
+
+.workspace-dialog .wsl-browser__list {
+  list-style: none;
+  padding: 4px;
+  margin: 0;
+  min-height: 180px;
+}
+
+.workspace-dialog .wsl-browser__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-dialog .wsl-browser__row:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.workspace-dialog .wsl-browser__icon,
+.workspace-dialog .wsl-browser__chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.workspace-dialog .wsl-browser__chevron {
+  margin-left: auto;
+}
+
+.workspace-dialog .wsl-browser__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.workspace-dialog .wsl-browser__empty {
+  padding: 56px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-dialog__local {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 40px 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.workspace-dialog__local > .codicon {
+  color: var(--text-muted);
+  font-size: 32px;
+}
+
+.workspace-dialog .modal__error {
+  overflow-wrap: anywhere;
+}
+
+.workspace-dialog__footer.modal__footer {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  margin: 0;
+  padding: 16px 24px;
+  gap: 8px;
+}
+
+.workspace-dialog__footer-context {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-right: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.workspace-dialog__footer-context strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dialog__footer .btn {
+  min-height: 36px;
+  height: auto;
+  flex-shrink: 0;
+}
+
+.workspace-dialog__footer .workspace-dialog__primary {
+  background: var(--accent);
+  color: var(--bg-panel);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+
+.workspace-dialog__footer .workspace-dialog__primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.workspace-dialog button:focus-visible,
+.workspace-dialog summary:focus-visible,
+.workspace-dialog__section-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .modal.workspace-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .workspace-dialog .modal__header {
+    padding: 18px 16px 16px;
+  }
+
+  .workspace-dialog__content {
+    padding: 0 16px 18px;
+    gap: 16px;
+  }
+
+  .workspace-dialog .host-choice__card {
+    padding: 10px 8px;
+    gap: 6px;
+  }
+
+  .workspace-dialog .host-choice__card > .codicon {
+    display: none;
+  }
+
+  .workspace-dialog__manual-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-dialog__connected {
+    flex-wrap: wrap;
+  }
+
+  .workspace-dialog__connected > .btn {
+    margin-left: auto;
+  }
+
+  .workspace-dialog__footer.modal__footer {
+    padding: 12px 16px;
+  }
+
+  .workspace-dialog__footer-context {
+    flex-basis: 100%;
+    margin: 0 0 4px;
+  }
+}

@@ -249,6 +249,175 @@ describe("OpenSshHostSession native transport", () => {
     expect((await nextResult).code).toBe(0);
   });
 
+  it("shares the command budget across workspace and browse sessions for an alias", async () => {
+    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias" });
+    try {
+      const first = child(); const run = host.run("/", "git", ["status"]);
+      const second = child(); const read = browse.readFile("/file");
+      const third = child(); const list = host.listDir("/dir");
+      const fourth = child(); const stat = browse.stat("/file");
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      first.end(); expect(spawnMock).toHaveBeenCalledTimes(3);
+      second.stdout.write("data"); second.end(); expect(spawnMock).toHaveBeenCalledTimes(4);
+      third.stdout.write("f\0file\0"); third.end();
+      fourth.stdout.write("file|4|1700000000\n"); fourth.end();
+      expect(await Promise.all([run, read, list, stat])).toEqual([
+        { stdout: "", stderr: "", code: 0 }, "data", [{ name: "file", type: "file" }],
+        { isFile: true, isDir: false, size: 4, mtimeMs: 1700000000000 },
+      ]);
+    } finally { await browse.dispose(); }
+  });
+
+  it("cancels queued requests without spawning or taking another command's slot", async () => {
+    const first = child(); const run1 = host.run("/", "slow", []);
+    const second = child(); const run2 = host.run("/", "slow", []);
+    const controller = new AbortController();
+    const queued = host.run("/", "never-started", [], { signal: controller.signal });
+    controller.abort();
+    expect(await queued).toEqual({ stdout: "", stderr: "", code: 0, aborted: true });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(first.kill).not.toHaveBeenCalled(); expect(second.kill).not.toHaveBeenCalled();
+    first.end(); second.end(); await Promise.all([run1, run2]);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("disposes a queued session without affecting another session sharing its alias", async () => {
+    const first = child(); const run1 = host.run("/", "slow", []);
+    const second = child(); const run2 = host.run("/", "slow", []);
+    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias" });
+    const queued = browse.readFile("/file");
+    const rejected = expect(queued).rejects.toMatchObject({ code: "disconnected" });
+    await browse.dispose(); await rejected;
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(first.kill).not.toHaveBeenCalled(); expect(second.kill).not.toHaveBeenCalled();
+    first.end(); second.end(); await Promise.all([run1, run2]);
+    const next = child(); const result = host.readFile("/file"); next.stdout.write("still connected"); next.end();
+    expect(await result).toBe("still connected");
+  });
+
+  it("holds aborted command slots until close or kill escalation, releasing only once", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const first = child(); const run1 = host.run("/", "slow", [], { signal: controller.signal });
+    const second = child(); const run2 = host.run("/", "slow", []);
+    const third = child(); const run3 = host.run("/", "next", []);
+    const fourth = child(); const run4 = host.run("/", "last", []);
+    controller.abort(); await run1;
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(first.kill).toHaveBeenLastCalledWith("SIGKILL");
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+    first.end(); expect(spawnMock).toHaveBeenCalledTimes(3);
+    second.end(); expect(spawnMock).toHaveBeenCalledTimes(4);
+    third.end(); fourth.end(); await Promise.all([run2, run3, run4]);
+  });
+
+  it("includes queue time in timeouts and removes expired requests", async () => {
+    vi.useFakeTimers();
+    const first = child(); const run1 = host.run("/", "slow", [], { timeoutMs: 0 });
+    const second = child(); const run2 = host.run("/", "slow", [], { timeoutMs: 0 });
+    const queued = host.run("/", "never-started", [], { timeoutMs: 50 });
+    const rejected = expect(queued).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(50); await rejected;
+    first.end(); second.end(); await Promise.all([run1, run2]);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never starts queued commands while disposing running commands", async () => {
+    const first = child(); const run1 = host.run("/", "slow", []);
+    const second = child(); const run2 = host.run("/", "slow", []);
+    const queued = host.run("/", "never-started", []);
+    const rejected = [run1, run2, queued].map((run) => expect(run).rejects.toMatchObject({ code: "disconnected" }));
+    first.kill.mockImplementation(() => { first.end(); return true; });
+    second.kill.mockImplementation(() => { second.end(); return true; });
+    await host.dispose(); await Promise.all(rejected);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not leak a slot when spawning throws synchronously", async () => {
+    spawnMock.mockImplementationOnce(() => { throw new Error("spawn failed"); });
+    await expect(host.run("/", "true", [])).rejects.toMatchObject({ code: "failed" });
+    const first = child(); const run1 = host.run("/", "true", []);
+    const second = child(); const run2 = host.run("/", "true", []);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+    first.end(); second.end(); await Promise.all([run1, run2]);
+  });
+
+  it.each([
+    { method: "readFile" as const, output: "file data", expected: "file data" },
+    { method: "listDir" as const, output: "f\0file\0", expected: [{ name: "file", type: "file" }] },
+    { method: "stat" as const, output: "file|9|123\n", expected: { isFile: true, isDir: false, size: 9, mtimeMs: 123000 } },
+  ])("retries a transient connection closure for $method, discarding partial output", async ({ method, output, expected }) => {
+    vi.useFakeTimers();
+    const first = child(); const result = host[method]("/file");
+    first.stdout.write("incomplete");
+    first.stderr.write("kex_exchange_identification: read: Connection reset by peer\n"); first.end(255);
+    const second = child();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    second.stdout.write(output); second.end();
+    expect(await result).toEqual(expected);
+  });
+
+  it("bounds transient file read retries to three total attempts", async () => {
+    vi.useFakeTimers();
+    const first = child(); const result = host.readFile("/file");
+    const rejected = expect(result).rejects.toMatchObject({ code: "disconnected", causeDetail: "Connection closed by 127.0.0.1 port 22" });
+    first.stderr.write("Connection closed by 127.0.0.1 port 22"); first.end(255);
+    const second = child(); await vi.advanceTimersByTimeAsync(250);
+    second.stderr.write("Connection closed by 127.0.0.1 port 22"); second.end(255);
+    const third = child(); await vi.advanceTimersByTimeAsync(400);
+    third.stderr.write("Connection closed by 127.0.0.1 port 22"); third.end(255);
+    await rejected; await vi.advanceTimersByTimeAsync(1000);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    "Host key verification failed.\nConnection closed by 127.0.0.1 port 22",
+    "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!",
+    "Permission denied (publickey).\nConnection reset by peer",
+    "ssh: connect to host work-alias port 22: Connection refused",
+  ])("does not retry security failures or unrelated diagnostics: %s", async (diagnostic) => {
+    vi.useFakeTimers();
+    const first = child(); const result = host.readFile("/file");
+    first.stderr.write(diagnostic); first.end(255);
+    await expect(result).rejects.toMatchObject({ code: "disconnected" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["run", "writeFile", "mkdirp", "remove", "rename", "copyPath"] as const)("never retries %s after connection loss", async (method) => {
+    vi.useFakeTimers();
+    const first = child();
+    const result = method === "run" ? host.run("/", "cat", ["/file"])
+      : method === "writeFile" || method === "rename" || method === "copyPath" ? host[method]("/file", "value")
+      : host[method]("/file");
+    first.stderr.write("kex_exchange_identification: Connection closed by remote host"); first.end(255);
+    await expect(result).rejects.toMatchObject({ code: "disconnected" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels retry backoff immediately on disposal", async () => {
+    vi.useFakeTimers();
+    const first = child(); const result = host.readFile("/file");
+    const rejected = expect(result).rejects.toMatchObject({ code: "disconnected" });
+    first.stderr.write("kex_exchange_identification: Connection closed by remote host"); first.end(255);
+    await vi.advanceTimersByTimeAsync(0);
+    await host.dispose(); await rejected;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reserve command slots for long-lived terminals", async () => {
+    fakePty(); const terminal = await host.openPty("~", 80, 24);
+    const first = child(); const run1 = host.run("/", "true", []);
+    const second = child(); const run2 = host.run("/", "true", []);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    first.end(); second.end(); await Promise.all([run1, run2]);
+    terminal.kill();
+  });
+
   it("starts a native PTY with local cwd, remote env, and forced remote TTY", async () => {
     const raw = fakePty();
     const handle = await host.openPty("/remote dir", 91, 31, {

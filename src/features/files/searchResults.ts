@@ -6,6 +6,42 @@
 
 export type SearchHit = { path: string; line: number; text: string };
 
+export type SearchStatus = "complete" | "partial" | "failed" | "cancelled";
+export type SearchDiagnostic = { code: string; message: string };
+
+/** Older hosts may only report aborted; pagination never means incomplete coverage. */
+export function searchCompletionStatus(result: {
+  status?: SearchStatus;
+  aborted?: boolean;
+}): SearchStatus {
+  return result.aborted ? "cancelled" : (result.status ?? "complete");
+}
+
+/** Coverage is independent of the result limit and is meaningful even with no hits. */
+export function searchResultsSummary({
+  searching,
+  status,
+  hitCount,
+  fileCount,
+  truncated,
+}: {
+  searching: boolean;
+  status: SearchStatus | null;
+  hitCount: number;
+  fileCount: number;
+  truncated: boolean;
+}): string {
+  const count = `${hitCount} result${hitCount === 1 ? "" : "s"} in ${fileCount} file${fileCount === 1 ? "" : "s"}${truncated ? "+" : ""}`;
+  if (searching) return hitCount ? `Searching… · ${count}` : "Searching…";
+  if (!status) return "Waiting to search…";
+  if (status === "failed") return hitCount ? `Search failed · ${count} kept` : "Search failed";
+  if (status === "cancelled") {
+    return hitCount ? `Search stopped · ${count} kept` : "Search stopped · No matches found so far";
+  }
+  const matches = hitCount ? count : "No matches in searched files";
+  return status === "partial" ? `Search incomplete · ${matches}` : matches;
+}
+
 export type SearchFileGroup = {
   path: string;
   hits: SearchHit[];

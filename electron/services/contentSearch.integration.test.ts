@@ -34,4 +34,29 @@ describe("searchWorkspaceContent (integration)", () => {
     expect(result.hits[0]?.path).toMatch(/hello\.ts$/);
     expect(result.hits[0]?.text).toContain("uniqueNeedleXYZ");
   });
+
+  it("reports the large-file limit when a synthetic C file is skipped", async () => {
+    await fs.writeFile(path.join(tmp, "large.c"), "// fixture\nlargeFileNeedle\n" + " ".repeat(512 * 1024));
+    const result = await searchWorkspaceContent(host, tmp, "largeFileNeedle");
+    expect(result).toMatchObject({ source: "rg", status: "complete", hits: [] });
+    expect(result.diagnostics?.find((d) => d.code === "rg-scope")?.message).toContain("512 KiB");
+  });
+
+  it.skipIf(process.platform === "win32")("discloses that symbolic-link directories are not followed", async () => {
+    await fs.mkdir(path.join(tmp, "real"));
+    await fs.writeFile(path.join(tmp, "real", "target.c"), "symlinkNeedle\n");
+    await fs.symlink(path.join(tmp, "real"), path.join(tmp, "alias"), "dir");
+    const result = await searchWorkspaceContent(host, tmp, "symlinkNeedle", { exclude: ["real"] });
+    expect(result.hits).toEqual([]);
+    expect(result.diagnostics?.find((d) => d.code === "rg-scope")?.message).toContain("symbolic links are not followed");
+  });
+
+  it("discloses the per-file hit cap without advertising more result pages", async () => {
+    await fs.writeFile(path.join(tmp, "many.c"), "perFileNeedle\n".repeat(12));
+    const result = await searchWorkspaceContent(host, tmp, "perFileNeedle");
+    expect(result.hits).toHaveLength(8);
+    expect(result.truncated).toBe(false);
+    expect(result.diagnostics?.find((d) => d.code === "rg-scope")?.message).toContain("8 matching lines per file");
+  });
+
 });

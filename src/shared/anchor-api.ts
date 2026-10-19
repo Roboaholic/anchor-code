@@ -542,6 +542,8 @@ export interface AnchorApi {
       source: "git-grep" | "rg" | "scan";
       requestId: string;
       aborted?: boolean;
+      status?: "complete" | "partial" | "failed" | "cancelled";
+      diagnostics?: { code: string; message: string }[];
     }>;
     cancelSearch: (requestId?: string) => Promise<{ ok: boolean }>;
     readSearchIgnore: (

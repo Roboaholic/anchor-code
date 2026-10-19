@@ -9,9 +9,38 @@ import {
   loadSearchSettings,
   parseExcludeList,
   saveSearchSettings,
+  searchCompletionStatus,
+  searchResultsSummary,
 } from "./searchResults";
 
 const h = (path: string, line: number) => ({ path, line, text: `l${line}` });
+
+describe("search coverage", () => {
+  it("honors coverage and legacy cancellation without treating pagination as partial", () => {
+    expect(searchCompletionStatus({})).toBe("complete");
+    expect(searchCompletionStatus({ status: "partial" })).toBe("partial");
+    expect(searchCompletionStatus({ aborted: true })).toBe("cancelled");
+    expect(searchCompletionStatus({ status: "complete", aborted: true })).toBe("cancelled");
+  });
+
+  it("never presents a running, incomplete, failed or stopped search as complete", () => {
+    const base = { searching: false, hitCount: 0, fileCount: 0, truncated: false };
+    expect(searchResultsSummary({ ...base, status: null })).toBe("Waiting to search…");
+    expect(searchResultsSummary({ ...base, status: null, searching: true })).toBe("Searching…");
+    expect(searchResultsSummary({ ...base, status: "complete" })).toBe("No matches in searched files");
+    expect(searchResultsSummary({ ...base, status: "partial" })).toBe("Search incomplete · No matches in searched files");
+    expect(searchResultsSummary({ ...base, status: "failed" })).toBe("Search failed");
+    expect(searchResultsSummary({ ...base, status: "cancelled" })).toBe("Search stopped · No matches found so far");
+  });
+
+  it("keeps result counts with incomplete coverage or failure", () => {
+    const base = { searching: false, hitCount: 3, fileCount: 2, truncated: false };
+    expect(searchResultsSummary({ ...base, status: "partial" })).toBe("Search incomplete · 3 results in 2 files");
+    expect(searchResultsSummary({ ...base, status: "failed" })).toBe("Search failed · 3 results in 2 files kept");
+    expect(searchResultsSummary({ ...base, status: "cancelled" })).toBe("Search stopped · 3 results in 2 files kept");
+    expect(searchResultsSummary({ ...base, status: "complete", truncated: true })).toBe("3 results in 2 files+");
+  });
+});
 
 describe("appendHitsToGroups", () => {
   it("appends to existing groups and keeps untouched group identity", () => {

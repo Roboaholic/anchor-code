@@ -36,9 +36,14 @@ import {
   loadSearchSettings,
   parseExcludeList,
   saveSearchSettings,
+  searchCompletionStatus,
+  searchResultsSummary,
+  type SearchDiagnostic,
   type SearchFileGroup,
   type SearchHit,
+  type SearchStatus,
 } from "./searchResults";
+import "./FileTree.css";
 
 /** Results page size; "Show more" fetches the next page via skipHits. */
 const SEARCH_PAGE = 2_000;
@@ -402,10 +407,15 @@ export function FileTree() {
     return 320;
   });
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null);
+  const [searchDiagnostics, setSearchDiagnostics] = useState<SearchDiagnostic[]>([]);
   const [groups, setGroups] = useState<SearchFileGroup[]>([]);
   const hitCount = useMemo(() => countHits(groups), [groups]);
-  const activeRequestId = useRef<string | null>(null);
+  const activeSearch = useRef<{
+    requestId: string;
+    flushPending: () => void;
+    dispose: () => void;
+  } | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [searchSource, setSearchSource] = useState<string | null>(null);
   const searchGen = useRef(0);
@@ -455,9 +465,22 @@ export function FileTree() {
   const resetResults = useCallback(() => {
     setGroups([]);
     setTruncated(false);
-    setSearchError(null);
+    setSearchStatus(null);
+    setSearchDiagnostics([]);
     setSearching(false);
     setSearchSource(null);
+  }, []);
+
+  const stopActiveSearch = useCallback((keepPending = false) => {
+    const active = activeSearch.current;
+    // Flush before invalidating the generation so Stop also keeps the last frame.
+    if (keepPending) active?.flushPending();
+    searchGen.current += 1;
+    if (active) {
+      active.dispose();
+      activeSearch.current = null;
+      void window.anchor.workspace.cancelSearch?.(active.requestId).catch(() => {});
+    }
   }, []);
 
   const runSearch = useCallback(
@@ -480,12 +503,9 @@ export function FileTree() {
       const q = raw.trim();
       const append = opts.append === true;
       const skipHits = Math.max(0, opts.skipHits ?? 0);
-      const gen = ++searchGen.current;
       // Cancel the previous backend search right away (main also auto-cancels).
-      if (activeRequestId.current) {
-        void window.anchor.workspace.cancelSearch?.(activeRequestId.current);
-        activeRequestId.current = null;
-      }
+      stopActiveSearch();
+      const gen = searchGen.current;
       if (!workspaceRoot || q.length < 1) {
         resetResults();
         return;
@@ -496,23 +516,24 @@ export function FileTree() {
         return;
       }
       setSearching(true);
-      setSearchError(null);
+      setSearchStatus(null);
+      setSearchDiagnostics([]);
+      setTruncated(false);
       if (!append) {
         // Clear previous results immediately so streaming replaces, not appends.
         setGroups([]);
-        setTruncated(false);
         setSearchSource(null);
         setCollapsedFiles(new Set());
       }
 
       const requestId = `ui-${gen}-${Date.now()}`;
-      activeRequestId.current = requestId;
       const maxResults = opts.maxResults;
       // Main batches hits (~30ms); coalesce further on rAF and append per group.
       let pending: SearchHit[] = [];
       let streamed = 0;
       let raf = 0;
       const flushPending = () => {
+        if (raf) window.cancelAnimationFrame(raf);
         raf = 0;
         if (gen !== searchGen.current || pending.length === 0) {
           pending = [];
@@ -535,7 +556,6 @@ export function FileTree() {
         if (pending.length === 0) return;
         if (streamed === 0) {
           // First hits paint this frame.
-          if (raf) window.cancelAnimationFrame(raf);
           flushPending();
           return;
         }
@@ -546,6 +566,17 @@ export function FileTree() {
         if (gen !== searchGen.current) return;
         setSearchSource(payload.source);
       });
+      let disposed = false;
+      const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        offHits?.();
+        offMeta?.();
+        if (raf) window.cancelAnimationFrame(raf);
+        raf = 0;
+        pending = [];
+      };
+      activeSearch.current = { requestId, flushPending, dispose };
 
       try {
         const excludeList = opts.exclude.trim()
@@ -569,10 +600,6 @@ export function FileTree() {
           requestId,
         });
         if (gen !== searchGen.current) return;
-        if (raf) {
-          window.cancelAnimationFrame(raf);
-          raf = 0;
-        }
         flushPending();
         // Streaming is authoritative; the final set only repairs a lost batch.
         if (!append && result.hits.length > streamed) {
@@ -582,41 +609,45 @@ export function FileTree() {
             appendHitsToGroups(prev, result.hits.slice(streamed, maxResults)),
           );
         }
-        setTruncated(result.truncated);
+        const completion = searchCompletionStatus(result);
+        setSearchStatus(completion);
+        setSearchDiagnostics(result.diagnostics ?? []);
+        setTruncated(result.truncated && completion !== "cancelled" && completion !== "failed");
         setSearchSource(result.source);
       } catch (err) {
         if (gen !== searchGen.current) return;
-        setGroups([]);
+        flushPending();
         setTruncated(false);
-        setSearchSource(null);
-        setSearchError(err instanceof Error ? err.message : String(err));
+        setSearchStatus("failed");
+        setSearchDiagnostics([{
+          code: "search-failed",
+          message: err instanceof Error ? err.message : String(err),
+        }]);
       } finally {
-        offHits?.();
-        offMeta?.();
-        if (raf) window.cancelAnimationFrame(raf);
-        if (activeRequestId.current === requestId) activeRequestId.current = null;
+        dispose();
+        if (activeSearch.current?.requestId === requestId) activeSearch.current = null;
         if (gen === searchGen.current) setSearching(false);
       }
     },
-    [workspaceRoot, resetResults],
+    [workspaceRoot, resetResults, stopActiveSearch],
   );
 
   const cancelSearch = useCallback(() => {
-    const id = activeRequestId.current;
-    if (!id) return;
+    if (!activeSearch.current) return;
     // Keep the hits found so far; just stop the engine.
-    searchGen.current += 1;
-    activeRequestId.current = null;
-    void window.anchor.workspace.cancelSearch?.(id);
+    stopActiveSearch(true);
     setSearching(false);
-    setTruncated(true);
-  }, []);
+    setSearchStatus("cancelled");
+    setTruncated(false);
+  }, [stopActiveSearch]);
 
   useEffect(() => {
+    // Invalidate on edits, before the debounce: an old response must not paint
+    // results for the new query, filters, or workspace while its timer is pending.
+    stopActiveSearch();
+    resetResults();
     if (!workspaceRoot) {
       setQuery("");
-      setGroups([]);
-      setSearchError(null);
       return;
     }
     // Short debounce; the previous backend search is cancelled on retype.
@@ -632,7 +663,10 @@ export function FileTree() {
         maxResults: SEARCH_PAGE,
       });
     }, 100);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      stopActiveSearch();
+    };
   }, [
     query,
     include,
@@ -644,17 +678,9 @@ export function FileTree() {
     defaultExcludes,
     workspaceRoot,
     runSearch,
+    resetResults,
+    stopActiveSearch,
   ]);
-
-  // Stop any in-flight search when the pane unmounts.
-  useEffect(
-    () => () => {
-      if (activeRequestId.current) {
-        void window.anchor.workspace.cancelSearch?.(activeRequestId.current);
-      }
-    },
-    [],
-  );
 
   const saveExcludesToAnchorIgnore = useCallback(async () => {
     if (!workspaceRoot) return;
@@ -866,17 +892,13 @@ export function FileTree() {
   const hasSearchQuery =
     qTrim.length >= 1 && (useRegex || qTrim.length >= 2);
 
-  const resultsMeta = searching
-    ? hitCount > 0
-      ? `Found ${hitCount} in ${fileGroups.length} file${fileGroups.length === 1 ? "" : "s"}, searching…`
-      : "Searching…"
-    : searchError
-      ? "Search failed"
-      : hitCount === 0
-        ? "No matches"
-        : `${hitCount} result${hitCount === 1 ? "" : "s"} in ${fileGroups.length} file${fileGroups.length === 1 ? "" : "s"}${
-            truncated ? "+" : ""
-          }${searchSource ? ` · ${searchSource}` : ""}`;
+  const resultsMeta = searchResultsSummary({
+    searching,
+    status: searchStatus,
+    hitCount,
+    fileCount: fileGroups.length,
+    truncated,
+  });
 
   /** Filters + open results: Explorer shrinks to its header so results get the space. */
   const explorerCompact = hasSearchQuery && resultsOpen && filtersOpen;
@@ -1266,7 +1288,14 @@ export function FileTree() {
                   className="files-section__chevron"
                 />
                 <span className="files-section__label">RESULTS</span>
-                <span className="files-section__meta">{resultsMeta}</span>
+                <span className="files-section__meta files-search-summary" role="status">
+                  <span className="files-search-summary__text" title={resultsMeta}>{resultsMeta}</span>
+                  {searchSource ? (
+                    <span className="files-search-summary__engine" aria-label={`Search engine: ${searchSource}`} title={`Search engine: ${searchSource}`}>
+                      {searchSource}
+                    </span>
+                  ) : null}
+                </span>
               </button>
               {searching ? (
                 <div className="files-section__head-actions">
@@ -1305,15 +1334,22 @@ export function FileTree() {
                 </div>
               ) : null}
             </div>
+            {resultsOpen && searchDiagnostics.length > 0 ? (
+              <details className="files-search-diagnostics" open>
+                <summary>Search details ({searchDiagnostics.length})</summary>
+                <ul>
+                  {searchDiagnostics.map((diagnostic, i) => (
+                    <li key={`${diagnostic.code}:${i}`}>{diagnostic.message}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {resultsOpen ? (
               <div
                 className="files-search-results__body"
                 ref={resultsBodyRef}
                 onScroll={(e) => setResultsScrollTop(e.currentTarget.scrollTop)}
               >
-                {searchError ? (
-                  <p className="pane-hint pane-hint--error">{searchError}</p>
-                ) : null}
                 <div
                   className="files-search-results__virtual"
                   style={{ height: searchRows.length * SEARCH_ROW_HEIGHT }}

@@ -65,6 +65,9 @@ export interface ContentSearchResult {
   hits: ContentSearchHit[];
   truncated: boolean;
   source: "git-grep" | "rg" | "scan";
+  /** Completion within the documented engine scope; fallback coverage is partial. */
+  status?: "complete" | "partial" | "failed" | "cancelled";
+  diagnostics?: { code: string; message: string }[];
   /** True when the search was cancelled (hits are partial). */
   aborted?: boolean;
 }
@@ -114,12 +117,9 @@ const DEFAULT_RG_GLOBS = [
  * rg command resolution cache:
  * - key `local` for LocalHost (absolute path or `"rg"`)
  * - key `host:<id>` for WSL/SSH remote `rg`
- * value `false` means unavailable
+ * Failures are not cached: a tool may be installed before the next search.
  */
-const rgCmdCache = new Map<string, string | false>();
-
-/** git-grep availability per workspace root. */
-const gitCache = new Map<string, boolean | null>();
+const rgCmdCache = new Map<string, string>();
 
 function rgCacheKey(host: HostSession): string {
   return host.kind === "local" ? "local" : `host:${host.id}`;
@@ -133,7 +133,6 @@ function rgCacheKey(host: HostSession): string {
 function resolveRgCommand(host: HostSession): string | null {
   const key = rgCacheKey(host);
   const cached = rgCmdCache.get(key);
-  if (cached === false) return null;
   if (typeof cached === "string") return cached;
 
   if (host.kind === "local") {
@@ -142,7 +141,7 @@ function resolveRgCommand(host: HostSession): string | null {
       rgCmdCache.set(key, bundled);
       return bundled;
     }
-    // Let tryRipgrep attempt PATH once; failure marks cache false.
+    // Let tryRipgrep attempt PATH when no bundled binary is available.
     return "rg";
   }
 
@@ -150,7 +149,8 @@ function resolveRgCommand(host: HostSession): string | null {
 }
 
 function markRgUnavailable(host: HostSession): void {
-  rgCmdCache.set(rgCacheKey(host), false);
+  // A missing tool may be installed before the next search. Do not cache failures.
+  rgCmdCache.delete(rgCacheKey(host));
 }
 
 function markRgOk(host: HostSession, cmd: string): void {
@@ -513,8 +513,9 @@ export async function loadAnchorIgnore(host: HostSession, root: string): Promise
   try {
     const text = await host.readFile(hostJoin(host.kind, root, ANCHOR_IGNORE_FILE));
     patterns = anchorIgnoreToPatterns(text);
-  } catch {
-    // missing file is the normal case
+  } catch (err) {
+    // Missing is normal. Permission/connection failures must not disable filters.
+    if (!(err instanceof HostError && err.code === "not_found")) throw err;
   }
   anchorIgnoreCache.set(key, { at: Date.now(), patterns });
   return patterns;
@@ -531,7 +532,91 @@ function abortedResult(
   hits: ContentSearchHit[],
   source: ContentSearchResult["source"],
 ): ContentSearchResult {
-  return { root, query, hits, truncated: true, source, aborted: true };
+  return {
+    root, query, hits, truncated: false, source, aborted: true, status: "cancelled",
+    diagnostics: [{ code: "cancelled", message: "Search stopped. Results found so far are incomplete; retry the search to continue." }],
+  };
+}
+
+function searchFailure(
+  root: string,
+  query: string,
+  hits: ContentSearchHit[],
+  source: ContentSearchResult["source"],
+  error: unknown,
+  signal?: AbortSignal,
+): ContentSearchResult {
+  if (signal?.aborted) return abortedResult(root, query, hits, source);
+  const code = error instanceof HostError ? error.code : "failed";
+  const detail = error instanceof HostError
+    ? [error.message, error.causeDetail].filter(Boolean).join(": ")
+    : error instanceof Error ? error.message : String(error);
+  const action = code === "timeout"
+    ? "Narrow the include filter and retry."
+    : code === "disconnected"
+      ? "Reconnect the workspace host and retry."
+      : "Check the workspace connection, path and file permissions, then retry.";
+  return {
+    root, query, hits, source, truncated: false,
+    status: hits.length > 0 ? "partial" : "failed",
+    diagnostics: [{
+      code,
+      message: `${source} search ${code === "timeout" ? "timed out" : "failed"}. Results are incomplete. ${detail.slice(0, 1500)} ${action}`,
+    }],
+  };
+}
+
+/** Only a missing executable justifies changing engines, not an I/O/SSH error. */
+function commandMissing(result: RunResult): boolean {
+  return result.code === 127 || result.code === 9009;
+}
+
+function grepFailed(result: RunResult): boolean {
+  if (result.earlyExit) return false;
+  // SSH's `cd ... && exec ...` can fail with exit 1 before grep starts.
+  // Genuine grep no-match exits have no stderr; do not hide shell/I/O failures.
+  return (result.code !== 0 && result.code !== 1) || (result.code === 1 && Boolean(result.stderr.trim()));
+}
+
+async function spawnMissing(host: HostSession, root: string, error: unknown): Promise<boolean> {
+  const detail = error instanceof HostError ? error.causeDetail : (error as NodeJS.ErrnoException)?.message;
+  if (!detail || !/\bspawn\b.*\bENOENT\b/.test(detail)) return false;
+  // spawn ENOENT can also mean the cwd is missing, which is not a missing tool.
+  try { return (await host.stat(root)).isDir; } catch { return false; }
+}
+
+function describeCoverage(result: ContentSearchResult, o: NormalizedOpts): ContentSearchResult {
+  const diagnostics = [...(result.diagnostics ?? [])];
+  if (result.source === "rg") {
+    const compatibility = diagnostics.some((d) => d.code === "rg-compatibility");
+    diagnostics.push({
+      code: "rg-scope",
+      message: `Search scope: at most 8 matching lines per file; symbolic links are not followed. ${compatibility ? "Binary/generated asset types are excluded." : "Files larger than 512 KiB and binary/generated asset types are excluded."} Review filters or open the file directly if a match is missing.`,
+    });
+  } else if (result.source === "git-grep") {
+    diagnostics.push({
+      code: "tracked-only",
+      message: "Limited fallback: ripgrep (rg) is unavailable. git-grep searches tracked files only, with at most 8 matching lines per file. Untracked files are not searched. Install rg on the workspace host and retry for broader coverage.",
+    });
+  } else {
+    diagnostics.push({
+      code: "scan-scope",
+      message: `Limited fallback: scans at most ${SCAN_MAX_FILES.toLocaleString("en-US")} indexed files up to 256 KiB each, with at most 8 matching lines per file. The file index can omit hidden, ignored, generated and external directories. Install rg on the workspace host and retry for broader coverage.`,
+    });
+  }
+  if (o.ignoreFile) diagnostics.push({
+    code: "anchorignore",
+    message: ".anchorignore is still applied, even when the ignore-rules checkbox is off. Review .anchorignore and the include/exclude filters if a file is missing.",
+  });
+  if (result.truncated) diagnostics.push({
+    code: "result-limit",
+    message: "The result page limit was reached. Use Show more for the next page; per-file and engine coverage limits still apply.",
+  });
+  return {
+    ...result,
+    status: result.status ?? (result.truncated || result.source !== "rg" ? "partial" : "complete"),
+    diagnostics,
+  };
 }
 
 /**
@@ -547,17 +632,24 @@ export async function searchWorkspaceContent(
 ): Promise<ContentSearchResult> {
   const q = query.trim();
   normalizeOpts(opts); // validate regex options before any I/O
-  const anchorIgnore =
-    opts?.useAnchorIgnore === false ? [] : await loadAnchorIgnore(host, root);
+  if (opts?.signal?.aborted) return abortedResult(root, q, [], "rg");
+  if (!q) return { root, query: q, hits: [], truncated: false, source: "rg", status: "complete" };
+  let anchorIgnore: string[];
+  try {
+    anchorIgnore = opts?.useAnchorIgnore === false ? [] : await loadAnchorIgnore(host, root);
+  } catch (err) {
+    const result = searchFailure(root, q, [], "rg", err, opts?.signal);
+    if (!result.aborted) result.diagnostics?.unshift({
+      code: "ignore-file-error",
+      message: "Could not read .anchorignore. Search stopped to avoid bypassing workspace filters; check the connection and file permissions, then retry.",
+    });
+    return result;
+  }
   const o = normalizeOpts(opts, anchorIgnore);
   const onHits = opts?.onHits;
   const onSource = opts?.onSource;
-  if (!q) {
-    return { root, query: q, hits: [], truncated: false, source: "rg" };
-  }
   if (o.useRegex) {
     try {
-      // eslint-disable-next-line no-new
       new RegExp(q, o.caseSensitive ? "" : "i");
     } catch (err) {
       throw new Error(
@@ -568,24 +660,31 @@ export async function searchWorkspaceContent(
 
   // ripgrep first — bundled binary on local / Windows-rg over WSL UNC.
   const viaRg = await tryRipgrep(host, root, q, o, onHits, onSource);
-  if (viaRg) return viaRg;
+  if (viaRg) return describeCoverage(viaRg, o);
   if (o.signal?.aborted) return abortedResult(root, q, [], "rg");
 
-  const gitState = gitCache.get(root);
   // git grep only sees tracked files — unusable when ignore rules are off.
-  if (gitState !== false && o.respectIgnore) {
+  if (o.respectIgnore) {
     const viaGit = await tryGitGrep(host, root, q, o, onHits, onSource);
-    if (viaGit?.aborted) return viaGit;
-    if (viaGit) {
-      gitCache.set(root, true);
-      return viaGit;
-    }
-    gitCache.set(root, false);
+    if (viaGit) return describeCoverage(viaGit, o);
+    // The file-index walker cannot honor full gitignore semantics. Do not
+    // silently read ignored files when both filtering-capable engines are absent.
+    return {
+      root, query: q, hits: [], truncated: false, source: "git-grep", status: "failed",
+      diagnostics: [{
+        code: "engine-unavailable",
+        message: "Search could not run: rg is unavailable and git-grep is unavailable or this folder is not a Git repository. Install rg on the workspace host and retry. The scan fallback was not used because it cannot honor the selected ignore rules.",
+      }],
+    };
   }
 
-  if (o.signal?.aborted) return abortedResult(root, q, [], "git-grep");
+  if (o.signal?.aborted) return abortedResult(root, q, [], "rg");
   onSource?.("scan");
-  return scanFiles(host, root, q, o, onHits);
+  try {
+    return describeCoverage(await scanFiles(host, root, q, o, onHits), o);
+  } catch (err) {
+    return describeCoverage(searchFailure(root, q, [], "scan", err, o.signal), o);
+  }
 }
 
 async function tryGitGrep(
@@ -596,6 +695,7 @@ async function tryGitGrep(
   onHits?: (hits: ContentSearchHit[]) => void,
   onSource?: (source: ContentSearchResult["source"]) => void,
 ): Promise<ContentSearchResult | null> {
+  const { runOpts, streamer } = attachGrepStream(o, onHits, 20_000, undefined, "other");
   try {
     // Fast path: tracked index only (no --untracked — that walks the whole tree).
     const args = ["grep", "-n", "-I", "--full-name"];
@@ -618,12 +718,15 @@ async function tryGitGrep(
     }
 
     onSource?.("git-grep");
-    const { runOpts, streamer } = attachGrepStream(o, onHits, 20_000, undefined, "other");
     const r = await host.run(root, "git", args, runOpts);
     if (r.aborted) {
       return abortedResult(root, query, streamer.hits(), "git-grep");
     }
-    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) return null;
+    if (grepFailed(r)) {
+      streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
+      if (streamer.hits().length === 0 && (commandMissing(r) || /not a git repository/i.test(r.stderr))) return null;
+      return searchFailure(root, query, streamer.hits(), "git-grep", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
+    }
     // Final parse catches any trailing incomplete line after kill.
     streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
     const hits = streamer.hits();
@@ -634,8 +737,9 @@ async function tryGitGrep(
       truncated: hits.length >= o.maxResults || Boolean(r.earlyExit),
       source: "git-grep",
     };
-  } catch {
-    return null;
+  } catch (err) {
+    if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) return null;
+    return searchFailure(root, query, streamer.hits(), "git-grep", err, o.signal);
   }
 }
 
@@ -688,9 +792,9 @@ function buildRgArgs(
       "300",
       "--max-columns-preview",
     );
-    for (const g of DEFAULT_RG_GLOBS) {
-      args.push("--glob", g);
-    }
+  }
+  for (const g of DEFAULT_RG_GLOBS) {
+    args.push("--glob", g);
   }
   if (!o.respectIgnore) args.push("--no-ignore", "--hidden");
   if (o.ignoreFile) args.push("--ignore-file", o.ignoreFile);
@@ -730,6 +834,17 @@ function finishGrepStream(
     hits,
     truncated: hits.length >= o.maxResults || Boolean(r.earlyExit),
     source,
+  };
+}
+
+function withRgCompatibility(result: ContentSearchResult, minimal: boolean): ContentSearchResult {
+  if (!minimal) return result;
+  return {
+    ...result,
+    diagnostics: [...(result.diagnostics ?? []), {
+      code: "rg-compatibility",
+      message: "Using an older rg compatibility mode without file-size or line-preview limits. Update rg on the workspace host for the standard search behavior.",
+    }],
   };
 }
 
@@ -774,7 +889,6 @@ async function tryRipgrepWslNative(
   if (!wsl) return null;
 
   const cacheKey = `wsl-native:${host.id}`;
-  if (rgCmdCache.get(cacheKey) === false) return null;
 
   let rgCmd: string | null;
   try {
@@ -785,7 +899,7 @@ async function tryRipgrepWslNative(
     rgCmd = "rg";
   }
   if (!rgCmd) {
-    rgCmdCache.set(cacheKey, false);
+    rgCmdCache.delete(cacheKey);
     return null;
   }
 
@@ -796,30 +910,23 @@ async function tryRipgrepWslNative(
     try {
       r = await wsl.runSearch(root, rgCmd, buildRgArgs(query, o, minimal, searchPaths), runOpts);
     } catch (err) {
-      if (err instanceof HostError && err.code === "timeout") {
-        // Slow tree, not a broken rg: keep native path enabled, return partial.
-        return {
-          root,
-          query,
-          hits: streamer.hits(),
-          truncated: true,
-          source: "rg",
-        };
-      }
-      return null;
+      if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) return null;
+      return searchFailure(root, query, streamer.hits(), "rg", err, o.signal);
     }
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
-    if (!minimal && r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
+    if (!minimal && r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
       continue;
     }
-    if (r.code === 0 || r.code === 1 || r.earlyExit) {
+    if (!grepFailed(r)) {
       rgCmdCache.set(cacheKey, rgCmd);
-      return finishGrepStream(root, query, r, o, streamer, "rg");
+      return withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), minimal);
     }
-    if (r.code === 127 || /not found|No such file/i.test(r.stderr)) {
-      rgCmdCache.set(cacheKey, false);
+    streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
+    if (commandMissing(r) && streamer.hits().length === 0) {
+      rgCmdCache.delete(cacheKey);
+      return null;
     }
-    return null;
+    return searchFailure(root, query, streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
   }
   return null;
 }
@@ -841,56 +948,37 @@ async function tryRipgrepWslUnc(
   if (!(host instanceof WslHostSession)) return null;
 
   const cacheKey = `wsl-unc:${host.id}`;
-  if (rgCmdCache.get(cacheKey) === false) return null;
 
   const rgCmd = resolveLocalRgPath() ?? "rg";
   let uncRoot: string;
   try {
     uncRoot = await host.toWindowsUnc(root);
-  } catch {
-    rgCmdCache.set(cacheKey, false);
-    return null;
+  } catch (err) {
+    return searchFailure(root, query, [], "rg", err, o.signal);
   }
 
   const runner = getWindowsRunner();
-
+  let stream = attachGrepStream(o, onHits, 20_000, shouldStop);
+  let minimal = false;
   try {
     onSource?.("rg");
-    let stream = attachGrepStream(o, onHits, 20_000, shouldStop);
-    let r = await runner.run(
-      uncRoot,
-      rgCmd,
-      buildRgArgs(query, o, false, searchPaths),
-      stream.runOpts,
-    );
-    if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
+    let r = await runner.run(uncRoot, rgCmd, buildRgArgs(query, o, false, searchPaths), stream.runOpts);
+    if (!r.aborted && r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
+      minimal = true;
       stream = attachGrepStream(o, onHits, 20_000, shouldStop);
-      r = await runner.run(
-        uncRoot,
-        rgCmd,
-        buildRgArgs(query, o, true, searchPaths),
-        stream.runOpts,
-      );
+      r = await runner.run(uncRoot, rgCmd, buildRgArgs(query, o, true, searchPaths), stream.runOpts);
     }
     if (r.aborted) return abortedResult(root, query, stream.streamer.hits(), "rg");
-    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
-      if (
-        /cannot find|ENOENT|not supported|network path/i.test(
-          r.stderr || r.stdout,
-        )
-      ) {
-        rgCmdCache.set(cacheKey, false);
-      }
-      return null;
+    if (grepFailed(r)) {
+      stream.streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
+      if (commandMissing(r) && stream.streamer.hits().length === 0) return null;
+      return searchFailure(root, query, stream.streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
     }
     rgCmdCache.set(cacheKey, rgCmd);
-    return finishGrepStream(root, query, r, o, stream.streamer, "rg");
+    return withRgCompatibility(finishGrepStream(root, query, r, o, stream.streamer, "rg"), minimal);
   } catch (err) {
-    // Timeouts are slowness, not unavailability.
-    if (!(err instanceof HostError && err.code === "timeout")) {
-      rgCmdCache.set(cacheKey, false);
-    }
-    return null;
+    if (!o.signal?.aborted && stream.streamer.hits().length === 0 && await spawnMissing(runner, uncRoot, err)) return null;
+    return searchFailure(root, query, stream.streamer.hits(), "rg", err, o.signal);
   }
 }
 
@@ -952,52 +1040,30 @@ async function runRipgrepOnce(
   const rgCmd = resolveRgCommand(host);
   if (!rgCmd) return null;
 
+  const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
   try {
     onSource?.("rg");
-    const { runOpts, streamer } = attachGrepStream(
-      o,
-      onHits,
-      15_000,
-      shouldStop,
-    );
-    const r = await host.run(
-      root,
-      rgCmd,
-      buildRgArgs(query, o, false, searchPaths),
-      runOpts,
-    );
+    const r = await host.run(root, rgCmd, buildRgArgs(query, o, false, searchPaths), runOpts);
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
-    // 0 match, 1 no match, 2 error — also accept if stderr only complains about unknown flags
-    if (r.code === 2 && /unrecognized|unknown/i.test(r.stderr)) {
-      return tryRipgrepMinimal(
-        host,
-        root,
-        query,
-        o,
-        rgCmd,
-        onHits,
-        onSource,
-        searchPaths,
-        shouldStop,
-      );
+    if (r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
+      return tryRipgrepMinimal(host, root, query, o, rgCmd, onHits, onSource, searchPaths, shouldStop);
     }
-    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
-      // Missing binary / hard failure
-      if (
-        r.code === 127 ||
-        /not found|ENOENT|is not recognized/i.test(r.stderr)
-      ) {
+    if (grepFailed(r)) {
+      streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
+      if (commandMissing(r) && streamer.hits().length === 0) {
         markRgUnavailable(host);
+        return null;
       }
-      return null;
+      return searchFailure(root, query, streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
     }
     markRgOk(host, rgCmd);
     return finishGrepStream(root, query, r, o, streamer, "rg");
   } catch (err) {
-    if (err instanceof HostError && err.code === "timeout") return null;
-    // spawn ENOENT etc.
-    markRgUnavailable(host);
-    return null;
+    if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) {
+      markRgUnavailable(host);
+      return null;
+    }
+    return searchFailure(root, query, streamer.hits(), "rg", err, o.signal);
   }
 }
 
@@ -1013,34 +1079,32 @@ async function tryRipgrepMinimal(
   searchPaths: string[] = ["."],
   shouldStop?: () => boolean,
 ): Promise<ContentSearchResult | null> {
+  const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
   try {
     onSource?.("rg");
-    const { runOpts, streamer } = attachGrepStream(
-      o,
-      onHits,
-      15_000,
-      shouldStop,
-    );
-    const r = await host.run(
-      root,
-      rgCmd,
-      buildRgArgs(query, o, true, searchPaths),
-      runOpts,
-    );
-    if (r.code !== 0 && r.code !== 1 && !r.earlyExit) {
+    const r = await host.run(root, rgCmd, buildRgArgs(query, o, true, searchPaths), runOpts);
+    if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
+    if (grepFailed(r)) {
+      streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
+      if (commandMissing(r) && streamer.hits().length === 0) {
+        markRgUnavailable(host);
+        return null;
+      }
+      return searchFailure(root, query, streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
+    }
+    markRgOk(host, rgCmd);
+    return withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), true);
+  } catch (err) {
+    if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) {
       markRgUnavailable(host);
       return null;
     }
-    markRgOk(host, rgCmd);
-    return finishGrepStream(root, query, r, o, streamer, "rg");
-  } catch {
-    markRgUnavailable(host);
-    return null;
+    return searchFailure(root, query, streamer.hits(), "rg", err, o.signal);
   }
 }
 
 function normalizeRgGlob(pattern: string): string {
-  let p = pattern
+  const p = pattern
     .replace(/\\/g, "/")
     .replace(/^\.\/+/, "")
     .replace(/^\/+/, "")
@@ -1078,6 +1142,10 @@ async function scanFiles(
   o: ReturnType<typeof normalizeOpts>,
   onHits?: (hits: ContentSearchHit[]) => void,
 ): Promise<ContentSearchResult> {
+  if (o.signal?.aborted) return abortedResult(root, query, [], "scan");
+  // File indexing has permissive fallbacks; first verify this workspace is reachable.
+  const rootStat = await host.stat(root);
+  if (!rootStat.isDir) throw new HostError("not_found", "Workspace folder is unavailable");
   const index = await findWorkspaceFiles(host, root, {
     maxFiles: SCAN_MAX_FILES,
   });
@@ -1104,21 +1172,30 @@ async function scanFiles(
     );
 
   const hits: ContentSearchHit[] = [];
-  let truncated = index.truncated;
+  // An index ceiling is incomplete coverage, not a pageable result count.
+  let truncated = false;
+  let oversized = 0;
+  let unreadable = 0;
+  let readError: unknown;
+  let disconnected = false;
   let next = 0;
   let skipped = 0;
   const skipNeed = o.skipHits;
 
   async function worker() {
     while (hits.length < o.maxResults) {
-      if (o.signal?.aborted) return;
+      if (o.signal?.aborted || disconnected) return;
       const i = next++;
       if (i >= candidates.length) return;
       const norm = candidates[i]!;
       const abs = hostJoin(host.kind, root, norm);
       try {
         const st = await host.stat(abs);
-        if (!st.isFile || st.size <= 0 || st.size > SCAN_MAX_FILE_BYTES) continue;
+        if (!st.isFile || st.size <= 0) continue;
+        if (st.size > SCAN_MAX_FILE_BYTES) {
+          oversized += 1;
+          continue;
+        }
         const text = await host.readFile(abs);
         // Quick reject whole file before splitting lines
         if (!o.useRegex) {
@@ -1154,8 +1231,10 @@ async function scanFiles(
           if (perFile >= 8) break;
         }
         if (fileBatch.length) onHits?.(fileBatch);
-      } catch {
-        // skip
+      } catch (err) {
+        unreadable += 1;
+        readError ??= err;
+        if (err instanceof HostError && err.code === "disconnected") disconnected = true;
       }
     }
     truncated = true;
@@ -1169,7 +1248,20 @@ async function scanFiles(
   hits.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 
   if (o.signal?.aborted) return abortedResult(root, query, hits, "scan");
-  return { root, query, hits, truncated, source: "scan" };
+  const diagnostics: NonNullable<ContentSearchResult["diagnostics"]> = [];
+  if (index.truncated) diagnostics.push({
+    code: "index-limit",
+    message: `The file index reached its file/depth limit; some folders were not searched. Narrow the workspace or install rg and retry.`,
+  });
+  if (oversized > 0) diagnostics.push({
+    code: "files-too-large",
+    message: `${oversized} indexed file${oversized === 1 ? " was" : "s were"} skipped because they exceed the scan limit of 256 KiB. Install rg or open these files directly.`,
+  });
+  if (unreadable > 0) {
+    const failure = searchFailure(root, query, hits, "scan", readError, o.signal);
+    diagnostics.push({ code: "unreadable-files", message: `${unreadable} indexed file${unreadable === 1 ? " could" : "s could"} not be read.` }, ...(failure.diagnostics ?? []));
+  }
+  return { root, query, hits, truncated, source: "scan", status: unreadable > 0 && hits.length === 0 ? "failed" : "partial", diagnostics };
 }
 
 function isProbablyBinaryPath(rel: string): boolean {

@@ -1,0 +1,39 @@
+.files-search-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.files-search-summary__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-search-summary__engine {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.files-search-diagnostics {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow: auto;
+  margin: 4px 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.files-search-diagnostics summary {
+  cursor: pointer;
+}
+
+.files-search-diagnostics ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}

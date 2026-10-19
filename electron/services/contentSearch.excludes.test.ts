@@ -80,6 +80,9 @@ describe("searchWorkspaceContent excludes + cancel (local rg)", () => {
     expect(paths(r)).toEqual(["src/a.ts"]);
     const off = await searchWorkspaceContent(host, tmp, "needle", { useAnchorIgnore: false });
     expect(paths(off)).toContain("generated/g.ts");
+    const ignoreRulesOff = await searchWorkspaceContent(host, tmp, "needle", { respectIgnore: false });
+    expect(paths(ignoreRulesOff)).not.toContain("generated/g.ts");
+    expect(ignoreRulesOff.diagnostics?.find((d) => d.code === "anchorignore")?.message).toContain("even when the ignore-rules checkbox is off");
   });
 
   it("custom default excludes replace built-ins", async () => {
@@ -156,7 +159,9 @@ describe("WSL native search (mocked host)", () => {
       return { stdout: "a.ts:2:x\n", stderr: "", code: 0 };
     });
     const first = await searchWorkspaceContent(host, "/repo", "xx");
-    expect(first.truncated).toBe(true);
+    expect(first.status).toBe("failed");
+    expect(first.truncated).toBe(false); // timeout is incomplete coverage, not pagination
+    expect(first.diagnostics?.some((d) => d.code === "timeout")).toBe(true);
     const second = await searchWorkspaceContent(host, "/repo", "xx");
     expect(second.hits).toHaveLength(1);
     expect(calls).toHaveLength(2);

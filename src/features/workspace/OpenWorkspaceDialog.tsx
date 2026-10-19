@@ -465,14 +465,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
 
           {kind === "ssh" ? (
             <>
-              <ol className="workspace-dialog__steps" aria-label="SSH workspace steps">
-                <li className={!connectedSshProfileId ? "is-current" : "is-complete"} aria-current={!connectedSshProfileId ? "step" : undefined}>
-                  <span aria-hidden="true">{connectedSshProfileId ? <Icon name="check" /> : "1"}</span>Connection
-                </li>
-                <li className={connectedSshProfileId ? "is-current" : ""} aria-current={connectedSshProfileId ? "step" : undefined}>
-                  <span aria-hidden="true">2</span>Folder
-                </li>
-              </ol>
               {connectedSshProfileId ? (
                 <div className="workspace-dialog__connected">
                   <Icon name="remote" />

@@ -122,58 +122,6 @@
   line-height: 1.2;
 }
 
-.workspace-dialog__steps {
-  display: flex;
-  list-style: none;
-  align-items: center;
-  gap: 18px;
-  margin: 0;
-  padding: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.workspace-dialog__steps li {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.workspace-dialog__steps li + li::before {
-  content: "";
-  width: 32px;
-  height: 1px;
-  background: var(--border-strong);
-  margin-right: 10px;
-}
-
-.workspace-dialog__steps li > span {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  font-size: 11px;
-}
-
-.workspace-dialog__steps .is-current {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.workspace-dialog__steps .is-current > span {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-border-strong);
-}
-
-.workspace-dialog__steps .is-complete > span {
-  color: var(--ok);
-  border-color: var(--ok-border);
-  background: var(--ok-bg);
-}
-
 .workspace-dialog__connection,
 .workspace-dialog__folder {
   display: flex;
@@ -293,6 +241,8 @@
   display: grid;
   gap: 10px;
   padding-top: 10px;
+  /* Match ordinary form inputs instead of inheriting the smaller details text. */
+  font-size: 13px;
 }
 
 .workspace-dialog__connected {

@@ -277,12 +277,16 @@ describe("SSH workspace connections", () => {
   it("defaults to discovered aliases and only connects on request", async () => {
     const onOpen = vi.fn();
     const user = await showSsh(onOpen);
+    expect(screen.getByRole("heading", { name: "Connect to a host" })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "SSH workspace steps" })).toBeNull();
     expect(screen.queryByLabelText("Username")).toBeNull();
     expect(anchor.host.upsertProfile).not.toHaveBeenCalled();
     expect(anchor.host.browseListDir).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Open Workspace" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "Choose a folder" })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "SSH workspace steps" })).toBeNull();
     expect(anchor.host.upsertProfile).toHaveBeenCalledWith({ id: "ssh-config-work", kind: "ssh", label: "work", ssh: { configHost: "work" } });
     await user.click(screen.getByText("project"));
     await waitFor(() => expect(anchor.host.browseListDir).toHaveBeenLastCalledWith(expect.objectContaining({ path: "/project" })));
@@ -673,5 +677,11 @@ describe("workspace dialog layout contracts", () => {
     expect(noDrag["-webkit-app-region"]).toBe("no-drag");
     expect(styleFor(".workspace-dialog__close").flex).toBe("0 0 30px");
     expect(styleFor(".workspace-dialog__close > .codicon")["pointer-events"]).toBe("none");
+  });
+
+  it("keeps advanced fields at the normal input size and removes decorative step styling", () => {
+    expect(styleFor(".workspace-dialog__advanced-fields")["font-size"]).toBe("13px");
+    expect(styleFor(".workspace-dialog__advanced-fields")["font-family"]).toBeUndefined();
+    expect(dialogCss).not.toContain("workspace-dialog__steps");
   });
 });

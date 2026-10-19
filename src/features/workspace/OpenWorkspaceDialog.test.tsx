@@ -684,4 +684,17 @@ describe("workspace dialog layout contracts", () => {
     expect(styleFor(".workspace-dialog__advanced-fields")["font-family"]).toBeUndefined();
     expect(dialogCss).not.toContain("workspace-dialog__steps");
   });
+
+  it("gives the secondary connection controls smaller text with comfortable padding", () => {
+    for (const selector of [".workspace-dialog__modes > .btn", ".workspace-dialog__connected > .btn"]) {
+      const button = styleFor(selector);
+      expect(button["font-size"]).toBe("11px");
+      expect(button["font-weight"]).toBe("400");
+      expect(button.height).toBe("28px");
+      expect(button.padding).toBe("0 10px");
+      expect(button["font-family"]).toBeUndefined();
+      expect(button.color).toBeUndefined();
+      expect(button.opacity).toBeUndefined();
+    }
+  });
 });

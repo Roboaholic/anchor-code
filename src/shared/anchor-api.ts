@@ -74,9 +74,10 @@ export interface HostProfile {
   kind: HostKind;
   label?: string;
   ssh?: {
-    host: string;
+    configHost?: string;
+    host?: string;
     port?: number;
-    username: string;
+    username?: string;
     privateKeyPath?: string;
     password?: string;
     knownHostsPolicy?: "accept-new" | "strict" | "ignore";
@@ -450,6 +451,7 @@ export interface AnchorApi {
   host: {
     getInfo: () => Promise<HostInfo>;
     listProfiles: () => Promise<HostProfile[]>;
+    listSshConfigHosts: () => Promise<{ hosts: { alias: string; source: string }[]; warnings: string[] }>;
     listWslDistros: () => Promise<string[]>;
     wslHome: (args?: { distro?: string }) => Promise<string>;
     browseListDir: (args: {

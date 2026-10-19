@@ -1,6 +1,8 @@
 import type { HostKind, HostSession } from "./types.js";
 import { HostError } from "./types.js";
 import { LocalHostSession } from "./localHost.js";
+import { OpenSshHostSession } from "./openSshHost.js";
+import { isSshConfigAlias } from "./sshConfig.js";
 import { SshHostSession } from "./sshHost.js";
 import { WslHostSession, listWslDistros } from "./wslHost.js";
 import type { HostProfile } from "../settings.js";
@@ -10,6 +12,7 @@ import type { HostProfile } from "../settings.js";
  */
 export class HostManager {
   private active: HostSession;
+  private activeProfileConfig: string | undefined;
 
   constructor(initial?: HostSession) {
     this.active = initial ?? new LocalHostSession();
@@ -34,13 +37,15 @@ export class HostManager {
   async useProfile(profile: HostProfile): Promise<HostSession> {
     if (
       this.active.profileId === profile.id &&
-      this.active.kind === profile.kind
+      this.active.kind === profile.kind &&
+      (profile.kind !== "ssh" || this.activeProfileConfig === JSON.stringify(profile.ssh))
     ) {
       return this.active;
     }
     const next = createHostForProfile(profile);
     const prev = this.active;
     this.active = next;
+    this.activeProfileConfig = JSON.stringify(profile.ssh);
     try {
       await prev.dispose();
     } catch (err) {
@@ -77,6 +82,10 @@ export function createHostForProfile(profile: HostProfile): HostSession {
       });
     }
     case "ssh": {
+      if (profile.ssh?.configHost) {
+        if (!isSshConfigAlias(profile.ssh.configHost)) throw new HostError("failed", "Invalid SSH config host alias");
+        return new OpenSshHostSession({ profileId: profile.id, configHost: profile.ssh.configHost });
+      }
       if (!profile.ssh?.host || !profile.ssh?.username) {
         throw new HostError(
           "failed",

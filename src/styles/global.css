@@ -6179,6 +6179,12 @@ select.field__input {
   grid-column: 3;
 }
 
+.modal__body--ssh .field--ssh-full,
+.modal__body--ssh .modal__hint {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
 .modal__body--ssh .field--grow {
   grid-column: 1 / -1;
   min-height: 150px;

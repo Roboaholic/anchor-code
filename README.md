@@ -95,6 +95,16 @@ Content search streams matches as ripgrep finds them. Search and quick open both
 | **WSL** (Windows) | Inside a WSL distro | Uses a helper process inside WSL for fast search and Git. |
 | **SSH** | A remote host over SSH | Requires `git` on the remote host. |
 
+### SSH connections
+
+The SSH workspace picker starts with named hosts from this computer’s `~/.ssh/config` and its `Include` files. Select or type an alias, then click **Connect**. The system OpenSSH client resolves the configuration at connection time, preserving jump hosts, proxy commands, keys and agent settings. Only use SSH configuration you trust: directives such as `ProxyCommand` and `Match exec` can execute local commands. Anchor Code does not edit your SSH config.
+
+Config connections require an installed OpenSSH client and non-interactive key/agent authentication (`BatchMode=yes`). Load encrypted keys into `ssh-agent` first. **Add / manual connection** remains available for direct hosts and session-only passwords; it does not import OpenSSH proxy or other config settings. Remote workspaces require a POSIX/Linux environment with a shell, standard file utilities and `git`.
+
+Host keys are checked before authentication. Config connections require an already trusted key: connect with `ssh your-alias` in a terminal, compare the fingerprint with a trusted source, then retry in Anchor Code. Never accept or replace a changed key without investigating. Manual connections default to strict checking of local `known_hosts`; an explicit **Trust first key automatically** option records previously unknown keys but still rejects changed keys. Legacy “ignore” profiles now use strict checking. Previously saved passwords are ignored and removed from settings on the next save; re-enter them for the current app session.
+
+Config operations use separate SSH processes with connection sharing disabled so a pre-existing multiplexed connection cannot bypass host-key checks. Forwarding and login prompts are disabled for workspace operations; interactive password/passphrase prompts are not supported on this path. Cancelling or timing out closes the local SSH connection, but remote non-interactive commands may continue running.
+
 Anchor Code reopens the last active workspace on launch (toggle in **Settings → Appearance → Startup**) and falls back to the Welcome page if it is unavailable.
 
 **Supported agent CLIs:** Claude Code, Codex, Gemini CLI, Grok, OMP, Pi, Aider, Goose, Cursor Agent, and custom profiles.

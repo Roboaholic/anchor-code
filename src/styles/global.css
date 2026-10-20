@@ -4104,16 +4104,7 @@ body.terminal-session-rail-resizing {
   animation: topbar-update-spin 0.9s linear infinite;
 }
 
-.repo-row__count {
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
 
-.repo-row__count.is-muted {
-  color: var(--text-muted);
-  font-weight: 400;
-}
 
 /* Nested sections */
 .repo-row__body {
@@ -8040,44 +8031,11 @@ input[type="radio"] {
   overflow: hidden;
 }
 
-/* Status counts as pills, matching the branch chip. */
 .repo-row__meta {
   gap: 3px;
 }
 .repo-branch__btn {
   border-radius: 4px;
-}
-.repo-row__count {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--bg-muted) 55%, transparent);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--text-secondary);
-}
-.repo-row__count.is-muted {
-  color: var(--text-muted);
-}
-.repo-row__count--modified {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-}
-.repo-row__count--added,
-.repo-row__count--untracked {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-}
-.repo-row__count--deleted {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
-.repo-row__count--ahead {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 /* ── Selection toolbar (comment + ask) ─────────────────────────────── */
@@ -8152,50 +8110,257 @@ input[type="radio"] {
   background: color-mix(in srgb, var(--accent) 17%, var(--bg-panel));
 }
 
-/* ── History: Changes heading stays readable in narrow sidebars ──
-   The title + count pill keep their natural width; when the sidebar is too
-   narrow for the All / Tracked / Commit actions they wrap onto a second row
-   instead of squeezing the title down to a few characters. */
-.repo-block__head {
-  flex-wrap: wrap;
+/* ── History repo rows: two-line layout ──────────────────────────────
+   Line 1: chevron · name (ellipsis) · one "M" changes badge (right).
+   Line 2 (indented under the name): branch (ellipsis), then ↑ahead ↓behind
+   and refresh (expanded only) on the right edge. Nothing wraps; the name and
+   branch absorb the squeeze. */
+.repo-row__header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   height: auto;
-  max-height: none;
-  min-height: 24px;
-  row-gap: 3px;
-  padding-top: 3px;
-  padding-bottom: 3px;
+  min-height: 0;
+  padding: 3px 4px 4px 2px;
+}
+.repo-row__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.repo-row__line--main {
+  height: 20px;
+}
+.repo-row__line--main .repo-row__expand {
+  height: 20px;
+}
+.repo-row__line--branch {
+  height: 18px;
+  /* chevron (14) + gap (6) + expand padding (2): branch icon sits under the name */
+  padding-left: 17px;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+/* Branch takes the remaining width (ellipsis); ↑/↓ and refresh sit at the
+   far right, sharing the right edge with the M badge on line 1. */
+.repo-row__line--branch .repo-branch {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  display: flex;
+}
+.repo-row__line--branch .repo-branch__btn {
+  height: 18px;
+  padding: 0 4px 0 3px;
+  gap: 4px;
+  background: transparent;
+  border-color: transparent;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.repo-row__line--branch .repo-branch__btn:hover:not(:disabled),
+.repo-row__line--branch .repo-branch__btn.is-open {
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.repo-row__line--branch .repo-branch__icon {
+  font-size: 11px !important;
+  width: 11px;
+  height: 11px;
+  line-height: 11px;
+}
+.repo-row__sync {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.repo-row__sync--ahead {
+  color: var(--accent);
+}
+.repo-row__sync--behind {
+  color: var(--warn);
+}
+.repo-row__line--branch .repo-row__refresh {
+  flex: 0 0 auto;
+  margin-left: 0;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  padding: 0;
+  font-size: 12px;
+}
+.repo-row__line--branch .repo-row__refresh .codicon {
+  font-size: 12px;
+}
+
+/* Repo changes badge: fixed square; the breakdown lives in the tooltip. */
+.repo-row__meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+.repo-row__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  cursor: default;
+}
+.repo-row__badge--modified {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+/* ── Repo body sections: one-line headers on the same grid as the rows ──
+   Column A (section chevrons) lines up with the repo chevron; column B
+   (section titles, file checkboxes) lines up with the repo name. */
+.repo-block__head {
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 0 4px 0 3px;
 }
 .repo-block__toggle {
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 100%;
+  gap: 6px;
+}
+.repo-block__toggle > .codicon {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 .repo-block__title {
   flex: 0 1 auto;
+  letter-spacing: 0.02em;
+}
+.repo-block__body,
+.repo-block__hint {
+  padding-left: 21px;
+  padding-right: 8px;
 }
 .repo-block__count {
   flex: 0 0 auto;
+  margin-left: -2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
   min-width: 16px;
   height: 15px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
-  letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--text);
   background: color-mix(in srgb, var(--text-muted) 22%, transparent);
 }
-.repo-block__head-actions {
+.repo-seg {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: stretch;
+  height: 18px;
+  margin-left: auto;
+  padding: 1px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
+}
+.repo-seg__btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.repo-seg__btn:hover {
+  color: var(--text);
+}
+.repo-seg__btn.is-active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.repo-seg__btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent-border-strong);
+}
+:root:not([data-theme="dark-modern"]) .repo-seg__btn.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+}
+.repo-block__body .btn.repo-commit__open {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  height: 24px;
+  margin: 6px 0 4px;
+  font-size: 11px;
+}
+.repo-block__body .repo-commit {
+  margin: 6px 0 4px;
+}
+.repo-block__body .repo-commit {
+  gap: 6px;
+  padding: 6px;
+}
+.repo-commit__actions {
   flex-wrap: wrap;
   justify-content: flex-end;
-  row-gap: 3px;
-  height: auto;
-  min-height: 18px;
-  max-width: 100%;
+  gap: 4px 6px;
+}
+.repo-commit__actions .repo-commit__hint {
+  flex: 1 0 100%;
+  min-width: 0;
+  line-height: 1.3;
+}
+.repo-commit__actions .btn {
+  flex: 1 1 0;
+  justify-content: center;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+/* Narrowest sidebar: tighten the segmented toggle so "CHANGES" stays whole. */
+.repo-row__body {
+  container-type: inline-size;
+  container-name: repo-body;
+}
+@container repo-body (max-width: 200px) {
+  .repo-seg__btn {
+    padding: 0 3px;
+    font-size: 9.5px;
+  }
+  .repo-block__title {
+    letter-spacing: 0;
+  }
 }

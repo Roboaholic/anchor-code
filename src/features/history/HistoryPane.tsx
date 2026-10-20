@@ -183,6 +183,28 @@ export function HistoryPane() {
   );
 }
 
+/** Repo-level change parts, in tooltip order. */
+const CHANGE_PARTS = [
+  { key: "modified", label: "modified" },
+  { key: "added", label: "added" },
+  { key: "deleted", label: "deleted" },
+  { key: "untracked", label: "untracked" },
+] as const;
+
+/** Tooltip for the single repo "M" badge, e.g. "Changes: 14 modified, 2 deleted". */
+function changesSummary(card: RepoCardState): string {
+  const parts = CHANGE_PARTS.flatMap(({ key, label }) => {
+    const n = card.status?.[key] ?? 0;
+    return n > 0 ? [`${n} ${label}`] : [];
+  });
+  return `Changes: ${parts.join(", ")}`;
+}
+
+/** Git reports untracked files as "?"; the UI shows them as "U". */
+function displayStatus(status: string): string {
+  return status === "?" ? "U" : status;
+}
+
 function dirtyCount(card: RepoCardState): number {
   return (
     (card.status?.modified ?? 0) +
@@ -289,105 +311,80 @@ function RepoCard({
   return (
     <div className={`repo-row${card.expanded ? " is-expanded" : ""}`}>
       <div className="repo-row__header">
-        <button
-          type="button"
-          className="repo-row__expand"
-          onClick={() => toggleExpanded(card.root)}
-          aria-expanded={card.expanded}
-          title={card.root}
-        >
-          <Icon
-            name={card.expanded ? "chevron-down" : "chevron-right"}
-            className="repo-row__chevron"
-          />
-          <span className="repo-row__name" title={card.root}>
-            {card.name}
+        <div className="repo-row__line repo-row__line--main">
+          <button
+            type="button"
+            className="repo-row__expand"
+            onClick={() => toggleExpanded(card.root)}
+            aria-expanded={card.expanded}
+            title={card.root}
+          >
+            <Icon
+              name={card.expanded ? "chevron-down" : "chevron-right"}
+              className="repo-row__chevron"
+            />
+            <span className="repo-row__name">{card.name}</span>
+          </button>
+          <span className="repo-row__meta">
+            {card.status && dirty > 0
+              ? (
+                  <span
+                    className="repo-row__badge repo-row__badge--modified"
+                    title={changesSummary(card)}
+                    aria-label={changesSummary(card)}
+                  >
+                    M
+                  </span>
+                )
+              : null}
+            {card.statusState === "loading" ? (
+              <span className="repo-row__badge is-muted" title="Refreshing…">
+                …
+              </span>
+            ) : null}
+            {card.statusState === "error" ? (
+              <span
+                className="repo-row__badge is-muted"
+                title={card.statusError ?? "Status failed"}
+                aria-label={card.statusError ?? "Status failed"}
+              >
+                !
+              </span>
+            ) : null}
           </span>
-        </button>
-        <BranchSwitcher card={card} branchLabel={branchLabel} />
-        <span className="repo-row__meta">
-          {card.statusState === "error" && !card.status ? (
+        </div>
+        <div className="repo-row__line repo-row__line--branch">
+          <BranchSwitcher card={card} branchLabel={branchLabel} />
+          {(card.status?.ahead ?? 0) > 0 ? (
             <span
-              className="repo-row__count is-muted"
-              title={card.statusError ?? "Status failed"}
+              className="repo-row__sync repo-row__sync--ahead"
+              title={`Ahead of base (upstream / origin default): ${card.status?.ahead}`}
             >
-              err
+              ↑{card.status?.ahead}
             </span>
-          ) : card.status ? (
-            <>
-              {dirty > 0 ? (
-                <>
-                  {(card.status.modified ?? 0) > 0 ? (
-                    <span className="repo-row__count repo-row__count--modified" title="Modified">
-                      M{card.status.modified}
-                    </span>
-                  ) : null}
-                  {(card.status.added ?? 0) > 0 ? (
-                    <span className="repo-row__count repo-row__count--added" title="Added">
-                      A{card.status.added}
-                    </span>
-                  ) : null}
-                  {(card.status.deleted ?? 0) > 0 ? (
-                    <span className="repo-row__count repo-row__count--deleted" title="Deleted">
-                      D{card.status.deleted}
-                    </span>
-                  ) : null}
-                  {(card.status.untracked ?? 0) > 0 ? (
-                    <span className="repo-row__count repo-row__count--untracked" title="Untracked">
-                      ?{card.status.untracked}
-                    </span>
-                  ) : null}
-                </>
-              ) : null}
-              {(card.status.ahead ?? 0) > 0 ? (
-                <span
-                  className="repo-row__count repo-row__count--ahead"
-                  title="Commits ahead of base (upstream / origin default)"
-                >
-                  ↑{card.status.ahead}
-                </span>
-              ) : null}
-              {(card.status.behind ?? 0) > 0 ? (
-                <span
-                  className="repo-row__count is-muted"
-                  title="Commits behind base (upstream / origin default)"
-                >
-                  ↓{card.status.behind}
-                </span>
-              ) : null}
-              {card.statusState === "loading" ? (
-                <span className="repo-row__count is-muted" title="Refreshing…">
-                  …
-                </span>
-              ) : null}
-              {card.statusState === "error" && card.statusError ? (
-                <span
-                  className="repo-row__count is-muted"
-                  title={card.statusError}
-                >
-                  err
-                </span>
-              ) : null}
-            </>
-          ) : card.statusState === "loading" ? (
-            <span className="repo-row__count is-muted">…</span>
           ) : null}
-        </span>
-        <button
-          type="button"
-          className={`icon-btn repo-row__refresh${refreshing ? " is-spinning" : ""}`}
-          disabled={refreshing}
-          aria-busy={refreshing}
-          onClick={(e) => {
-            // Header row toggles collapse; refresh must not.
-            e.stopPropagation();
-            void refreshRepo(card.root);
-          }}
-          title="Refresh"
-          aria-label="Refresh"
-        >
-          <Icon name="refresh" />
-        </button>
+          {(card.status?.behind ?? 0) > 0 ? (
+            <span
+              className="repo-row__sync repo-row__sync--behind"
+              title={`Behind base (upstream / origin default): ${card.status?.behind}`}
+            >
+              ↓{card.status?.behind}
+            </span>
+          ) : null}
+          {card.expanded ? (
+            <button
+              type="button"
+              className={`icon-btn repo-row__refresh${refreshing ? " is-spinning" : ""}`}
+              disabled={refreshing}
+              aria-busy={refreshing}
+              onClick={() => void refreshRepo(card.root)}
+              title="Refresh"
+              aria-label="Refresh"
+            >
+              <Icon name="refresh" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {card.expanded ? (
@@ -414,43 +411,30 @@ function RepoCard({
                   </span>
                 ) : null}
               </button>
-              {card.changesOpen ? (
-                <div className="repo-block__head-actions">
-                  {entries.length > 0 ? (
-                    <>
-                      <button
-                        type="button"
-                        className="btn btn--ghost btn--small"
-                        onClick={toggleAll}
-                        title={
-                          allSelected
-                            ? "Deselect all files"
-                            : "Select all files"
-                        }
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn--ghost btn--small"
-                        onClick={selectTracked}
-                        title="Select only tracked changes (exclude untracked)"
-                      >
-                        Tracked
-                      </button>
-                    </>
-                  ) : null}
-                  {dirty > 0 ? (
-                    <button
-                      type="button"
-                      className="btn btn--accent btn--small"
-                      disabled={card.committing}
-                      onClick={() => setCommitOpen((v) => !v)}
-                      title="Commit selected files"
-                    >
-                      {commitOpen ? "Cancel" : "Commit"}
-                    </button>
-                  ) : null}
+              {card.changesOpen && entries.length > 0 ? (
+                <div
+                  className="repo-seg"
+                  role="group"
+                  aria-label="Select files to commit"
+                >
+                  <button
+                    type="button"
+                    className={`repo-seg__btn${allSelected ? " is-active" : ""}`}
+                    aria-pressed={allSelected}
+                    onClick={toggleAll}
+                    title={allSelected ? "Deselect all files" : "Select all files"}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className={`repo-seg__btn${trackedOnly && !allSelected ? " is-active" : ""}`}
+                    aria-pressed={trackedOnly && !allSelected}
+                    onClick={selectTracked}
+                    title="Select only tracked changes (M / A / D), excluding untracked (U)"
+                  >
+                    Tracked
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -461,50 +445,6 @@ function RepoCard({
                 ) : null}
                 {card.statusState === "loading" ? (
                   <p className="pane-hint">Loading status…</p>
-                ) : null}
-                {commitOpen && dirty > 0 ? (
-                  <form
-                    className="repo-commit"
-                    onSubmit={(e) => void onCommitSubmit(e)}
-                  >
-                    <textarea
-                      className="repo-commit__input"
-                      value={commitMessage}
-                      onChange={(e) => setCommitMessage(e.target.value)}
-                      placeholder="Commit message"
-                      rows={3}
-                      disabled={card.committing}
-                      autoFocus
-                      onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-                        if (
-                          (e.ctrlKey || e.metaKey) &&
-                          e.key === "Enter" &&
-                          commitMessage.trim()
-                        ) {
-                          e.preventDefault();
-                          void onCommitSubmit();
-                        }
-                      }}
-                    />
-                    <div className="repo-commit__actions">
-                      <span className="repo-commit__hint">
-                        {noneSelected
-                          ? "No files selected"
-                          : `Stages ${selectedPaths.size} of ${entries.length} files · Ctrl+Enter`}
-                      </span>
-                      <button
-                        type="submit"
-                        className="btn btn--accent btn--small"
-                        disabled={
-                          card.committing ||
-                          !commitMessage.trim() ||
-                          noneSelected
-                        }
-                      >
-                        {card.committing ? "Committing…" : "Commit"}
-                      </button>
-                    </div>
-                  </form>
                 ) : null}
                 {entries.length > 0 ? (
                   <ul className="wt-list">
@@ -543,7 +483,7 @@ function RepoCard({
                             );
                           }}
                         >
-                          <span className="wt-row__status">{e.status}</span>
+                          <span className="wt-row__status">{displayStatus(e.status)}</span>
                           <span className="wt-row__path">{e.path}</span>
                         </button>
                       </li>
@@ -552,6 +492,70 @@ function RepoCard({
                   </ul>
                 ) : card.status && dirty === 0 && card.statusState !== "loading" ? (
                   <p className="pane-hint">No local changes.</p>
+                ) : null}
+                {dirty > 0 && commitOpen ? (
+                  <form
+                    className="repo-commit"
+                    onSubmit={(e) => void onCommitSubmit(e)}
+                  >
+                    <textarea
+                      className="repo-commit__input"
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      placeholder="Commit message"
+                      rows={3}
+                      disabled={card.committing}
+                      autoFocus
+                      onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                        if (
+                          (e.ctrlKey || e.metaKey) &&
+                          e.key === "Enter" &&
+                          commitMessage.trim()
+                        ) {
+                          e.preventDefault();
+                          void onCommitSubmit();
+                        }
+                      }}
+                    />
+                    <div className="repo-commit__actions">
+                      <span className="repo-commit__hint">
+                        {noneSelected
+                          ? "No files selected"
+                          : `Stages ${selectedPaths.size} of ${entries.length} files · Ctrl+Enter`}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--small"
+                        disabled={card.committing}
+                        onClick={() => setCommitOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn--accent btn--small"
+                        disabled={
+                          card.committing ||
+                          !commitMessage.trim() ||
+                          noneSelected
+                        }
+                      >
+                        {card.committing ? "Committing…" : "Commit"}
+                      </button>
+                    </div>
+                  </form>
+                ) : dirty > 0 ? (
+                  <button
+                    type="button"
+                    className="btn btn--accent btn--small repo-commit__open"
+                    disabled={card.committing || noneSelected}
+                    onClick={() => setCommitOpen(true)}
+                    title="Commit selected files"
+                  >
+                    {noneSelected
+                      ? "Commit"
+                      : `Commit ${selectedPaths.size} file${selectedPaths.size === 1 ? "" : "s"}`}
+                  </button>
                 ) : null}
               </div>
             ) : null}

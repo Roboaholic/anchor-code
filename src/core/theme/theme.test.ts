@@ -6,6 +6,7 @@ import {
   isDarkTheme,
   monacoThemeId,
   normalizeFontSize,
+  normalizeLineHeight,
   normalizeUiScale,
   normalizeTheme,
   xtermThemeFromCss,
@@ -35,9 +36,21 @@ describe("normalizeFontSize", () => {
     expect(normalizeFontSize(undefined)).toBe(13);
   });
 
-  it("scales monaco line height with font size", () => {
+  it("scales monaco line height with font size and multiplier", () => {
     expect(editorLineHeight(13)).toBe(20);
-    expect(editorLineHeight(16)).toBe(25);
+    expect(editorLineHeight(16)).toBe(24);
+    expect(editorLineHeight(13, 1.2)).toBe(16);
+    expect(editorLineHeight(13, 2)).toBe(26);
+  });
+});
+
+describe("normalizeLineHeight", () => {
+  it("clamps and steps to 0.1", () => {
+    expect(normalizeLineHeight(1.5)).toBe(1.5);
+    expect(normalizeLineHeight("1.55")).toBe(1.6);
+    expect(normalizeLineHeight(1)).toBe(1.2);
+    expect(normalizeLineHeight(3)).toBe(2);
+    expect(normalizeLineHeight(undefined)).toBe(1.5);
   });
 });
 

@@ -105,6 +105,16 @@ export interface AppSettings {
      * Default 13. Clamped 11–20.
      */
     fontSize?: number;
+    /**
+     * CSS font-family stack for editor / diff / terminal.
+     * Default matches EDITOR_FONT_FAMILY in the renderer.
+     */
+    editorFontFamily?: string;
+    /**
+     * Monaco line-height multiplier (fontSize × value).
+     * Default 1.5. Clamped 1.2–2.0 in 0.1 steps.
+     */
+    lineHeight?: number;
     /** Whole-workbench zoom percentage. Default 100. Clamped 80–150. */
     uiScale?: number;
     /** Reopen the last active workspace on launch. Default true. */
@@ -478,6 +488,57 @@ export async function setFontSize(fontSize: number): Promise<number> {
   const settings = await loadSettings();
   const next = normalizeFontSize(fontSize);
   settings.ui = { ...settings.ui, fontSize: next };
+  await saveSettings(settings);
+  return next;
+}
+
+const DEFAULT_EDITOR_FONT_FAMILY =
+  "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, 'Courier New', monospace";
+
+export function normalizeEditorFontFamily(value: unknown): string {
+  if (typeof value !== "string") return DEFAULT_EDITOR_FONT_FAMILY;
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_EDITOR_FONT_FAMILY;
+}
+
+export async function getEditorFontFamily(): Promise<string> {
+  const settings = await loadSettings();
+  return normalizeEditorFontFamily(settings.ui?.editorFontFamily);
+}
+
+export async function setEditorFontFamily(fontFamily: string): Promise<string> {
+  const settings = await loadSettings();
+  const next = normalizeEditorFontFamily(fontFamily);
+  settings.ui = { ...settings.ui, editorFontFamily: next };
+  await saveSettings(settings);
+  return next;
+}
+
+export const DEFAULT_LINE_HEIGHT = 1.5;
+export const MIN_LINE_HEIGHT = 1.2;
+export const MAX_LINE_HEIGHT = 2.0;
+
+export function normalizeLineHeight(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_LINE_HEIGHT;
+  const stepped = Math.round(n * 10) / 10;
+  return Math.min(MAX_LINE_HEIGHT, Math.max(MIN_LINE_HEIGHT, stepped));
+}
+
+export async function getLineHeight(): Promise<number> {
+  const settings = await loadSettings();
+  return normalizeLineHeight(settings.ui?.lineHeight);
+}
+
+export async function setLineHeight(lineHeight: number): Promise<number> {
+  const settings = await loadSettings();
+  const next = normalizeLineHeight(lineHeight);
+  settings.ui = { ...settings.ui, lineHeight: next };
   await saveSettings(settings);
   return next;
 }

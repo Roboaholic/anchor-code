@@ -29,7 +29,6 @@ import { useThemeStore } from "@/features/shell/themeStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
   accentHex,
-  EDITOR_FONT_FAMILY,
   editorLineHeight,
   monacoThemeId,
 } from "@/core/theme/theme";
@@ -225,7 +224,9 @@ function findSpecsAt(
 export function DiffViewer({ item }: { item: DiffItem }) {
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useThemeStore((s) => s.fontSize);
-  const lineHeight = editorLineHeight(fontSize);
+  const editorFontFamily = useThemeStore((s) => s.editorFontFamily);
+  const lineHeightMul = useThemeStore((s) => s.lineHeight);
+  const lineHeight = editorLineHeight(fontSize, lineHeightMul);
   const setDiffActiveFile = useDocumentStore((s) => s.setDiffActiveFile);
   const decorationsFor = useAnnotationsStore((s) => s.decorationsFor);
   const activeSession = useAnnotationsStore((s) => s.activeSession);
@@ -1268,7 +1269,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   minimap: { enabled: false },
                   fontSize,
                   lineHeight,
-                  fontFamily: EDITOR_FONT_FAMILY,
+                  fontFamily: editorFontFamily,
                   automaticLayout: true,
                   scrollBeyondLastLine: false,
                   wordWrap: "on",

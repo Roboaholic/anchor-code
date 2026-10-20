@@ -1,6 +1,5 @@
 import {
   accentHex,
-  EDITOR_FONT_FAMILY,
   editorLineHeight,
   monacoThemeId,
 } from "@/core/theme/theme";
@@ -220,10 +219,12 @@ export function CodeViewer({
 }) {
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useThemeStore((s) => s.fontSize);
+  const editorFontFamily = useThemeStore((s) => s.editorFontFamily);
+  const lineHeightMul = useThemeStore((s) => s.lineHeight);
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const copyPathRef = useRef({ workspaceRoot, path });
   copyPathRef.current = { workspaceRoot, path };
-  const lineHeight = editorLineHeight(fontSize);
+  const lineHeight = editorLineHeight(fontSize, lineHeightMul);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef =
     useRef<MonacoEditor.IEditorDecorationsCollection | null>(null);
@@ -920,7 +921,7 @@ export function CodeViewer({
             minimap: { enabled: false },
             fontSize,
             lineHeight,
-            fontFamily: EDITOR_FONT_FAMILY,
+            fontFamily: editorFontFamily,
             scrollBeyondLastLine: false,
             wordWrap: "on",
             // No current-line flash on single click; double-click still selects word.

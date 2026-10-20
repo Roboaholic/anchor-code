@@ -721,6 +721,10 @@ export interface AnchorApi {
     setRestoreLastWorkspace: (enabled: boolean) => Promise<boolean>;
     getFontSize: () => Promise<number>;
     setFontSize: (fontSize: number) => Promise<number>;
+    getEditorFontFamily: () => Promise<string>;
+    setEditorFontFamily: (fontFamily: string) => Promise<string>;
+    getLineHeight: () => Promise<number>;
+    setLineHeight: (lineHeight: number) => Promise<number>;
     getUiScale: () => Promise<number>;
     setUiScale: (uiScale: number) => Promise<number>;
   };

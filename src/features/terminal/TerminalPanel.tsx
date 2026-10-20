@@ -26,6 +26,7 @@ import {
   getPooledXterm,
   scheduleFitXtermSession,
   shouldForwardAgentImagePaste,
+  setXtermFontFamily,
   setXtermFontSize,
   setXtermTheme,
 } from "./xtermSessionPool";
@@ -449,6 +450,7 @@ function XtermHost({
 }) {
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useThemeStore((s) => s.fontSize);
+  const editorFontFamily = useThemeStore((s) => s.editorFontFamily);
   /** React slot that receives the pooled xterm host element. */
   const slotRef = useRef<HTMLDivElement>(null);
   const [ctxMenu, setCtxMenu] = useState<TermContextMenu | null>(null);
@@ -507,6 +509,7 @@ function XtermHost({
       kind,
       theme,
       terminalFontSize(fontSize),
+      editorFontFamily,
     );
 
     // Poll until the panel has real size, then attach once.
@@ -565,6 +568,10 @@ function XtermHost({
   useEffect(() => {
     setXtermFontSize(id, terminalFontSize(fontSize));
   }, [id, fontSize]);
+
+  useEffect(() => {
+    setXtermFontFamily(id, editorFontFamily);
+  }, [id, editorFontFamily]);
 
   useEffect(() => {
     if (!active) {

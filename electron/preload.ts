@@ -745,6 +745,14 @@ const anchor = {
       ipcRenderer.invoke("settings:getFontSize"),
     setFontSize: (fontSize: number): Promise<number> =>
       ipcRenderer.invoke("settings:setFontSize", fontSize),
+    getEditorFontFamily: (): Promise<string> =>
+      ipcRenderer.invoke("settings:getEditorFontFamily"),
+    setEditorFontFamily: (fontFamily: string): Promise<string> =>
+      ipcRenderer.invoke("settings:setEditorFontFamily", fontFamily),
+    getLineHeight: (): Promise<number> =>
+      ipcRenderer.invoke("settings:getLineHeight"),
+    setLineHeight: (lineHeight: number): Promise<number> =>
+      ipcRenderer.invoke("settings:setLineHeight", lineHeight),
     getUiScale: async (): Promise<number> => {
       const uiScale = await ipcRenderer.invoke("settings:getUiScale") as number;
       webFrame.setZoomFactor(uiScale / 100);

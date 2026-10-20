@@ -3,8 +3,12 @@ import {
   applyDocumentTheme,
   cacheThemeLocally,
   DEFAULT_FONT_SIZE,
+  DEFAULT_LINE_HEIGHT,
   DEFAULT_UI_SCALE,
+  EDITOR_FONT_FAMILY,
+  normalizeEditorFontFamily,
   normalizeFontSize,
+  normalizeLineHeight,
   normalizeTheme,
   normalizeUiScale,
   resolveInitialTheme,
@@ -14,6 +18,8 @@ import type { SessionTabLayout } from "@/shared/anchor-api";
 
 const FONT_SIZE_STORAGE_KEY = "anchor.fontSize";
 const UI_SCALE_STORAGE_KEY = "anchor.uiScale";
+const FONT_FAMILY_STORAGE_KEY = "anchor.editorFontFamily";
+const LINE_HEIGHT_STORAGE_KEY = "anchor.lineHeight";
 
 function normalizeLayout(value: unknown): SessionTabLayout {
   return value === "top" ? "top" : "side";
@@ -75,8 +81,57 @@ function cacheUiScaleLocally(uiScale: number): void {
   }
 }
 
+function readCachedFontFamily(): string {
+  try {
+    return normalizeEditorFontFamily(
+      localStorage.getItem(FONT_FAMILY_STORAGE_KEY),
+    );
+  } catch {
+    return EDITOR_FONT_FAMILY;
+  }
+}
+
+function cacheFontFamilyLocally(fontFamily: string): void {
+  try {
+    localStorage.setItem(
+      FONT_FAMILY_STORAGE_KEY,
+      normalizeEditorFontFamily(fontFamily),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function applyDocumentFontFamily(fontFamily: string): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    "--editor-font-family",
+    normalizeEditorFontFamily(fontFamily),
+  );
+}
+
+function readCachedLineHeight(): number {
+  try {
+    return normalizeLineHeight(localStorage.getItem(LINE_HEIGHT_STORAGE_KEY));
+  } catch {
+    return DEFAULT_LINE_HEIGHT;
+  }
+}
+
+function cacheLineHeightLocally(lineHeight: number): void {
+  try {
+    localStorage.setItem(
+      LINE_HEIGHT_STORAGE_KEY,
+      String(normalizeLineHeight(lineHeight)),
+    );
+  } catch {
+    // ignore
+  }
+}
+
 export type SettingsFocusSection =
   | "appearance"
+  | "agent"
   | "agent-skill"
   | "updates";
 
@@ -86,6 +141,10 @@ export interface ThemeState {
   sessionTabLayout: SessionTabLayout;
   /** Editor / Markdown / terminal reading font size in px. */
   fontSize: number;
+  /** CSS font-family stack for editor / diff / terminal. */
+  editorFontFamily: string;
+  /** Monaco line-height multiplier. */
+  lineHeight: number;
   /** Whole-workbench zoom percentage. */
   uiScale: number;
   ready: boolean;
@@ -98,6 +157,8 @@ export interface ThemeState {
   applyTheme: (theme: UiTheme) => void;
   /** Apply font size locally (DOM + store). Does not persist. */
   applyFontSize: (fontSize: number) => void;
+  applyEditorFontFamily: (fontFamily: string) => void;
+  applyLineHeight: (lineHeight: number) => void;
   /** Apply UI scale to store/cache. Electron applies the zoom in preload. */
   applyUiScale: (uiScale: number) => void;
   /** Load from main process settings (falls back to local cache). */
@@ -108,6 +169,8 @@ export interface ThemeState {
   setSessionTabLayout: (layout: SessionTabLayout) => Promise<void>;
   /** Persist font size via settings IPC and apply. */
   setFontSize: (fontSize: number) => Promise<void>;
+  setEditorFontFamily: (fontFamily: string) => Promise<void>;
+  setLineHeight: (lineHeight: number) => Promise<void>;
   /** Persist whole-workbench zoom and apply. */
   setUiScale: (uiScale: number) => Promise<void>;
 }
@@ -116,6 +179,8 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: resolveInitialTheme(),
   sessionTabLayout: readCachedLayout(),
   fontSize: readCachedFontSize(),
+  editorFontFamily: readCachedFontFamily(),
+  lineHeight: readCachedLineHeight(),
   uiScale: readCachedUiScale(),
   ready: false,
   settingsOpen: false,
@@ -143,6 +208,17 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     cacheFontSizeLocally(next);
     set({ fontSize: next });
   },
+  applyEditorFontFamily: (fontFamily) => {
+    const next = normalizeEditorFontFamily(fontFamily);
+    applyDocumentFontFamily(next);
+    cacheFontFamilyLocally(next);
+    set({ editorFontFamily: next });
+  },
+  applyLineHeight: (lineHeight) => {
+    const next = normalizeLineHeight(lineHeight);
+    cacheLineHeightLocally(next);
+    set({ lineHeight: next });
+  },
   applyUiScale: (uiScale) => {
     const next = normalizeUiScale(uiScale);
     cacheUiScaleLocally(next);
@@ -152,6 +228,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     // Paint cached theme/font immediately to avoid flash.
     applyDocumentTheme(get().theme);
     applyDocumentFontSize(get().fontSize);
+    applyDocumentFontFamily(get().editorFontFamily);
     try {
       const fromMain = await window.anchor?.settings?.getTheme?.();
       if (
@@ -178,6 +255,22 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       const size = await window.anchor?.settings?.getFontSize?.();
       if (typeof size === "number") {
         get().applyFontSize(size);
+      }
+    } catch {
+      // keep local
+    }
+    try {
+      const family = await window.anchor?.settings?.getEditorFontFamily?.();
+      if (typeof family === "string") {
+        get().applyEditorFontFamily(family);
+      }
+    } catch {
+      // keep local
+    }
+    try {
+      const lh = await window.anchor?.settings?.getLineHeight?.();
+      if (typeof lh === "number") {
+        get().applyLineHeight(lh);
       }
     } catch {
       // keep local
@@ -232,6 +325,30 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       const saved = await window.anchor?.settings?.setFontSize?.(next);
       if (typeof saved === "number") {
         get().applyFontSize(saved);
+      }
+    } catch {
+      // local already applied
+    }
+  },
+  setEditorFontFamily: async (fontFamily) => {
+    const next = normalizeEditorFontFamily(fontFamily);
+    get().applyEditorFontFamily(next);
+    try {
+      const saved = await window.anchor?.settings?.setEditorFontFamily?.(next);
+      if (typeof saved === "string") {
+        get().applyEditorFontFamily(saved);
+      }
+    } catch {
+      // local already applied
+    }
+  },
+  setLineHeight: async (lineHeight) => {
+    const next = normalizeLineHeight(lineHeight);
+    get().applyLineHeight(next);
+    try {
+      const saved = await window.anchor?.settings?.setLineHeight?.(next);
+      if (typeof saved === "number") {
+        get().applyLineHeight(saved);
       }
     } catch {
       // local already applied

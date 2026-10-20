@@ -7,7 +7,11 @@
  */
 import { Terminal, type ILink, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { xtermThemeFromCss, type UiTheme } from "@/core/theme/theme";
+import {
+  EDITOR_FONT_FAMILY,
+  xtermThemeFromCss,
+  type UiTheme,
+} from "@/core/theme/theme";
 import { useTerminalStore } from "./terminalStore";
 import {
   useSmoothScrollStore,
@@ -208,6 +212,7 @@ export function acquireXtermSession(
   kind: string,
   theme: UiTheme,
   fontSize = 12.5,
+  fontFamily = EDITOR_FONT_FAMILY,
 ): PooledXterm {
   const existing = pool.get(id);
   if (existing) return existing;
@@ -221,8 +226,7 @@ export function acquireXtermSession(
     // beside those updates looks like positional jitter while the agent works.
     cursorBlink: kind !== "agent",
     fontSize,
-    fontFamily:
-      "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, monospace",
+    fontFamily,
     theme: xtermThemeFromCss(theme),
     allowProposedApi: true,
     rightClickSelectsWord: false,
@@ -419,6 +423,14 @@ export function setXtermFontSize(id: string, fontSize: number): void {
   session.term.options.fontSize = fontSize;
   fitXtermSession(id);
 }
+
+export function setXtermFontFamily(id: string, fontFamily: string): void {
+  const session = pool.get(id);
+  if (!session) return;
+  session.term.options.fontFamily = fontFamily || EDITOR_FONT_FAMILY;
+  fitXtermSession(id);
+}
+
 
 export function disposeXtermSession(id: string): void {
   const session = pool.get(id);

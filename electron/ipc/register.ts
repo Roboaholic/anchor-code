@@ -42,6 +42,8 @@ import {
 import {
   getHistoryRecentCompares,
   getFontSize,
+  getEditorFontFamily,
+  getLineHeight,
   getRestoreLastWorkspace,
   setRestoreLastWorkspace,
   getHostProfile,
@@ -51,12 +53,16 @@ import {
   getUiScale,
   loadSettings,
   normalizeFontSize,
+  normalizeEditorFontFamily,
+  normalizeLineHeight,
   normalizeUiScale,
   normalizeSessionTabLayout,
   normalizeTheme,
   pushHistoryRecentCompare,
   removeHistoryRecentCompare,
   setFontSize,
+  setEditorFontFamily,
+  setLineHeight,
   setSessionTabLayout,
   setUiTheme,
   setUiScale,
@@ -439,6 +445,44 @@ export function registerIpc(opts: {
     async (_evt, fontSize: unknown): Promise<number> => {
       try {
         return await setFontSize(normalizeFontSize(fontSize));
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("settings:getEditorFontFamily", async (): Promise<string> => {
+    try {
+      return await getEditorFontFamily();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "settings:setEditorFontFamily",
+    async (_evt, fontFamily: unknown): Promise<string> => {
+      try {
+        return await setEditorFontFamily(normalizeEditorFontFamily(fontFamily));
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
+  ipcMain.handle("settings:getLineHeight", async (): Promise<number> => {
+    try {
+      return await getLineHeight();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "settings:setLineHeight",
+    async (_evt, lineHeight: unknown): Promise<number> => {
+      try {
+        return await setLineHeight(normalizeLineHeight(lineHeight));
       } catch (err) {
         rethrowIpc(err);
       }

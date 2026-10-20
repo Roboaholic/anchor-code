@@ -6,11 +6,9 @@ import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 import { FileWatcherService } from "./services/fileWatcherService.js";
-import { getRemoteAccessConfig, getUiTheme, type UiTheme } from "./settings.js";
+import { getUiTheme, type UiTheme } from "./settings.js";
 import { initAppUpdater } from "./services/appUpdate.js";
 import { AnchorApplication } from "./application/anchorApplication.js";
-import { RemoteRequestHandler } from "./application/remoteRequestHandler.js";
-import { RelayConnector } from "./remote/relayConnector.js";
 import { registerRuntimeLifecycle } from "./application/runtimeLifecycle.js";
 import {
   shellBackground,
@@ -57,11 +55,10 @@ application.subscribe((event) => {
     }
   }
 });
-const remoteHandler = new RemoteRequestHandler({
-  application,
-  appVersion: app.getVersion(),
-});
-const relay = new RelayConnector(remoteHandler);
+// The desktop app no longer offers Mobile access, so it never creates or
+// starts the Anchor Relay connector, even if a legacy settings file still has
+// remoteAccess.relay.enabled = true. The relay/mobile modules stay in the repo
+// for the mobile package and its verification suites.
 
 /**
  * Preload must load as CommonJS when package.json has "type":"module".
@@ -289,10 +286,7 @@ void app.whenReady().then(async () => {
     terminal,
     fileWatcher,
     application,
-    relay,
   });
-  const remoteConfig = await getRemoteAccessConfig();
-  relay.start(remoteConfig.relay!);
   initAppUpdater({ getMainWindow: () => mainWindow });
   buildMenu();
   const theme = await getUiTheme().catch(() => "dark-modern" as UiTheme);
@@ -325,8 +319,6 @@ registerRuntimeLifecycle({
   dispose: () => {
     terminal.disposeAll();
     fileWatcher.disposeAll();
-    relay.stop();
-    remoteHandler.dispose();
     void hosts.dispose();
   },
 });

@@ -318,22 +318,22 @@ function RepoCard({
               {dirty > 0 ? (
                 <>
                   {(card.status.modified ?? 0) > 0 ? (
-                    <span className="repo-row__count" title="Modified">
+                    <span className="repo-row__count repo-row__count--modified" title="Modified">
                       M{card.status.modified}
                     </span>
                   ) : null}
                   {(card.status.added ?? 0) > 0 ? (
-                    <span className="repo-row__count" title="Added">
+                    <span className="repo-row__count repo-row__count--added" title="Added">
                       A{card.status.added}
                     </span>
                   ) : null}
                   {(card.status.deleted ?? 0) > 0 ? (
-                    <span className="repo-row__count" title="Deleted">
+                    <span className="repo-row__count repo-row__count--deleted" title="Deleted">
                       D{card.status.deleted}
                     </span>
                   ) : null}
                   {(card.status.untracked ?? 0) > 0 ? (
-                    <span className="repo-row__count" title="Untracked">
+                    <span className="repo-row__count repo-row__count--untracked" title="Untracked">
                       ?{card.status.untracked}
                     </span>
                   ) : null}
@@ -341,7 +341,7 @@ function RepoCard({
               ) : null}
               {(card.status.ahead ?? 0) > 0 ? (
                 <span
-                  className="repo-row__count"
+                  className="repo-row__count repo-row__count--ahead"
                   title="Commits ahead of base (upstream / origin default)"
                 >
                   ↑{card.status.ahead}
@@ -404,9 +404,15 @@ function RepoCard({
                 <Icon
                   name={card.changesOpen ? "chevron-down" : "chevron-right"}
                 />
-                <span className="repo-block__title">
-                  Changes{dirty > 0 ? ` · ${dirty}` : ""}
-                </span>
+                <span className="repo-block__title">Changes</span>
+                {dirty > 0 ? (
+                  <span
+                    className="repo-block__count"
+                    aria-label={`${dirty} changed file${dirty === 1 ? "" : "s"}`}
+                  >
+                    {dirty}
+                  </span>
+                ) : null}
               </button>
               {card.changesOpen ? (
                 <div className="repo-block__head-actions">

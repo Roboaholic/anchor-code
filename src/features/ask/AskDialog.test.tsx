@@ -37,13 +37,41 @@ describe("AskDialog popover", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText("contentSearch.ts")).toBeTruthy();
     expect(screen.getByText("L9-15")).toBeTruthy();
-    expect(screen.getByRole("option", { name: "+ New Claude" })).toBeTruthy();
+    const picker = screen.getByRole("combobox", { name: "Agent session" });
+    expect(picker.textContent).toContain("+ New Claude");
     // Monaco emits scroll events on its own nodes while re-rendering.
     act(() => {
       outside.dispatchEvent(new Event("scroll"));
     });
     expect(useAskStore.getState().context).not.toBeNull();
     outside.remove();
+  });
+
+  it("session picker is a themed listbox with group headers; using it keeps the popover open", () => {
+    useTerminalStore.setState({
+      agentProfiles: [
+        { id: "claude", name: "Claude", enabled: true },
+        { id: "pi", name: "Pi", enabled: true },
+      ] as never,
+    } as never);
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+    const picker = screen.getByRole("combobox", { name: "Agent session" });
+    fireEvent.click(picker);
+    expect(screen.getByRole("group", { name: "New session" })).toBeTruthy();
+    const pi = screen.getByRole("option", { name: "+ New Pi" });
+    fireEvent.mouseDown(pi);
+    fireEvent.wheel(pi);
+    expect(useAskStore.getState().context).not.toBeNull();
+    fireEvent.click(pi);
+    expect(picker.textContent).toContain("+ New Pi");
+    // Esc closes the menu first, then the popover.
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(useAskStore.getState().context).not.toBeNull();
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(useAskStore.getState().context).toBeNull();
   });
 
   it("closes on outside mousedown and keeps the draft", () => {

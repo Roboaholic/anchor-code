@@ -44,31 +44,6 @@ export interface HostInfo {
   workspaceRoot: string | null;
 }
 
-export interface RemoteAccessInfo {
-  enabled: boolean;
-  relay: {
-    enabled: boolean;
-    state: "disabled" | "connecting" | "online" | "offline";
-    url: string;
-    roomId: string;
-    hostPeerId: string;
-    connectedGuests: number;
-    devices: Array<{ peerId: string; online: boolean }>;
-    pendingDevices: string[];
-    error?: string;
-    pairing?: {
-      v: 1;
-      type: "anchor-code-relay";
-      relayUrl: string;
-      roomId: string;
-      hostPeerId: string;
-      ticket: string;
-      secret: string;
-      expiresAt: string;
-    };
-  };
-}
-
 export interface HostProfile {
   id: string;
   kind: HostKind;
@@ -439,14 +414,6 @@ export interface AnchorApi {
     menuAction: (action: string) => Promise<boolean>;
     onCommand: (cb: (cmd: { type: string; path?: string; hostProfileId?: string }) => void) => () => void;
     setAgentInputFocused: (focused: boolean) => void;
-  };
-  remote: {
-    getInfo: () => Promise<RemoteAccessInfo>;
-    update: (value: Partial<{
-      enabled: boolean;
-    }>) => Promise<RemoteAccessInfo>;
-    revokeDevice: (peerId: string) => Promise<RemoteAccessInfo>;
-    approveDevice: (peerId: string) => Promise<RemoteAccessInfo>;
   };
   host: {
     getInfo: () => Promise<HostInfo>;

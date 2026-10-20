@@ -947,57 +947,66 @@ export function CodeViewer({
           loading={<div className="viewer-loading">Loading editor…</div>}
         />
         {selToolbar && !composer ? (
-          <button
-            type="button"
-            className="anno-sel-chip"
+          <div
+            className="anno-sel-toolbar"
+            role="toolbar"
+            aria-label="Selection actions"
             style={{ left: selToolbar.left, top: selToolbar.top }}
-            title="Add comment"
-            aria-label="Add comment"
             onMouseDown={(e) => {
-              // Keep selection; don't steal focus before click handler.
+              // Keep the editor selection when pressing the toolbar padding.
               e.preventDefault();
               e.stopPropagation();
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const ed = editorRef.current;
-              if (ed) openComposer(ed, false);
             }}
           >
-            <Icon name="comment" />
-          </button>
-        ) : null}
-        {selToolbar && !composer ? (
-          <button
-            type="button"
-            className="anno-sel-chip anno-sel-chip--ask"
-            style={{ left: selToolbar.left + 32, top: selToolbar.top }}
-            title="Ask agent"
-            aria-label="Ask agent"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const ed = editorRef.current;
-              const sel = ed?.getSelection();
-              const model = ed?.getModel();
-              if (!sel || !model || sel.isEmpty()) return;
-              setSelToolbar(null);
-              openAsk({
-                path,
-                startLine: sel.startLineNumber,
-                endLine: sel.endLineNumber,
-                snippet: model.getValueInRange(sel),
-                anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
-              });
-            }}
-          >
-            <Icon name="question" />
-          </button>
+            <button
+              type="button"
+              className="anno-sel-chip"
+              title="Add comment"
+              aria-label="Add comment"
+              onMouseDown={(e) => {
+                // Keep selection; don't steal focus before click handler.
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const ed = editorRef.current;
+                if (ed) openComposer(ed, false);
+              }}
+            >
+              <Icon name="comment" />
+            </button>
+            <span className="anno-sel-toolbar__sep" aria-hidden />
+            <button
+              type="button"
+              className="anno-sel-chip anno-sel-chip--ask"
+              title="Ask agent"
+              aria-label="Ask agent"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const ed = editorRef.current;
+                const sel = ed?.getSelection();
+                const model = ed?.getModel();
+                if (!sel || !model || sel.isEmpty()) return;
+                setSelToolbar(null);
+                openAsk({
+                  path,
+                  startLine: sel.startLineNumber,
+                  endLine: sel.endLineNumber,
+                  snippet: model.getValueInRange(sel),
+                  anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
+                });
+              }}
+            >
+              <Icon name="question" />
+            </button>
+          </div>
         ) : null}
         {bubble && bubbleComment ? (
           <CommentBubble

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
+import { Dropdown } from "@/shared/Dropdown";
 import { Icon } from "@/shared/Icon";
 import "./OpenWorkspaceDialog.css";
 import {
@@ -499,13 +500,21 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                   ) : (
                     <div className="workspace-dialog__manual-fields">
                       {profiles.some((profile) => profile.kind === "ssh" && !profile.ssh?.configHost) ? (
-                        <label className="field workspace-dialog__full-width">
-                          <span className="field__label">Saved manual connection</span>
-                          <select className="field__input" value={sshProfileId ?? ""} disabled={busy} onChange={(event) => selectManualProfile(event.target.value)}>
-                            <option value="">New connection</option>
-                            {profiles.filter((profile) => profile.kind === "ssh" && !profile.ssh?.configHost).map((profile) => <option key={profile.id} value={profile.id}>{profile.label ?? profile.ssh?.host ?? profile.id}</option>)}
-                          </select>
-                        </label>
+                        <div className="field workspace-dialog__full-width">
+                          <span className="field__label" id="workspace-manual-profile-label">Saved manual connection</span>
+                          <Dropdown
+                            aria-labelledby="workspace-manual-profile-label"
+                            value={sshProfileId ?? ""}
+                            disabled={busy}
+                            onChange={selectManualProfile}
+                            options={[
+                              { value: "", label: "New connection" },
+                              ...profiles
+                                .filter((profile) => profile.kind === "ssh" && !profile.ssh?.configHost)
+                                .map((profile) => ({ value: profile.id, label: profile.label ?? profile.ssh?.host ?? profile.id })),
+                            ]}
+                          />
+                        </div>
                       ) : null}
                       <div className="workspace-dialog__host-fields workspace-dialog__full-width">
                         <label className="field">
@@ -532,13 +541,19 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                             <span className="field__label">Private key path (optional)</span>
                             <input className="field__input" value={sshPrivateKeyPath} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPrivateKeyPath(event.target.value); }} placeholder="Path on this computer" spellCheck={false} />
                           </label>
-                          <label className="field">
-                            <span className="field__label">Host key verification</span>
-                            <select className="field__input" value={sshPolicy} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPolicy(event.target.value as "strict" | "accept-new"); }}>
-                              <option value="strict">Strict: require a known host key</option>
-                              <option value="accept-new">Trust first key automatically; reject changed keys</option>
-                            </select>
-                          </label>
+                          <div className="field">
+                            <span className="field__label" id="workspace-host-key-label">Host key verification</span>
+                            <Dropdown<"strict" | "accept-new">
+                              aria-labelledby="workspace-host-key-label"
+                              value={sshPolicy}
+                              disabled={busy}
+                              onChange={(next) => { invalidateSsh(); setSshPolicy(next); }}
+                              options={[
+                                { value: "strict", label: "Strict: require a known host key" },
+                                { value: "accept-new", label: "Trust first key automatically; reject changed keys" },
+                              ]}
+                            />
+                          </div>
                         </div>
                       </details>
                       <div className="workspace-dialog__security-note workspace-dialog__full-width"><Icon name="shield" /><p>{sshPolicy === "strict" ? "Host keys are checked against known hosts. Unknown keys must be verified before connecting." : "The first host key will be trusted automatically. Changed keys are always rejected."}</p></div>
@@ -553,7 +568,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           {selectingFolder ? (
             <section className="workspace-dialog__folder" aria-labelledby="workspace-folder-title">
               {kind === "wsl" && win ? (
-                distros.length > 0 ? <label className="field"><span className="field__label">Distro</span><select className="field__input" value={selectedDistro} disabled={busy} onChange={(event) => setSelectedDistro(event.target.value)}>{distros.map((distro) => <option key={distro} value={distro}>{distro}</option>)}</select></label> : <p className="modal__hint">No distros listed. The default WSL distro will be used.</p>
+                distros.length > 0 ? <div className="field"><span className="field__label" id="workspace-distro-label">Distro</span><Dropdown aria-labelledby="workspace-distro-label" value={selectedDistro} disabled={busy} onChange={setSelectedDistro} options={distros.map((distro) => ({ value: distro, label: distro }))} /></div> : <p className="modal__hint">No distros listed. The default WSL distro will be used.</p>
               ) : null}
               <div>
                 <h3 ref={folderHeadingRef} tabIndex={-1} id="workspace-folder-title" className="workspace-dialog__section-title">Choose a folder</h3>

@@ -454,7 +454,7 @@ function RenderedMarkdownPane({
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target;
       if (!(target instanceof Element)) return;
-      if (target.closest(".anno-sel-chip")) return;
+      if (target.closest(".anno-sel-toolbar")) return;
       // New interaction in the body: hide until selectionchange settles.
       pendingSelectionTextRef.current = null;
       setSelToolbar(null);
@@ -642,70 +642,79 @@ function RenderedMarkdownPane({
         ))}
 
         {selToolbar && !composer ? (
-          <button
-            type="button"
-            className="anno-sel-chip"
+          <div
+            className="anno-sel-toolbar"
+            role="toolbar"
+            aria-label="Selection actions"
             style={{ left: selToolbar.left, top: selToolbar.top }}
-            title="Add comment"
-            aria-label="Add comment"
             onMouseDown={(e) => {
-              // Open on mousedown so we still have the cached selection even if
-              // focus/click collapses the live DOM selection.
-              e.preventDefault();
-              e.stopPropagation();
-              openComposer(
-                false,
-                pendingSelectionTextRef.current ?? selToolbar.text,
-              );
-            }}
-            onClick={(e) => {
+              // Keep the editor selection when pressing the toolbar padding.
               e.preventDefault();
               e.stopPropagation();
             }}
           >
-            <Icon name="comment" />
-          </button>
-        ) : null}
-        {selToolbar && !composer ? (
-          <button
-            type="button"
-            className="anno-sel-chip anno-sel-chip--ask"
-            style={{ left: selToolbar.left + 32, top: selToolbar.top }}
-            title="Ask agent"
-            aria-label="Ask agent"
-            onMouseDown={(e) => {
-              // Same as comment chip: use cached selection before focus collapses it.
-              e.preventDefault();
-              e.stopPropagation();
-              const text = (
-                pendingSelectionTextRef.current ?? selToolbar.text ?? ""
-              ).trim();
-              if (!text) return;
-              const anchor = locateSelectionInMarkdown(content, text);
-              const selectionEndAnchor = () => {
-                const s = window.getSelection();
-                if (!s || s.rangeCount === 0) return null;
-                const rects = s.getRangeAt(0).getClientRects();
-                const last = rects[rects.length - 1];
-                return last ? { top: last.top, bottom: last.bottom, left: rects[0].left, startTop: rects[0].top } : null;
-              };
-              pendingSelectionTextRef.current = null;
-              setSelToolbar(null);
-              openAsk({
-                path,
-                startLine: anchor?.startLine ?? 1,
-                endLine: anchor?.endLine ?? anchor?.startLine ?? 1,
-                snippet: anchor?.selectedText ?? text,
-                anchor: selectionEndAnchor() ?? elementAnchor(e.currentTarget),
-              });
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-          >
-            <Icon name="question" />
-          </button>
+            <button
+              type="button"
+              className="anno-sel-chip"
+              title="Add comment"
+              aria-label="Add comment"
+              onMouseDown={(e) => {
+                // Open on mousedown so we still have the cached selection even if
+                // focus/click collapses the live DOM selection.
+                e.preventDefault();
+                e.stopPropagation();
+                openComposer(
+                  false,
+                  pendingSelectionTextRef.current ?? selToolbar.text,
+                );
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <Icon name="comment" />
+            </button>
+            <span className="anno-sel-toolbar__sep" aria-hidden />
+            <button
+              type="button"
+              className="anno-sel-chip anno-sel-chip--ask"
+              title="Ask agent"
+              aria-label="Ask agent"
+              onMouseDown={(e) => {
+                // Same as comment chip: use cached selection before focus collapses it.
+                e.preventDefault();
+                e.stopPropagation();
+                const text = (
+                  pendingSelectionTextRef.current ?? selToolbar.text ?? ""
+                ).trim();
+                if (!text) return;
+                const anchor = locateSelectionInMarkdown(content, text);
+                const selectionEndAnchor = () => {
+                  const s = window.getSelection();
+                  if (!s || s.rangeCount === 0) return null;
+                  const rects = s.getRangeAt(0).getClientRects();
+                  const last = rects[rects.length - 1];
+                  return last ? { top: last.top, bottom: last.bottom, left: rects[0].left, startTop: rects[0].top } : null;
+                };
+                pendingSelectionTextRef.current = null;
+                setSelToolbar(null);
+                openAsk({
+                  path,
+                  startLine: anchor?.startLine ?? 1,
+                  endLine: anchor?.endLine ?? anchor?.startLine ?? 1,
+                  snippet: anchor?.selectedText ?? text,
+                  anchor: selectionEndAnchor() ?? elementAnchor(e.currentTarget),
+                });
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <Icon name="question" />
+            </button>
+          </div>
         ) : null}
 
         {bubble && bubbleComment ? (

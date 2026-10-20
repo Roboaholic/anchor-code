@@ -3,6 +3,7 @@ import {
   commentBodyForDisplay,
   rejoinDiffCommentBody,
 } from "@/core/history/diffComment";
+import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
 import { Icon } from "@/shared/Icon";
 import type { CommentMessage, CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
@@ -24,18 +25,20 @@ export interface CommentBubbleProps {
   onPointerLeave?: () => void;
 }
 
-function isInsideBubbleOrSelect(
+const BUBBLE_STATUS_OPTIONS: { value: CommentRecord["status"]; label: string }[] = [
+  { value: "discussing", label: "discussing" },
+  { value: "need_modify", label: "need_modify" },
+  { value: "closed", label: "closed" },
+];
+
+function isInsideBubbleOrMenu(
   el: HTMLElement,
   target: EventTarget | null,
 ): boolean {
   if (!(target instanceof Node)) return false;
   if (el.contains(target)) return true;
-  // Native <select> popup may render outside the dialog.
-  if (target instanceof Element) {
-    const tag = target.tagName;
-    if (tag === "OPTION" || tag === "SELECT" || tag === "OPTGROUP") return true;
-  }
-  return false;
+  // The status dropdown's listbox is portaled to <body>.
+  return isInsideDropdownMenu(target);
 }
 
 export function CommentBubble({
@@ -58,7 +61,7 @@ export function CommentBubble({
     const onPointerDown = (e: PointerEvent) => {
       const el = rootRef.current;
       if (!el) return;
-      if (isInsideBubbleOrSelect(el, e.target)) return;
+      if (isInsideBubbleOrMenu(el, e.target)) return;
       onClose();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -250,25 +253,21 @@ function BubbleThread({
           >
             <Icon name="comment-discussion" />
           </button>
-          <select
+          <Dropdown<CommentRecord["status"]>
             className="anno-bubble__status"
+            size="sm"
             value={thread.status}
             disabled={busy}
             title="Review status"
             aria-label="Review status"
-            onChange={(e) =>
+            minMenuWidth={120}
+            options={BUBBLE_STATUS_OPTIONS}
+            onChange={(status) =>
               void run(async () => {
-                await setStatus(
-                  thread.id,
-                  e.target.value as CommentRecord["status"],
-                );
+                await setStatus(thread.id, status);
               })
             }
-          >
-            <option value="discussing">discussing</option>
-            <option value="need_modify">need_modify</option>
-            <option value="closed">closed</option>
-          </select>
+          />
           <button
             type="button"
             className="icon-btn icon-btn--xs"

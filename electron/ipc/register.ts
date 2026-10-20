@@ -2,7 +2,6 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, session } from "electro
 import { createSearchHitBatcher } from "./searchBatcher.js";
 import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
-import type { RelayConnector } from "../remote/relayConnector.js";
 import type { AnchorApplication } from "../application/anchorApplication.js";
 import { listSshConfigHosts } from "../host/sshConfig.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
@@ -62,8 +61,6 @@ import {
   setUiTheme,
   setUiScale,
   setWorkspaceFilter,
-  getRemoteAccessConfig,
-  setRemoteAccessConfig,
   upsertHostProfile,
   type HistoryCompareEntry,
   type HostProfile,
@@ -105,7 +102,6 @@ export function registerIpc(opts: {
   terminal: TerminalService;
   fileWatcher: FileWatcherService;
     application: AnchorApplication;
-    relay: RelayConnector;
 }): void {
   const {
     hosts,
@@ -114,7 +110,6 @@ export function registerIpc(opts: {
     terminal,
     fileWatcher,
     application,
-    relay,
   } = opts;
 
   const host = () => hosts.session;
@@ -138,37 +133,6 @@ export function registerIpc(opts: {
       hostId: h.id,
       hostKind: h.kind,
     };
-  });
-
-  ipcMain.handle("remote:getInfo", async () => {
-    const config = await getRemoteAccessConfig();
-    return { enabled: config.enabled, relay: relay.info() };
-  });
-
-  ipcMain.handle(
-    "remote:update",
-    async (
-      _evt,
-      value: Partial<{
-        enabled: boolean;
-      }>,
-    ) => {
-      const config = await setRemoteAccessConfig(value ?? {});
-      relay.start(config.relay!);
-      return { enabled: config.enabled, relay: relay.info() };
-    },
-  );
-
-  ipcMain.handle("remote:revokeDevice", async (_evt, peerId: string) => {
-    relay.revokeDevice(peerId);
-    const config = await getRemoteAccessConfig();
-    return { enabled: config.enabled, relay: relay.info() };
-  });
-
-  ipcMain.handle("remote:approveDevice", async (_evt, peerId: string) => {
-    relay.approveDevice(peerId);
-    const config = await getRemoteAccessConfig();
-    return { enabled: config.enabled, relay: relay.info() };
   });
 
   ipcMain.handle("shell:menuAction", async (_evt, action: string) => {

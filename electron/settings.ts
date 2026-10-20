@@ -196,9 +196,15 @@ export async function loadSettings(): Promise<AppSettings> {
       agentLaunchCache: parsed.agentLaunchCache ?? {},
       historyRecentCompares: parsed.historyRecentCompares ?? {},
       workspaceFilters: parsed.workspaceFilters ?? {},
+      // Mobile access was removed from the desktop app: a legacy
+      // `remoteAccess.relay.enabled: true` is ignored and rewritten as
+      // disabled on the next save, so the relay is never re-enabled.
       remoteAccess: {
-        enabled: parsed.remoteAccess?.relay?.enabled === true,
-        relay: normalizeRemoteRelayConfig(parsed.remoteAccess?.relay),
+        enabled: false,
+        relay: {
+          ...normalizeRemoteRelayConfig(parsed.remoteAccess?.relay),
+          enabled: false,
+        },
       },
       ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
     };
@@ -221,11 +227,6 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   await fs.writeFile(file, JSON.stringify(persisted, null, 2), "utf8");
 }
 
-export interface RemoteAccessConfig {
-  enabled: boolean;
-  relay?: RemoteRelayConfig;
-}
-
 export interface RemoteRelayConfig {
   enabled: boolean;
   url: string;
@@ -234,10 +235,6 @@ export interface RemoteRelayConfig {
   ticket: string;
   secret: string;
 }
-
-export type RemoteAccessConfigUpdate = Omit<Partial<RemoteAccessConfig>, "relay"> & {
-  relay?: Partial<RemoteRelayConfig>;
-};
 
 export function normalizeRemoteRelayConfig(
   value?: Partial<RemoteRelayConfig>,
@@ -250,43 +247,6 @@ export function normalizeRemoteRelayConfig(
     ticket: value?.ticket?.trim() || randomBytes(32).toString("base64url"),
     secret: value?.secret?.trim() || randomBytes(32).toString("base64url"),
   };
-}
-
-export function normalizeRemoteAccessConfig(
-  value?: RemoteAccessConfigUpdate,
-): RemoteAccessConfig {
-  const enabled = value?.enabled === true;
-  return {
-    enabled,
-    relay: {
-      ...normalizeRemoteRelayConfig(value?.relay),
-      enabled,
-      url: DEFAULT_RELAY_URL,
-    },
-  };
-}
-
-export async function getRemoteAccessConfig(): Promise<RemoteAccessConfig> {
-  const settings = await loadSettings();
-  const config = normalizeRemoteAccessConfig(settings.remoteAccess);
-  settings.remoteAccess = config;
-  await saveSettings(settings);
-  return config;
-}
-
-export async function setRemoteAccessConfig(
-  value: RemoteAccessConfigUpdate,
-): Promise<RemoteAccessConfig> {
-  const settings = await loadSettings();
-  const current = normalizeRemoteAccessConfig(settings.remoteAccess);
-  const config = normalizeRemoteAccessConfig({
-    ...current,
-    ...value,
-    relay: { ...current.relay, ...(value.relay ?? {}), enabled: value.enabled ?? current.enabled },
-  });
-  settings.remoteAccess = config;
-  await saveSettings(settings);
-  return config;
 }
 
 export async function pushRecentWorkspace(

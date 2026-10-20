@@ -1293,62 +1293,71 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 }}
               />
               {selToolbar && sideBySide && !composer ? (
-                <button
-                  type="button"
-                  className="anno-sel-chip"
+                <div
+                  className="anno-sel-toolbar"
+                  role="toolbar"
+                  aria-label="Selection actions"
                   style={{ left: selToolbar.left, top: selToolbar.top }}
-                  title="Add comment"
-                  aria-label="Add comment"
                   onMouseDown={(e) => {
+                    // Keep the editor selection when pressing the toolbar padding.
                     e.preventDefault();
                     e.stopPropagation();
-                  }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const ed = modifiedEditorRef.current;
-                    if (ed) openComposer(ed, false);
                   }}
                 >
-                  <Icon name="comment" />
-                </button>
-              ) : null}
-              {selToolbar && sideBySide && !composer ? (
-                <button
-                  type="button"
-                  className="anno-sel-chip anno-sel-chip--ask"
-                  style={{ left: selToolbar.left + 32, top: selToolbar.top }}
-                  title="Ask agent"
-                  aria-label="Ask agent"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const ed = modifiedEditorRef.current;
-                    const sel = ed?.getSelection();
-                    const model = ed?.getModel();
-                    if (!sel || !model || sel.isEmpty()) return;
-                    setSelToolbar(null);
-                    openAsk({
-                      path: absActivePath ?? activePath ?? item.title,
-                      startLine: sel.startLineNumber,
-                      endLine: sel.endLineNumber,
-                      snippet: model.getValueInRange(sel),
-                anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
-                      diff: {
-                        repoRoot: item.repoRoot,
-                        branch: item.branch ?? null,
-                        base: item.base,
-                        head: item.head,
-                      },
-                    });
-                  }}
-                >
-                  <Icon name="question" />
-                </button>
+                  <button
+                    type="button"
+                    className="anno-sel-chip"
+                    title="Add comment"
+                    aria-label="Add comment"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const ed = modifiedEditorRef.current;
+                      if (ed) openComposer(ed, false);
+                    }}
+                  >
+                    <Icon name="comment" />
+                  </button>
+                  <span className="anno-sel-toolbar__sep" aria-hidden />
+                  <button
+                    type="button"
+                    className="anno-sel-chip anno-sel-chip--ask"
+                    title="Ask agent"
+                    aria-label="Ask agent"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const ed = modifiedEditorRef.current;
+                      const sel = ed?.getSelection();
+                      const model = ed?.getModel();
+                      if (!sel || !model || sel.isEmpty()) return;
+                      setSelToolbar(null);
+                      openAsk({
+                        path: absActivePath ?? activePath ?? item.title,
+                        startLine: sel.startLineNumber,
+                        endLine: sel.endLineNumber,
+                        snippet: model.getValueInRange(sel),
+                  anchor: monacoLineAnchor(ed, sel.endLineNumber, e.currentTarget, sel.startLineNumber),
+                        diff: {
+                          repoRoot: item.repoRoot,
+                          branch: item.branch ?? null,
+                          base: item.base,
+                          head: item.head,
+                        },
+                      });
+                    }}
+                  >
+                    <Icon name="question" />
+                  </button>
+                </div>
               ) : null}
               {bubble && bubbleComment && sideBySide ? (
                 <CommentBubble

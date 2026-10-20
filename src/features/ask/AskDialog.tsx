@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
 import { Icon } from "@/shared/Icon";
 import { useShellStore } from "@/features/shell/shellStore";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
@@ -133,7 +134,7 @@ export function AskDialog() {
   useEffect(() => {
     if (!context) return;
     const inside = (t: EventTarget | null) =>
-      t instanceof Node && !!popRef.current?.contains(t);
+      (t instanceof Node && !!popRef.current?.contains(t)) || isInsideDropdownMenu(t);
     const onDown = (e: MouseEvent) => {
       if (!inside(e.target)) dismissRef.current();
     };
@@ -294,32 +295,38 @@ export function AskDialog() {
       ) : null}
 
       <div className="ask-pop__footer">
-        <select
-          className="agent-new__select ask-pop__target"
+        <Dropdown
+          className="ask-pop__target"
+          menuClassName="ask-pop__target-menu"
+          size="sm"
           aria-label="Agent session"
           value={target}
-          onChange={(e) => setTarget(e.target.value)}
-        >
-          {groupSessions.length > 0 ? (
-            <optgroup label="Sessions in this group">
-              {groupSessions.map((t, i) => {
-                const ok = isAskSessionSelectable(t, activity[t.id]);
-                return (
-                  <option key={t.id} value={t.id} disabled={!ok} title={t.title}>
-                    {askSessionLabel(t, i, activity[t.id], profileName(t.agentId))}
-                  </option>
-                );
-              })}
-            </optgroup>
-          ) : null}
-          <optgroup label="+ New session">
-            {enabledProfiles.map((p) => (
-              <option key={p.id} value={`${NEW_PREFIX}${p.id}`}>
-                + New {p.name || p.id}
-              </option>
-            ))}
-          </optgroup>
-        </select>
+          onChange={setTarget}
+          placeholder="No agents"
+          minMenuWidth={200}
+          groups={[
+            ...(groupSessions.length > 0
+              ? [
+                  {
+                    label: "Sessions in this group",
+                    options: groupSessions.map((t, i) => ({
+                      value: t.id,
+                      label: askSessionLabel(t, i, activity[t.id], profileName(t.agentId)),
+                      disabled: !isAskSessionSelectable(t, activity[t.id]),
+                      title: t.title,
+                    })),
+                  },
+                ]
+              : []),
+            {
+              label: "New session",
+              options: enabledProfiles.map((p) => ({
+                value: `${NEW_PREFIX}${p.id}`,
+                label: `+ New ${p.name || p.id}`,
+              })),
+            },
+          ]}
+        />
         <label
           className="ask__readonly"
           title={

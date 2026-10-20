@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { askPopoverPosition, type AskAnchorRect } from "@/features/ask/askPrompt";
 import type { CommentRecord } from "@/shared/anchor-api";
+import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
 import {
   DEFAULT_COMMENT_DRAFT,
   commentDraftKey,
@@ -112,7 +113,7 @@ export function NewCommentPopover({
 
   useEffect(() => {
     const inside = (t: EventTarget | null) =>
-      t instanceof Node && !!popRef.current?.contains(t);
+      (t instanceof Node && !!popRef.current?.contains(t)) || isInsideDropdownMenu(t);
     const onDown = (e: MouseEvent) => {
       if (!inside(e.target)) closeRef.current();
     };
@@ -187,23 +188,15 @@ export function NewCommentPopover({
       />
       {error ? <div className="comment-pop__error" role="alert">{error}</div> : null}
       <div className="ask-pop__footer">
-        <select
+        <Dropdown<CommentRecord["status"]>
           className="ask-pop__target comment-pop__status"
+          size="sm"
           aria-label="Status"
+          data-testid="comment-pop-status"
           value={draft.status}
-          onChange={(e) =>
-            setDraft(key, {
-              ...draft,
-              status: e.target.value as CommentRecord["status"],
-            })
-          }
-        >
-          {COMMENT_STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(status) => setDraft(key, { ...draft, status })}
+          options={COMMENT_STATUS_OPTIONS}
+        />
         <label
           className="comment-pop__newsession"
           title="End the active session and save this comment in a new session"

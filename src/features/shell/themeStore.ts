@@ -77,7 +77,6 @@ function cacheUiScaleLocally(uiScale: number): void {
 
 export type SettingsFocusSection =
   | "appearance"
-  | "remote"
   | "agent-skill"
   | "updates";
 

@@ -21,11 +21,16 @@ describe("NewCommentPopover", () => {
     render(<NewCommentPopover {...base} onSubmit={onSubmit} onClose={onClose} />);
     expect(screen.getByText("limiter.ts")).toBeTruthy();
     expect(screen.getByText("L12-18")).toBeTruthy();
-    const status = screen.getByLabelText("Status") as HTMLSelectElement;
-    expect(status.value).toBe("discussing");
+    const status = screen.getByRole("combobox", { name: "Status" });
+    expect(status.textContent).toContain("Discussing");
     const add = screen.getByRole("button", { name: "Add" }) as HTMLButtonElement;
     expect(add.disabled).toBe(true);
-    fireEvent.change(status, { target: { value: "need_modify" } });
+    fireEvent.click(status);
+    // The themed listbox is portaled; picking from it must not close the popover.
+    fireEvent.mouseDown(screen.getByRole("option", { name: "Need modify" }));
+    fireEvent.click(screen.getByRole("option", { name: "Need modify" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(status.textContent).toContain("Need modify");
     const box = screen.getByLabelText("Comment");
     fireEvent.change(box, { target: { value: "  tighten this  " } });
     await act(async () => {
@@ -53,6 +58,19 @@ describe("NewCommentPopover", () => {
     expect(useCommentDraftStore.getState().drafts[key]?.body).toBe("draft");
     render(<NewCommentPopover {...base} onSubmit={async () => {}} onClose={() => {}} />);
     expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("draft");
+  });
+
+  it("Esc inside the open status menu closes only the menu", () => {
+    const onClose = vi.fn();
+    render(<NewCommentPopover {...base} onSubmit={async () => {}} onClose={onClose} />);
+    const status = screen.getByRole("combobox", { name: "Status" });
+    fireEvent.keyDown(status, { key: "ArrowDown" });
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    fireEvent.keyDown(status, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(status, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the popover open and shows the error when saving fails", async () => {

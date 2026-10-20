@@ -571,7 +571,13 @@ describe("SSH workspace connections", () => {
     const details = screen.getByText("Private key & host verification").closest("details")!;
     expect(details.open).toBe(false);
     await user.click(screen.getByText("Private key & host verification"));
-    expect((screen.getByLabelText("Host key verification") as HTMLSelectElement).value).toBe("strict");
+    const policy = screen.getByRole("combobox", { name: "Host key verification" });
+    expect(policy.textContent).toContain("Strict: require a known host key");
+    await user.click(policy);
+    expect(screen.getByRole("option", { name: /Strict/ }).getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
     await user.type(screen.getByRole("textbox", { name: "Host" }), "example.test");
     await user.type(screen.getByLabelText("Username"), "tester");
     await user.type(screen.getByLabelText("Private key path (optional)"), "/keys/work");

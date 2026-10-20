@@ -4,6 +4,7 @@ import type {
   AgentLaunchDiscovery,
   AgentSessionSummary,
 } from "@/shared/anchor-api";
+import { Dropdown } from "@/shared/Dropdown";
 import { Icon } from "@/shared/Icon";
 import {
   agentAuthorFromProfile,
@@ -305,35 +306,36 @@ export function NewAgentDialog({
         </div>
 
         <div className="agent-new__grid">
-          <label className="agent-new__field">
-            <span className="agent-new__label">Agent</span>
-            <select
-              className="agent-new__select"
+          <div className="agent-new__field">
+            <span className="agent-new__label" id="agent-new-agent-label">Agent</span>
+            <Dropdown
+              aria-labelledby="agent-new-agent-label"
+              data-testid="agent-new-agent"
               value={profileId}
-              onChange={(e) => setProfileId(e.target.value)}
+              onChange={setProfileId}
               disabled={enabled.length === 0}
-            >
-              {enabled.length === 0 ? (
-                <option value="">No agents detected</option>
-              ) : (
-                enabled.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.detected ? "" : " (?)"}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
+              placeholder="No agents detected"
+              options={enabled.map((p) => ({
+                value: p.id,
+                label: `${p.name}${p.detected ? "" : " (?)"}`,
+                title: p.detected ? undefined : "CLI not detected on PATH",
+              }))}
+            />
+          </div>
 
-          <label className="agent-new__field">
-            <span className="agent-new__label">Model</span>
-            <select
-              className="agent-new__select"
+          <div className="agent-new__field">
+            <span className="agent-new__label" id="agent-new-model-label">Model</span>
+            <Dropdown
+              aria-labelledby="agent-new-model-label"
+              data-testid="agent-new-model"
               value={model}
               disabled={loading || !discovery?.models.length}
-              onChange={(e) => {
-                const next = e.target.value;
+              placeholder={loading ? "Loading…" : "CLI default"}
+              options={(loading ? [] : discovery?.models ?? []).map((m) => ({
+                value: m.id,
+                label: m.label,
+              }))}
+              onChange={(next) => {
                 setModel(next);
                 const mod = discovery?.models.find((m) => m.id === next);
                 const efforts = mod?.efforts ?? [];
@@ -346,40 +348,21 @@ export function NewAgentDialog({
                   );
                 }
               }}
-            >
-              {loading ? (
-                <option value="">Loading…</option>
-              ) : discovery?.models.length ? (
-                discovery.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))
-              ) : (
-                <option value="">CLI default</option>
-              )}
-            </select>
-          </label>
+            />
+          </div>
 
-          <label className="agent-new__field">
-            <span className="agent-new__label">Effort</span>
-            <select
-              className="agent-new__select"
+          <div className="agent-new__field">
+            <span className="agent-new__label" id="agent-new-effort-label">Effort</span>
+            <Dropdown
+              aria-labelledby="agent-new-effort-label"
+              data-testid="agent-new-effort"
               value={effort}
               disabled={loading || effortOptions.length === 0}
-              onChange={(e) => setEffort(e.target.value)}
-            >
-              {effortOptions.length === 0 ? (
-                <option value="">—</option>
-              ) : (
-                effortOptions.map((e) => (
-                  <option key={e} value={e}>
-                    {e}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
+              placeholder="—"
+              options={effortOptions.map((e) => ({ value: e, label: e }))}
+              onChange={setEffort}
+            />
+          </div>
         </div>
 
         {isFeedback && intent.kind === "feedback" ? (

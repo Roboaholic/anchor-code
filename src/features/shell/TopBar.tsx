@@ -156,7 +156,12 @@ export function TopBar() {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setWorkspaceMenuOpen(false);
+      if (event.key !== "Escape") return;
+      setWorkspaceMenuOpen(false);
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active.classList.contains("workspace-switcher")) {
+        active.blur();
+      }
     };
 
     document.addEventListener("pointerdown", onPointerDown);

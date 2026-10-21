@@ -458,6 +458,8 @@ function RepoCard({
                         >
                           <input
                             type="checkbox"
+                            className="anchor-checkbox"
+
                             checked={checked}
                             onChange={() => togglePath(e.path)}
                             onClick={(e2) => e2.stopPropagation()}
@@ -547,7 +549,7 @@ function RepoCard({
                 ) : dirty > 0 ? (
                   <button
                     type="button"
-                    className="btn btn--accent btn--small repo-commit__open"
+                    className="btn btn--fill btn--small repo-commit__open"
                     disabled={card.committing || noneSelected}
                     onClick={() => setCommitOpen(true)}
                     title="Commit selected files"
@@ -626,6 +628,8 @@ function RepoCard({
                     >
                       <input
                         type="checkbox"
+                        className="anchor-checkbox"
+
                         checked={card.selectedHashes.includes(
                           WORKTREE_SELECTION,
                         )}
@@ -673,6 +677,8 @@ function RepoCard({
                         >
                           <input
                             type="checkbox"
+                            className="anchor-checkbox"
+
                             checked={checked}
                             disabled={lockedOut}
                             onChange={() => toggleCommit(card.root, c.hash)}

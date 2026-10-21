@@ -203,6 +203,7 @@ export function NewCommentPopover({
         >
           <input
             type="checkbox"
+            className="anchor-checkbox"
             checked={newSession}
             onChange={(e) => setNewSession(e.target.checked)}
           />

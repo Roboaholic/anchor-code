@@ -110,9 +110,9 @@ describe("SettingsPanel", () => {
     await waitFor(() => screen.getByTestId("settings-agent-row-pi"));
     const row = screen.getByTestId("settings-agent-row-pi");
     const checkbox = row.querySelector(
-      'input[type="checkbox"]',
-    ) as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
+      '[role="switch"]',
+    ) as HTMLButtonElement;
+    expect(checkbox.getAttribute("aria-checked")).toBe("true");
     await act(async () => {
       fireEvent.click(checkbox);
     });

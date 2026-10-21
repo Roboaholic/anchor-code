@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentCliProfile, SkillInstallStatus } from "@/shared/anchor-api";
 import { Dropdown } from "@/shared/Dropdown";
+import { Switch } from "@/shared/Switch";
+import { Checkbox } from "@/shared/Checkbox";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useShellStore } from "./shellStore";
@@ -294,13 +296,10 @@ export function SettingsAgentSection() {
             >
               <div className="settings-agent-row__main">
                 <label className="settings-agent-row__enable">
-                  <input
-                    type="checkbox"
+                  <Switch
                     checked={enabled}
                     aria-label={`Enable ${p.name}`}
-                    onChange={(e) =>
-                      void toggleEnabled(p, e.target.checked)
-                    }
+                    onChange={(next) => void toggleEnabled(p, next)}
                   />
                 </label>
                 <div className="settings-agent-row__meta">
@@ -507,9 +506,9 @@ export function SettingsAgentSection() {
             return (
               <li key={t.id} className="settings-skill-target">
                 <label className="settings-skill-target__label">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={checked}
+                    aria-label={t.label}
                     onChange={() => {
                       setSelectedTargets((prev) => {
                         const next = { ...prev };
@@ -565,7 +564,7 @@ export function SettingsAgentSection() {
       <div className="settings-update-card__actions">
         <button
           type="button"
-          className="btn btn--accent btn--small"
+          className="btn btn--fill btn--small"
           disabled={skillBusy || !skillStatus?.targets?.length}
           onClick={() => void runSkillInstall()}
         >
@@ -573,7 +572,7 @@ export function SettingsAgentSection() {
         </button>
         <button
           type="button"
-          className="btn btn--small"
+          className="btn btn--ghost btn--small"
           disabled={skillBusy}
           onClick={() => void refreshSkillStatus()}
         >

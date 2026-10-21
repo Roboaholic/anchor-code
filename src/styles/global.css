@@ -8714,3 +8714,285 @@ input[type="radio"] {
     letter-spacing: 0;
   }
 }
+
+/* ── Shared polish controls (Switch / Checkbox / Disclosure / Confirm) ── */
+
+.btn--fill {
+  background: var(--accent);
+  color: var(--bg-panel);
+  border-color: var(--accent);
+  font-weight: 600;
+  box-shadow: none;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease,
+    filter 0.12s ease;
+}
+.btn--fill:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: var(--shadow-sm);
+}
+.btn--fill:disabled {
+  opacity: 0.45;
+  filter: none;
+  box-shadow: none;
+}
+
+.btn--danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+  font-weight: 600;
+}
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-panel));
+  border-color: var(--danger);
+}
+
+.confirm-dialog {
+  width: min(400px, calc(100vw - 32px));
+}
+.confirm-dialog__message {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.confirm-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.anchor-switch {
+  position: relative;
+  box-sizing: border-box;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+.anchor-switch.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.anchor-switch.is-disabled,
+.anchor-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.anchor-switch__thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.14s ease;
+}
+.anchor-switch.is-on .anchor-switch__thumb {
+  transform: translateX(16px);
+}
+
+.anchor-checkbox-label,
+.anchor-checkbox-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.anchor-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.anchor-checkbox:hover:not(:disabled) {
+  border-color: var(--accent-border-strong);
+}
+.anchor-checkbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.anchor-checkbox:checked::after {
+  content: "";
+  width: 8px;
+  height: 5px;
+  border-left: 2px solid var(--bg-panel);
+  border-bottom: 2px solid var(--bg-panel);
+  transform: translateY(-1px) rotate(-45deg);
+}
+.anchor-checkbox:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.anchor-checkbox:focus {
+  outline: none;
+}
+.anchor-checkbox:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.anchor-disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.anchor-disclosure__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.anchor-disclosure__summary:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.anchor-disclosure__chevron {
+  font-size: 12px !important;
+  transition: transform 0.14s ease;
+  color: var(--text-muted);
+}
+.anchor-disclosure.is-open .anchor-disclosure__chevron {
+  transform: rotate(90deg);
+}
+.anchor-disclosure__panel {
+  padding: 0 12px 10px 28px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  border-top: 1px solid var(--border);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
+}
+.anchor-disclosure__panel > :first-child {
+  margin-top: 8px;
+}
+.anchor-disclosure__panel > :last-child {
+  margin-bottom: 0;
+}
+
+.anchor-seg {
+  width: 100%;
+}
+.anchor-seg .repo-seg__btn {
+  flex: 1 1 0;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  height: auto;
+  padding: 6px 8px;
+}
+.anchor-seg--sm .repo-seg__btn {
+  min-height: 24px;
+  padding: 2px 6px;
+}
+.anchor-seg__title {
+  display: block;
+  font-weight: 600;
+  font-size: 12px;
+  color: inherit;
+}
+.anchor-seg__desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+.anchor-seg .repo-seg__btn.is-active .anchor-seg__desc {
+  color: var(--text-secondary);
+}
+
+/* Themed range thumbs (Settings font size / UI scale / line height). */
+input[type="range"].anchor-range,
+.settings-font-size__range,
+.settings-ui-scale__range,
+.settings-line-height__range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 28%, var(--bg-muted));
+  outline: none;
+  accent-color: var(--accent);
+}
+input[type="range"].anchor-range::-webkit-slider-thumb,
+.settings-font-size__range::-webkit-slider-thumb,
+.settings-ui-scale__range::-webkit-slider-thumb,
+.settings-line-height__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+input[type="range"].anchor-range::-moz-range-thumb,
+.settings-font-size__range::-moz-range-thumb,
+.settings-ui-scale__range::-moz-range-thumb,
+.settings-line-height__range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+input[type="range"].anchor-range:focus-visible,
+.settings-font-size__range:focus-visible,
+.settings-ui-scale__range:focus-visible,
+.settings-line-height__range:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* Settings checkbox rows that now host a Switch. */
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-checkbox .anchor-switch {
+  margin-top: 1px;
+}
+
+.workspace-dialog__details.anchor-disclosure {
+  background: var(--bg-muted);
+}

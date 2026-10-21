@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
 import { Dropdown } from "@/shared/Dropdown";
+import { Disclosure } from "@/shared/Disclosure";
 import { Icon } from "@/shared/Icon";
+import { SegmentedControl } from "@/shared/SegmentedControl";
 import "./OpenWorkspaceDialog.css";
 import {
   filterBrowseDirs,
@@ -206,7 +208,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     if (!open) return;
     const previousFocus = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
-    dialog?.querySelector<HTMLElement>('input[type="radio"]:checked')?.focus();
+    dialog?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         if (!committingWorkspace.current) {
@@ -217,8 +219,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       }
       if (event.key !== "Tab" || !dialog) return;
       const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("*")).filter((element) =>
-        element.matches('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]')
-        && (!element.closest('details:not([open])') || element.tagName === "SUMMARY"),
+        element.matches('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]'),
       );
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -444,25 +445,52 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
         </header>
 
         <div className="workspace-dialog__content">
-          <div className="host-choice" role="radiogroup" aria-label="Host">
-            <label className={`host-choice__card${kind === "local" ? " is-selected" : ""}`}>
-              <input type="radio" name="host-kind" checked={kind === "local"} disabled={busy} onChange={() => changeKind("local")} />
-              <Icon name="device-desktop" />
-              <span><span className="host-choice__title">Local</span><span className="host-choice__desc">This computer</span></span>
-            </label>
-            {win ? (
-              <label className={`host-choice__card${kind === "wsl" ? " is-selected" : ""}`}>
-                <input type="radio" name="host-kind" checked={kind === "wsl"} disabled={busy} onChange={() => changeKind("wsl")} />
-                <Icon name="terminal-linux" />
-                <span><span className="host-choice__title">WSL</span><span className="host-choice__desc">Linux on Windows</span></span>
-              </label>
-            ) : null}
-            <label className={`host-choice__card${kind === "ssh" ? " is-selected" : ""}`}>
-              <input type="radio" name="host-kind" checked={kind === "ssh"} disabled={busy} onChange={() => changeKind("ssh")} />
-              <Icon name="remote" />
-              <span><span className="host-choice__title">SSH</span><span className="host-choice__desc">Remote server</span></span>
-            </label>
-          </div>
+          <SegmentedControl
+            className="host-choice"
+            aria-label="Host"
+            value={kind}
+            disabled={busy}
+            onChange={(next) => changeKind(next)}
+            options={[
+              {
+                value: "local",
+                label: (
+                  <span>
+                    <Icon name="device-desktop" />
+                    <span className="anchor-seg__title">Local</span>
+                    <span className="anchor-seg__desc">This computer</span>
+                  </span>
+                ),
+                "aria-label": "Local",
+              },
+              ...(win
+                ? [
+                    {
+                      value: "wsl" as const,
+                      label: (
+                        <span>
+                          <Icon name="terminal-linux" />
+                          <span className="anchor-seg__title">WSL</span>
+                          <span className="anchor-seg__desc">Linux on Windows</span>
+                        </span>
+                      ),
+                      "aria-label": "WSL",
+                    },
+                  ]
+                : []),
+              {
+                value: "ssh",
+                label: (
+                  <span>
+                    <Icon name="remote" />
+                    <span className="anchor-seg__title">SSH</span>
+                    <span className="anchor-seg__desc">Remote server</span>
+                  </span>
+                ),
+                "aria-label": "SSH",
+              },
+            ]}
+          />
 
           {kind === "ssh" ? (
             <>
@@ -492,10 +520,9 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                       <p className="modal__hint">Uses your OpenSSH config, keys, agent and jump hosts.</p>
                       {configHosts.length === 0 ? <p className="modal__hint">No named hosts found. Type an alias or use a manual connection.</p> : null}
                       <div className="workspace-dialog__security-note"><Icon name="shield" /><p>Only connect to hosts you trust. Unknown host keys must be verified in a terminal first.</p></div>
-                      <details className="workspace-dialog__details">
-                        <summary>Authentication &amp; security details</summary>
+                      <Disclosure className="workspace-dialog__details" summary="Authentication & security details">
                         <p>SSH config may run local commands. Key or agent authentication is required; load encrypted keys into ssh-agent. For password authentication, use a manual connection. Changed host keys are always rejected.</p>
-                      </details>
+                      </Disclosure>
                     </>
                   ) : (
                     <div className="workspace-dialog__manual-fields">
@@ -534,8 +561,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                         <span className="field__label">Password (this session only)</span>
                         <input className="field__input" type="password" value={sshPassword} disabled={busy} onChange={(event) => { invalidateSsh(); setSshPassword(event.target.value); }} autoComplete="new-password" placeholder="Optional" />
                       </label>
-                      <details className="workspace-dialog__details workspace-dialog__full-width">
-                        <summary>Private key &amp; host verification</summary>
+                      <Disclosure className="workspace-dialog__details workspace-dialog__full-width" summary="Private key & host verification">
                         <div className="workspace-dialog__advanced-fields">
                           <label className="field">
                             <span className="field__label">Private key path (optional)</span>
@@ -555,11 +581,11 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                             />
                           </div>
                         </div>
-                      </details>
+                      </Disclosure>
                       <div className="workspace-dialog__security-note workspace-dialog__full-width"><Icon name="shield" /><p>{sshPolicy === "strict" ? "Host keys are checked against known hosts. Unknown keys must be verified before connecting." : "The first host key will be trusted automatically. Changed keys are always rejected."}</p></div>
                     </div>
                   )}
-                  {configWarning ? <details className="workspace-dialog__details workspace-dialog__warning"><summary>SSH config discovery notice</summary><p>{configWarning}</p></details> : null}
+                  {configWarning ? <Disclosure className="workspace-dialog__details workspace-dialog__warning" summary="SSH config discovery notice"><p>{configWarning}</p></Disclosure> : null}
                 </form>
               )}
             </>

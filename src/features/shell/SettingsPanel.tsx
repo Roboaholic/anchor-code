@@ -14,6 +14,7 @@ import {
   MIN_UI_SCALE,
 } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
+import { Switch } from "@/shared/Switch";
 import { Dropdown } from "@/shared/Dropdown";
 import type {
   AppUpdateState,
@@ -305,12 +306,11 @@ export function SettingsPanel() {
               <section className="settings-section" aria-label="Appearance">
                 <h3 className="settings-section__title">Startup</h3>
                 <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
+                  <Switch
                     checked={restoreLastWorkspace}
                     disabled={!window.anchor?.settings?.setRestoreLastWorkspace}
-                    onChange={(e) => {
-                      const next = e.target.checked;
+                    aria-label="Reopen last workspace on launch"
+                    onChange={(next) => {
                       setRestoreLastWorkspaceState(next);
                       void window.anchor.settings
                         .setRestoreLastWorkspace(next)
@@ -326,12 +326,12 @@ export function SettingsPanel() {
                 </p>
                 <h3 className="settings-section__title">Scrolling</h3>
                 <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
+                  <Switch
                     data-testid="smooth-scrolling-toggle"
                     checked={smoothScrollEnabled && !reducedMotion}
                     disabled={reducedMotion}
-                    onChange={(e) => setSmoothScrollEnabled(e.target.checked)}
+                    aria-label="Smooth scrolling"
+                    onChange={setSmoothScrollEnabled}
                   />
                   <span>Smooth scrolling</span>
                 </label>

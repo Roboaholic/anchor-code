@@ -53,7 +53,7 @@ describe("OpenSshHostSession native transport", () => {
     vi.clearAllMocks();
     spawnMock.mockReset();
     ptyMock.mockReset();
-    host = new OpenSshHostSession({ profileId: "ssh-native", configHost: "work-alias" });
+    host = new OpenSshHostSession({ profileId: "ssh-native", configHost: "work-alias", persistentReads: false });
   });
   afterEach(async () => {
     for (const process of children.splice(0)) process.end();
@@ -244,13 +244,13 @@ describe("OpenSshHostSession native transport", () => {
     const disposed = host.dispose();
     process.end();
     await Promise.all([rejected, disposed]);
-    host = new OpenSshHostSession({ profileId: "ssh-native", configHost: "work-alias" });
+    host = new OpenSshHostSession({ profileId: "ssh-native", configHost: "work-alias", persistentReads: false });
     const next = child(); const nextResult = host.run("/", "true", []); next.end();
     expect((await nextResult).code).toBe(0);
   });
 
   it("shares the command budget across workspace and browse sessions for an alias", async () => {
-    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias" });
+    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias", persistentReads: false });
     try {
       const first = child(); const run = host.run("/", "git", ["status"]);
       const second = child(); const read = browse.readFile("/file");
@@ -284,7 +284,7 @@ describe("OpenSshHostSession native transport", () => {
   it("disposes a queued session without affecting another session sharing its alias", async () => {
     const first = child(); const run1 = host.run("/", "slow", []);
     const second = child(); const run2 = host.run("/", "slow", []);
-    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias" });
+    const browse = new OpenSshHostSession({ profileId: "browse", configHost: "work-alias", persistentReads: false });
     const queued = browse.readFile("/file");
     const rejected = expect(queued).rejects.toMatchObject({ code: "disconnected" });
     await browse.dispose(); await rejected;
@@ -478,7 +478,10 @@ describe("OpenSshHostSession native transport", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("OpenSshHostSession remote shell fixtures (no network)", () => {
+describe.skipIf(process.platform === "win32").each([
+  { persistentReads: true, mode: "persistent helper reads" },
+  { persistentReads: false, mode: "one ssh per operation" },
+])("OpenSshHostSession remote shell fixtures (no network, $mode)", ({ persistentReads }) => {
   let root: string;
   let host: OpenSshHostSession;
   let fixturePath: string;
@@ -495,7 +498,7 @@ describe.skipIf(process.platform === "win32")("OpenSshHostSession remote shell f
       cwd: root,
       env: { HOME: root, PATH: fixturePath, LC_ALL: "C" },
     }));
-    host = new OpenSshHostSession({ profileId: "fixture", configHost: "never-connected" });
+    host = new OpenSshHostSession({ profileId: "fixture", configHost: "never-connected", persistentReads });
   });
   afterEach(async () => {
     await host.dispose();
@@ -577,5 +580,25 @@ describe.skipIf(process.platform === "win32")("OpenSshHostSession remote shell f
   it("sends EOF when stdin is omitted and rejects NUL in command arguments", async () => {
     expect(await host.run(root, "cat", [], { timeoutMs: 1000 })).toEqual({ stdout: "", stderr: "", code: 0 });
     await expect(host.run(root, "printf", ["bad\0value"])).rejects.toMatchObject({ code: "failed" });
+  });
+
+  it.runIf(persistentReads)("serves repeated reads from one ssh process and falls back when it dies", async () => {
+    await fs.mkdir(path.join(root, "a")); await fs.writeFile(path.join(root, "a", "f.txt"), "x");
+    spawnMock.mockClear();
+    for (let i = 0; i < 5; i++) {
+      expect(await host.listDir(`${root}/a`)).toEqual([{ name: "f.txt", type: "file" }]);
+      expect((await host.stat(`${root}/a/f.txt`)).size).toBe(1);
+    }
+    expect(await host.readFile(`${root}/a/f.txt`)).toBe("x");
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    // Writes keep their own process (never replayed through the helper).
+    await host.writeFile(`${root}/a/g.txt`, "y");
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    // Kill the helper's remote loop: the next read still succeeds.
+    const helperChild = spawnMock.mock.results[0]!.value as import("node:child_process").ChildProcess;
+    const closed = new Promise((done) => helperChild.once("close", done));
+    helperChild.kill("SIGKILL");
+    await closed;
+    expect(await host.readFile(`${root}/a/g.txt`)).toBe("y");
   });
 });

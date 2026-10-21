@@ -17,6 +17,8 @@ export interface TreeNode {
   loaded?: boolean;
   expanded?: boolean;
   error?: string;
+  /** Listing in flight (expanded optimistically before children arrive). */
+  loading?: boolean;
 }
 
 type WorkspaceTreeStatus = "idle" | "loading" | "ready" | "error";
@@ -81,6 +83,47 @@ async function loadChildren(
     children: e.type === "dir" ? [] : undefined,
   }));
 }
+function findNode(nodes: TreeNode[], path: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    if (node.children?.length) {
+      const hit = findNode(node.children, path);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/** Replace the node at `path`; returns the same array when nothing matched. */
+function mapNode(
+  nodes: TreeNode[],
+  path: string,
+  fn: (node: TreeNode) => TreeNode,
+): TreeNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.path === path) {
+      changed = true;
+      return fn(node);
+    }
+    if (!node.children?.length) return node;
+    const children = mapNode(node.children, path, fn);
+    if (children === node.children) return node;
+    changed = true;
+    return { ...node, children };
+  });
+  return changed ? next : nodes;
+}
+
+/** Tree-visible entries only (what loadChildren keeps). */
+export function visibleEntrySignature(entries: DirEntry[]): string {
+  return entries
+    .filter((e) => !shouldHideTreeEntry(e.name, e.type))
+    .map((e) => `${e.type[0]}${e.name}`)
+    .sort()
+    .join("\n");
+}
+
 async function loadWorkspaceInstancesSafe(): Promise<{
   openWorkspaces: WorkspaceInstance[];
   activeWorkspaceId: string | null;
@@ -356,60 +399,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   toggleDir: async (dirPath: string) => {
     const { rootEntries, workspaceRoot } = get();
     if (!workspaceRoot) return;
+    const target = findNode(rootEntries, dirPath);
+    if (!target || target.type !== "dir") return;
 
-    const updateNode = async (nodes: TreeNode[]): Promise<TreeNode[]> => {
-      const result: TreeNode[] = [];
-      for (const node of nodes) {
-        if (node.path === dirPath && node.type === "dir") {
-          if (shouldSkipExpand(node.name)) {
-            result.push({
-              ...node,
-              expanded: !node.expanded,
-              loaded: true,
-              children: [],
-              error: node.name === ".git" ? "Contents hidden" : undefined,
-            });
-            continue;
-          }
-          const willExpand = !node.expanded;
-          if (willExpand && !node.loaded) {
-            try {
-              const children = await loadChildren(node.path);
-              result.push({
-                ...node,
-                expanded: true,
-                loaded: true,
-                children,
-                error: undefined,
-              });
-            } catch (err) {
-              result.push({
-                ...node,
-                expanded: true,
-                loaded: true,
-                children: [],
-                error: formatError(err),
-              });
-            }
-          } else {
-            result.push({ ...node, expanded: willExpand });
-          }
-        } else if (node.children && node.children.length > 0) {
-          result.push({
-            ...node,
-            children: await updateNode(node.children),
-          });
-        } else {
-          result.push(node);
-        }
-      }
-      return result;
-    };
+    // Every update below maps the *latest* tree, so concurrent toggles and
+    // watcher refreshes compose instead of overwriting each other.
+    const apply = (fn: (node: TreeNode) => TreeNode) =>
+      set((state) => {
+        const next = mapNode(state.rootEntries, dirPath, fn);
+        if (next === state.rootEntries) return {};
+        return {
+          rootEntries: next,
+          workspaceViews: updateActiveWorkspaceView(state, { rootEntries: next }),
+        };
+      });
 
-    const next = await updateNode(rootEntries);
-    set((state) => ({
-      rootEntries: next,
-      workspaceViews: updateActiveWorkspaceView(state, { rootEntries: next }),
+    if (shouldSkipExpand(target.name)) {
+      apply((node) => ({
+        ...node,
+        expanded: !node.expanded,
+        loaded: true,
+        children: [],
+        error: node.name === ".git" ? "Contents hidden" : undefined,
+      }));
+      return;
+    }
+    if (target.expanded || target.loaded || target.loading) {
+      apply((node) => ({ ...node, expanded: !node.expanded }));
+      return;
+    }
+
+    // Expand immediately; children arrive when the (possibly remote) listing
+    // returns, instead of the click appearing to do nothing until then.
+    apply((node) => ({ ...node, expanded: true, loading: true, error: undefined }));
+    let children: TreeNode[] = [];
+    let error: string | undefined;
+    try {
+      children = await loadChildren(dirPath);
+    } catch (err) {
+      error = formatError(err);
+    }
+    apply((node) => ({
+      ...node,
+      loading: false,
+      loaded: true,
+      children,
+      error,
     }));
   },
 
@@ -437,6 +472,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ...node,
           expanded: old.expanded,
           loaded: old.loaded,
+          loading: old.loading,
           children: old.children,
           error: old.error,
         };

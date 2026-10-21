@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { spawnLocalPty } from "./localPty.js";
+import { HELPER_SCRIPT, OpenSshHelperClient } from "./openSshHelper.js";
 import { scheduleSshCommand } from "./openSshScheduler.js";
 import { HostError } from "./types.js";
 import type {
@@ -19,6 +20,11 @@ export interface OpenSshHostOptions {
   profileId: string;
   /** An OpenSSH config alias, passed unchanged to the local ssh executable. */
   configHost: string;
+  /**
+   * Serve read-only file operations from one persistent ssh session
+   * (default true). Disable to force one ssh process per operation.
+   */
+  persistentReads?: boolean;
 }
 
 interface ActiveRun {
@@ -29,6 +35,11 @@ interface ActiveRun {
 const STOP_GRACE_MS = 250;
 const PTY_BUFFER_LIMIT = 512 * 1024;
 const FILE_READ_RETRIES = 2;
+const HELPER_READY_TIMEOUT_MS = 20_000;
+/** Consecutive helper start failures before this session stops trying. */
+const HELPER_MAX_START_FAILURES = 3;
+/** Remote helper exit codes meaning "this host cannot run it" (old bash / no mktemp). */
+const HELPER_UNSUPPORTED_EXIT = new Set([97, 98]);
 const HOST_KEY_FAILURE = /host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .+ host key is known|Offending .+ key/i;
 const AUTH_FAILURE = /permission denied|no supported authentication methods|too many authentication failures|signing failed|agent refused operation/i;
 
@@ -48,6 +59,10 @@ export class OpenSshHostSession implements HostSession {
   private readonly shutdown = new AbortController();
   private readonly runs = new Set<ActiveRun>();
   private readonly ptys = new Set<PtyHandle>();
+  private helper: OpenSshHelperClient | null = null;
+  private helperStarting: Promise<OpenSshHelperClient | null> | null = null;
+  private helperStartFailures = 0;
+  private helperDisabled = false;
 
   constructor(opts: OpenSshHostOptions) {
     if (!opts.configHost || opts.configHost.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(opts.configHost)) {
@@ -55,13 +70,14 @@ export class OpenSshHostSession implements HostSession {
     }
     this.profileId = opts.profileId;
     this.configHost = opts.configHost;
+    this.helperDisabled = opts.persistentReads === false;
   }
 
   private assertActive(): void {
     if (this.disposed) throw new HostError("disconnected", "This SSH session has been closed. Reconnect to continue.");
   }
 
-  private sshArgs(terminal: boolean, remoteCommand: string): string[] {
+  private sshArgs(terminal: boolean, remoteCommand: string, extra: string[] = []): string[] {
     return [
       "-o", "BatchMode=yes",
       "-o", "StrictHostKeyChecking=yes",
@@ -79,6 +95,7 @@ export class OpenSshHostSession implements HostSession {
       "-o", `RequestTTY=${terminal ? "force" : "no"}`,
       "-o", "PermitLocalCommand=no",
       "-o", "ClearAllForwardings=yes",
+      ...extra,
       terminal ? "-tt" : "-T",
       "--", this.configHost, remoteCommand,
     ];
@@ -256,9 +273,90 @@ export class OpenSshHostSession implements HostSession {
     });
   }
 
+  /**
+   * Persistent helper session for read-only file commands, or null when it is
+   * unavailable (start failed, unsupported remote shell, session disposed).
+   */
+  private async getHelper(): Promise<OpenSshHelperClient | null> {
+    if (this.disposed || this.helperDisabled) return null;
+    if (this.helper?.alive) return this.helper;
+    this.helper = null;
+    this.helperStarting ??= this.startHelper().finally(() => { this.helperStarting = null; });
+    return this.helperStarting;
+  }
+
+  private startHelper(): Promise<OpenSshHelperClient | null> {
+    return new Promise<OpenSshHelperClient | null>((resolve) => {
+      // Connecting counts against the per-alias budget (sshd MaxStartups);
+      // the established session does not, like a PTY.
+      scheduleSshCommand(this.configHost, (release) => {
+        if (this.disposed) { release(); resolve(null); return; }
+        let exitCode: number | null = null;
+        let client: OpenSshHelperClient;
+        try {
+          const child = spawn("ssh", this.sshArgs(false, `bash -c ${shellQuote(HELPER_SCRIPT)}`, [
+            // Notice a dead link instead of letting queued reads hang.
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+          ]), {
+            shell: false,
+            windowsHide: true,
+            stdio: ["pipe", "pipe", "pipe"],
+            // Not detached: if the app dies, ssh dies with it (and EOF ends the remote loop).
+          });
+          child.on("close", (code) => { exitCode = code; });
+          client = new OpenSshHelperClient(child, (stderr) => connectionError(this.configHost, stderr));
+        } catch {
+          release();
+          this.noteHelperStartFailure(null);
+          resolve(null);
+          return;
+        }
+        const timer = setTimeout(() => client.dispose(), HELPER_READY_TIMEOUT_MS);
+        client.whenReady().then(
+          () => {
+            clearTimeout(timer);
+            release();
+            if (this.disposed) { client.dispose(); resolve(null); return; }
+            this.helperStartFailures = 0;
+            this.helper = client;
+            resolve(client);
+          },
+          () => {
+            clearTimeout(timer);
+            release();
+            client.dispose();
+            this.noteHelperStartFailure(exitCode);
+            resolve(null);
+          },
+        );
+      }, () => { this.noteHelperStartFailure(null); resolve(null); });
+    });
+  }
+
+  private noteHelperStartFailure(exitCode: number | null): void {
+    this.helperStartFailures++;
+    if ((exitCode !== null && HELPER_UNSUPPORTED_EXIT.has(exitCode)) || this.helperStartFailures >= HELPER_MAX_START_FAILURES) {
+      this.helperDisabled = true;
+    }
+  }
+
   private async fileCommand(script: string, message: string, opts: { stdin?: string; retryRead?: boolean } = {}): Promise<string> {
-    let result: RunResult;
-    for (let attempt = 0; ; attempt++) {
+    let result: RunResult | undefined;
+    // Read-only commands take one round trip on the persistent helper instead
+    // of a fresh ssh handshake. Any helper failure falls back to a normal run.
+    if (opts.retryRead && opts.stdin === undefined && !this.helperDisabled) {
+      const helper = await this.getHelper();
+      if (helper) {
+        try {
+          result = await helper.exec(`export LC_ALL=C; ${script}`);
+        } catch (error) {
+          if (error instanceof HostError && error.code === "timeout") throw error;
+          this.assertActive();
+        }
+      }
+    }
+    for (let attempt = 0; !result; attempt++) {
       try {
         result = await this.run("~", "bash", ["-c", `export LC_ALL=C; ${script}`], { stdin: opts.stdin });
         break;
@@ -432,6 +530,8 @@ export class OpenSshHostSession implements HostSession {
       try { pty.kill(); } catch { /* Continue cleaning up other terminals. */ }
     }
     this.ptys.clear();
+    this.helper?.dispose();
+    this.helper = null;
     await Promise.all(runs.map((run) => run.done));
   }
 }

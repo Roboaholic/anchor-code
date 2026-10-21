@@ -1999,6 +1999,12 @@ body.files-split-resizing .monaco-editor {
   padding: 2px 0 4px;
 }
 
+.file-tree__loading {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 0 4px;
+}
+
 .pane-hint {
   margin: 12px;
   padding: 8px 10px;

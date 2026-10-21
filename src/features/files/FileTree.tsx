@@ -19,6 +19,7 @@ import {
 } from "@/features/shell/QuickOpen";
 import {
   useWorkspaceStore,
+  visibleEntrySignature,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
 import { joinPath, relativeToRoot } from "@/core/workspace/paths";
@@ -253,10 +254,9 @@ export function FileTree() {
         for (const { path: dir, entries } of listed) {
           // Non-fatal: preserve the current tree on remote errors.
           if (!entries) continue;
-          const sig = entries
-            .map((e) => `${e.type[0]}${e.name}`)
-            .sort()
-            .join("\n");
+          // Compare only what the tree shows: hidden entries (node_modules)
+          // used to make the root differ on every tick and re-list it.
+          const sig = visibleEntrySignature(entries);
           if (prev.get(dir) !== sig) {
             await refreshDir(dir);
           }
@@ -1669,6 +1669,11 @@ function TreeRow({
         {node.error ? (
           <div className="file-tree__error" style={{ paddingLeft: pad + 20 }}>
             {node.error}
+          </div>
+        ) : null}
+        {node.expanded && node.loading && !node.children?.length ? (
+          <div className="file-tree__loading" style={{ paddingLeft: pad + 20 }}>
+            Loading…
           </div>
         ) : null}
         {node.expanded && node.children ? (

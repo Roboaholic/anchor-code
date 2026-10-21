@@ -1308,7 +1308,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   <button
                     type="button"
                     className="anno-sel-chip"
-                    title="Add comment"
+                    data-tip="Add comment"
                     aria-label="Add comment"
                     onMouseDown={(e) => {
                       e.preventDefault();
@@ -1327,7 +1327,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   <button
                     type="button"
                     className="anno-sel-chip anno-sel-chip--ask"
-                    title="Ask agent"
+                    data-tip="Ask agent"
                     aria-label="Ask agent"
                     onMouseDown={(e) => {
                       e.preventDefault();

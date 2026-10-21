@@ -60,6 +60,17 @@
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
   --menubar-h: 32px;
   --topbar-h: 40px;
+  /* Overlay stacking (dropdowns live inside modals → dropdown > modal) */
+  --z-dropdown: 1200;
+  --z-lightbox: 1100;
+  --z-modal: 1000;
+  --z-menu: 200;
+  --z-popover: 60;
+  --z-toast: 80;
+  --z-tooltip: 1300;
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
+  --duration-modal: 120ms;
+  --duration-popover: 100ms;
 }
 
 
@@ -264,6 +275,83 @@ button {
 button:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Unified keyboard focus ring (mouse clicks stay ring-free). */
+:where(
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="option"],
+  [role="switch"],
+  input,
+  textarea,
+  select,
+  summary
+):focus {
+  outline: none;
+}
+
+:where(
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="option"],
+  [role="switch"],
+  input,
+  textarea,
+  select,
+  summary
+):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@keyframes anchor-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes anchor-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes anchor-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 鈹€鈹€ Shell 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
@@ -580,11 +668,16 @@ button:disabled {
   font-weight: 500;
   letter-spacing: 0.04em;
   cursor: pointer;
+  outline: none;
   transition:
     background 0.12s ease,
     border-color 0.12s ease,
     color 0.12s ease,
     box-shadow 0.12s ease;
+}
+
+.workspace-switcher:focus:not(:focus-visible) {
+  box-shadow: none;
 }
 
 .workspace-switcher:hover,
@@ -644,7 +737,7 @@ button:disabled {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  z-index: 95;
+  z-index: calc(var(--z-popover) + 35);
   width: min(420px, calc(100vw - 24px));
   max-height: min(520px, calc(100vh - 88px));
   overflow: auto;
@@ -655,6 +748,7 @@ button:disabled {
   border-radius: 8px;
   background: var(--bg-panel);
   box-shadow: var(--shadow-md);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
   color: var(--text);
   font-family: var(--font);
 }
@@ -893,14 +987,14 @@ button:disabled {
   justify-content: center;
   border: none;
   border-radius: 50%;
-  background: #3794ff;
-  color: #fff;
+  background: var(--accent);
+  color: var(--bg-panel);
   box-shadow: none;
 }
 
 .topbar__update-badge.is-available:hover {
-  background: #1684e8;
-  color: #fff;
+  background: var(--accent-border-strong);
+  color: var(--bg-panel);
 }
 
 .topbar__update-badge.is-available .topbar__update-badge-icon {
@@ -912,9 +1006,9 @@ button:disabled {
 }
 
 .topbar__update-badge.is-ready {
-  border-color: color-mix(in srgb, var(--ok, #3fa76a) 50%, var(--border));
-  background: color-mix(in srgb, var(--ok, #3fa76a) 16%, var(--bg-panel));
-  color: var(--ok, #2f8f58);
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--border));
+  background: color-mix(in srgb, var(--ok) 16%, var(--bg-panel));
+  color: var(--ok);
 }
 
 .topbar__update-badge.is-busy {
@@ -1502,14 +1596,15 @@ body.files-split-resizing .monaco-editor {
 /* File tree context menu (fixed to viewport) */
 .file-tree-menu {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-menu);
   min-width: 200px;
   max-width: min(280px, 80vw);
   padding: 4px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--bg-panel);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+  box-shadow: var(--shadow-card);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .file-tree-menu__item {
@@ -2312,7 +2407,7 @@ body.files-split-resizing .monaco-editor {
 /* Floating skill-install prompt (not a full-width chrome banner). */
 .skill-install-toast {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-toast);
   right: 18px;
   bottom: 18px;
   width: min(360px, calc(100vw - 32px));
@@ -2329,9 +2424,7 @@ body.files-split-resizing .monaco-editor {
   border-radius: 12px;
   border: 1px solid var(--border-strong, var(--border));
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  box-shadow:
-    0 12px 32px color-mix(in srgb, #000 18%, transparent),
-    0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(10px);
 }
 
@@ -2714,22 +2807,24 @@ body.files-split-resizing .monaco-editor {
 .md-ctx-menu__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 199;
+  z-index: calc(var(--z-menu) - 1);
 }
 
 .md-ctx-menu {
-  z-index: 200;
+  z-index: var(--z-menu);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .md-mermaid-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  z-index: var(--z-lightbox);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
   background: var(--overlay);
+  animation: anchor-backdrop-in var(--duration-modal) ease-out;
 }
 
 .md-mermaid-lightbox__panel {
@@ -2742,6 +2837,7 @@ body.files-split-resizing .monaco-editor {
   border-radius: 10px;
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  animation: anchor-modal-in var(--duration-modal) ease-out;
 }
 
 .md-mermaid-lightbox__header {
@@ -3156,7 +3252,7 @@ body.files-split-resizing .monaco-editor {
 
 .terminal-session-rail__resize-handle:hover::after,
 body.terminal-session-rail-resizing .terminal-session-rail__resize-handle::after {
-  background: #3794ff;
+  background: var(--accent);
 }
 
 body.terminal-session-rail-resizing {
@@ -3281,8 +3377,8 @@ body.terminal-session-rail-resizing {
 }
 
 .terminal-session-rail__dot.is-working {
-  background: #3794ff;
-  box-shadow: 0 0 0 0 color-mix(in srgb, #3794ff 55%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
   animation: terminal-agent-working 1.15s ease-out infinite;
 }
 
@@ -3292,7 +3388,7 @@ body.terminal-session-rail-resizing {
 
 @keyframes terminal-agent-working {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #3794ff 55%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
     opacity: 1;
   }
   70% {
@@ -3354,13 +3450,14 @@ body.terminal-session-rail-resizing {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 40;
+  z-index: var(--z-popover);
   width: 220px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-card);
   padding: 6px;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .agent-picker__head {
@@ -3612,7 +3709,7 @@ body.terminal-session-rail-resizing {
 
 .xterm-ctx-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-menu);
   min-width: 120px;
   padding: 4px;
   background: var(--bg-panel);
@@ -3622,6 +3719,7 @@ body.terminal-session-rail-resizing {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .xterm-ctx-menu__item {
@@ -3970,7 +4068,8 @@ body.terminal-session-rail-resizing {
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--bg-panel);
-  box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
+  box-shadow: var(--shadow-md);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .repo-branch__list {
@@ -4809,12 +4908,12 @@ body.terminal-session-rail-resizing {
 .status-menu__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-popover);
 }
 
 .status-menu {
   position: fixed;
-  z-index: 51;
+  z-index: calc(var(--z-popover) + 1);
   display: flex;
   flex-direction: column;
   min-width: 11em;
@@ -4822,7 +4921,8 @@ body.terminal-session-rail-resizing {
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--bg-panel);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-md);
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .status-menu__item {
@@ -5567,7 +5667,7 @@ body.terminal-session-rail-resizing {
 
 .anno-bubble {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-popover);
   width: min(340px, calc(100% - 16px));
   max-height: 480px;
   display: flex;
@@ -5579,6 +5679,7 @@ body.terminal-session-rail-resizing {
   overflow: hidden;
   font-size: 12.5px;
   pointer-events: auto;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 
 .anno-bubble__header {
@@ -5783,8 +5884,12 @@ body.terminal-session-rail-resizing {
 }
 
 .anno-bubble__textarea:focus {
-  outline: 2px solid var(--accent-soft);
+  outline: none;
   border-color: var(--accent-border-strong);
+}
+
+.anno-bubble__textarea:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .anno-bubble__editor-actions {
@@ -5845,8 +5950,12 @@ body.terminal-session-rail-resizing {
 }
 
 .composer__input:focus {
-  outline: 2px solid var(--accent-soft);
+  outline: none;
   border-color: var(--accent-border-strong);
+}
+
+.composer__input:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .composer__actions {
@@ -5892,11 +6001,12 @@ body.terminal-session-rail-resizing {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--overlay);
+  animation: anchor-backdrop-in var(--duration-modal) ease-out;
 }
 
 .modal {
@@ -5904,11 +6014,12 @@ body.terminal-session-rail-resizing {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
   padding: 16px 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  animation: anchor-modal-in var(--duration-modal) ease-out;
 }
 
 .modal__header {
@@ -7228,8 +7339,8 @@ select.field__input {
 }
 
 .settings-agent-row.is-default {
-  border-color: var(--accent-border-strong, var(--accent));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: var(--accent-border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
 }
 
 .settings-agent-row.is-disabled {
@@ -7875,7 +7986,7 @@ select.field__input {
 /* Ask chip shares .anno-sel-chip styling with the comment chip. */
 .ask-pop {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-popover);
   width: min(420px, calc(100vw - 16px));
   box-sizing: border-box;
   display: flex;
@@ -7885,8 +7996,9 @@ select.field__input {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-md);
   font-size: 12px;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 .ask-pop__head {
   display: flex;
@@ -8053,7 +8165,7 @@ input[type="radio"] {
 
 .dropdown-menu {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-dropdown);
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
@@ -8066,6 +8178,7 @@ input[type="radio"] {
   font-size: 12.5px;
   outline: none;
   overscroll-behavior: contain;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
 }
 .dropdown-menu--sm {
   font-size: 12px;
@@ -8247,7 +8360,7 @@ input[type="radio"] {
 /* ── Selection toolbar (comment + ask) ─────────────────────────────── */
 .anno-sel-toolbar {
   position: absolute;
-  z-index: 25;
+  z-index: calc(var(--z-popover) - 20);
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -8257,6 +8370,37 @@ input[type="radio"] {
   background: var(--bg-panel);
   box-shadow: var(--shadow-md);
   pointer-events: auto;
+  animation: anchor-popover-in var(--duration-popover) ease-out;
+}
+
+/* Themed tip for selection chips (replaces native black title tooltip). */
+.anno-sel-toolbar .anno-sel-chip[data-tip] {
+  position: relative;
+}
+.anno-sel-toolbar .anno-sel-chip[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: var(--z-tooltip);
+  transition: opacity 0.12s ease;
+}
+.anno-sel-toolbar .anno-sel-chip[data-tip]:hover::after,
+.anno-sel-toolbar .anno-sel-chip[data-tip]:focus-visible::after {
+  opacity: 1;
 }
 .anno-sel-toolbar .anno-sel-chip {
   position: static;

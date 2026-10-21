@@ -656,7 +656,7 @@ function RenderedMarkdownPane({
             <button
               type="button"
               className="anno-sel-chip"
-              title="Add comment"
+              data-tip="Add comment"
               aria-label="Add comment"
               onMouseDown={(e) => {
                 // Open on mousedown so we still have the cached selection even if
@@ -679,7 +679,7 @@ function RenderedMarkdownPane({
             <button
               type="button"
               className="anno-sel-chip anno-sel-chip--ask"
-              title="Ask agent"
+              data-tip="Ask agent"
               aria-label="Ask agent"
               onMouseDown={(e) => {
                 // Same as comment chip: use cached selection before focus collapses it.

@@ -143,8 +143,12 @@ describe("FileTree search coverage", () => {
     });
     expect(screen.getByRole("status").textContent).toContain("Search incomplete");
     expect(screen.getByLabelText("Search engine: scan")).toBeTruthy();
-    const diagnostic = screen.getByText("Some files were skipped. Narrow the include filter and search again.");
-    expect(diagnostic.closest("details")?.open).toBe(true);
+    expect(
+      screen.getByText("Some files were skipped. Narrow the include filter and search again."),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Search details/ }).getAttribute("aria-expanded"),
+    ).toBe("true");
     expect(screen.queryByRole("button", { name: /Show more/ })).toBeNull();
     if (!count) expect(screen.getByRole("status").textContent).toContain("No matches in searched files");
   });

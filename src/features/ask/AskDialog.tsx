@@ -337,6 +337,7 @@ export function AskDialog() {
         >
           <input
             type="checkbox"
+            className="anchor-checkbox"
             checked={readOnly}
             onChange={(e) => setReadOnly(e.target.checked)}
           />

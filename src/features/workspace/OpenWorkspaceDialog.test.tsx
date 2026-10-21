@@ -114,9 +114,9 @@ describe("OpenWorkspaceDialog", () => {
       expect(
         screen.getByRole("dialog", { name: /open workspace/i }),
       ).toBeTruthy();
-      expect(screen.getByText("WSL").closest("label")?.className).toMatch(
-        /is-selected/,
-      );
+      expect(
+        screen.getByRole("radio", { name: "WSL" }).getAttribute("aria-checked"),
+      ).toBe("true");
 
       await waitFor(() => {
         expect(anchor.host.wslHome).toHaveBeenCalled();
@@ -190,9 +190,7 @@ describe("OpenWorkspaceDialog", () => {
         <OpenWorkspaceDialog open onClose={onClose} onOpen={onOpen} />,
       );
 
-      const localLabel = screen.getByText("Local").closest("label");
-      expect(localLabel).toBeTruthy();
-      await user.click(localLabel!);
+      await user.click(screen.getByRole("radio", { name: "Local" }));
 
       await waitFor(() => {
         expect(screen.getByText(/Local workspace/i)).toBeTruthy();
@@ -269,7 +267,7 @@ describe("SSH workspace connections", () => {
     const user = userEvent.setup();
     render(<OpenWorkspaceDialog open onOpen={onOpen} onClose={onClose} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     await waitFor(() => expect((screen.getByLabelText("SSH config host") as HTMLInputElement).value).toBe("work"));
     return user;
   }
@@ -310,7 +308,7 @@ describe("SSH workspace connections", () => {
     const onClose = vi.fn();
     render(<ReopenableDialog onClose={onClose} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(anchor.host.browseListDir).toHaveBeenCalledTimes(1));
 
@@ -336,7 +334,7 @@ describe("SSH workspace connections", () => {
     const onClose = vi.fn();
     render(<ReopenableDialog onClose={onClose} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(screen.getByText("project")).toBeTruthy());
 
@@ -391,7 +389,7 @@ describe("SSH workspace connections", () => {
     const user = userEvent.setup();
     render(<OpenWorkspaceDialog open onOpen={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     expect(screen.getByLabelText("Username")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Use SSH config" }));
     expect(screen.getByLabelText("SSH config host")).toBeTruthy();
@@ -439,7 +437,7 @@ describe("SSH workspace connections", () => {
     const user = userEvent.setup();
     render(<OpenWorkspaceDialog open onOpen={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     await user.click(screen.getByRole("button", { name: "Manual connection" }));
     await user.type(screen.getByRole("textbox", { name: "Host" }), "typed-host");
     resolveConfig({ hosts: [{ alias: "late", source: "config" }], warnings: [] });
@@ -484,11 +482,11 @@ describe("SSH workspace connections", () => {
 
   it("connects by Enter and preserves verification guidance without a second CTA", async () => {
     const user = await showSsh();
-    const details = screen.getByText("Authentication & security details").closest("details")!;
-    expect(details.open).toBe(false);
+    const summary = screen.getByRole("button", { name: "Authentication & security details" });
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText(/Unknown host keys must be verified/)).toBeTruthy();
-    await user.click(screen.getByText("Authentication & security details"));
-    expect(details.open).toBe(true);
+    await user.click(summary);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText(/SSH config may run local commands/)).toBeTruthy();
     await user.click(screen.getByLabelText("SSH config host"));
     await user.keyboard("{Enter}");
@@ -568,9 +566,9 @@ describe("SSH workspace connections", () => {
   it("keeps advanced manual SSH verification strict by default", async () => {
     const user = await showSsh();
     await user.click(screen.getByRole("button", { name: "Manual connection" }));
-    const details = screen.getByText("Private key & host verification").closest("details")!;
-    expect(details.open).toBe(false);
-    await user.click(screen.getByText("Private key & host verification"));
+    const summary = screen.getByRole("button", { name: "Private key & host verification" });
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    await user.click(summary);
     const policy = screen.getByRole("combobox", { name: "Host key verification" });
     expect(policy.textContent).toContain("Strict: require a known host key");
     await user.click(policy);
@@ -628,7 +626,7 @@ describe("SSH workspace connections", () => {
     const user = userEvent.setup();
     const view = render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={vi.fn()} />);
     await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
-    await user.click(screen.getByText("SSH").closest("label")!);
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
     const input = screen.getByLabelText("SSH config host");
     input.focus();
     view.rerender(<OpenWorkspaceDialog open onClose={() => {}} onOpen={vi.fn()} />);

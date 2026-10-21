@@ -24,6 +24,8 @@ import {
 import { joinPath, relativeToRoot } from "@/core/workspace/paths";
 import { setActiveInterval } from "@/shared/appActivity";
 import { Icon } from "@/shared/Icon";
+import { confirmDialog } from "@/shared/ConfirmDialog";
+import { Disclosure } from "@/shared/Disclosure";
 import type { CodiconName } from "@/shared/Icon";
 
 import {
@@ -343,8 +345,15 @@ export function FileTree() {
 
   const handleDelete = useCallback(
     (path: string, name: string) => {
-      if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
-      void deleteNode(path);
+      void confirmDialog({
+        title: "Delete",
+        message: `Delete "${name}"? This cannot be undone.`,
+        confirmLabel: "Delete",
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        void deleteNode(path);
+      });
     },
     [deleteNode],
   );
@@ -1180,6 +1189,7 @@ export function FileTree() {
           <label className="files-search-filters__check">
             <input
               type="checkbox"
+              className="anchor-checkbox"
               checked={respectIgnore}
               onChange={(e) => setRespectIgnore(e.target.checked)}
             />
@@ -1335,14 +1345,17 @@ export function FileTree() {
               ) : null}
             </div>
             {resultsOpen && searchDiagnostics.length > 0 ? (
-              <details className="files-search-diagnostics" open>
-                <summary>Search details ({searchDiagnostics.length})</summary>
+              <Disclosure
+                className="files-search-diagnostics"
+                defaultOpen
+                summary={`Search details (${searchDiagnostics.length})`}
+              >
                 <ul>
                   {searchDiagnostics.map((diagnostic, i) => (
                     <li key={`${diagnostic.code}:${i}`}>{diagnostic.message}</li>
                   ))}
                 </ul>
-              </details>
+              </Disclosure>
             ) : null}
             {resultsOpen ? (
               <div

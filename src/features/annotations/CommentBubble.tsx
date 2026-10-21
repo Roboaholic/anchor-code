@@ -4,6 +4,7 @@ import {
   rejoinDiffCommentBody,
 } from "@/core/history/diffComment";
 import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
+import { confirmDialog } from "@/shared/ConfirmDialog";
 import { Icon } from "@/shared/Icon";
 import type { CommentMessage, CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
@@ -227,9 +228,16 @@ function BubbleThread({
   };
 
   const onDeleteThread = () => {
-    if (!window.confirm("Delete this comment thread permanently?")) return;
-    void run(async () => {
-      await deleteComment(thread.id);
+    void confirmDialog({
+      title: "Delete comment",
+      message: "Delete this comment thread permanently?",
+      confirmLabel: "Delete",
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      void run(async () => {
+        await deleteComment(thread.id);
+      });
     });
   };
 

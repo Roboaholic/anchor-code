@@ -3,6 +3,7 @@ import {
   rejoinDiffCommentBody,
 } from "@/core/history/diffComment";
 import { Icon } from "@/shared/Icon";
+import { confirmDialog } from "@/shared/ConfirmDialog";
 import { jumpToComment } from "@/features/shell/orchestrate";
 import { useAnnotationsStore } from "./annotationsStore";
 import { CommentMarkdown } from "./CommentMarkdown";
@@ -561,17 +562,19 @@ export function CommentsPane() {
                                   aria-label="Delete comment"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (
-                                      !window.confirm(
+                                    void confirmDialog({
+                                      title: "Delete comment",
+                                      message:
                                         "Delete this comment thread permanently?",
-                                      )
-                                    ) {
-                                      return;
-                                    }
-                                    void (async () => {
-                                      await ensureWritable(session);
-                                      await deleteComment(c.id);
-                                    })();
+                                      confirmLabel: "Delete",
+                                      danger: true,
+                                    }).then((ok) => {
+                                      if (!ok) return;
+                                      void (async () => {
+                                        await ensureWritable(session);
+                                        await deleteComment(c.id);
+                                      })();
+                                    });
                                   }}
                                 >
                                   <Icon name="trash" />

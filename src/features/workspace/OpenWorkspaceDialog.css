@@ -494,3 +494,49 @@
     margin: 0 0 4px;
   }
 }
+
+/* Host kind segmented control (replaces radio cards). */
+.workspace-dialog .host-choice.anchor-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.workspace-dialog .host-choice.anchor-seg .repo-seg__btn {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 52px;
+  height: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+.workspace-dialog .host-choice.anchor-seg .repo-seg__btn > span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+}
+.workspace-dialog .host-choice.anchor-seg .repo-seg__btn .codicon {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+.workspace-dialog .host-choice.anchor-seg .repo-seg__btn.is-active {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+}
+.workspace-dialog .host-choice.anchor-seg .repo-seg__btn:hover:not(.is-active):not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}

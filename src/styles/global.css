@@ -2824,6 +2824,24 @@ body.files-split-resizing .monaco-editor {
   overflow-x: auto;
 }
 
+/* ```mermaid fence: source block with the rendered diagram attached below. */
+.md-mermaid-group {
+  margin: 1em 0;
+}
+
+.md-body .md-mermaid-group__source {
+  margin: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.md-mermaid--attached {
+  margin: 0;
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .md-mermaid__svg {
   display: flex;
   justify-content: center;

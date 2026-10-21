@@ -15,6 +15,8 @@ import {
   locateSelectionInMarkdown,
   measureCommentMarks,
   readDomSelectionIn,
+  selectionLineScope,
+  type MarkdownLineScope,
   type MarkdownSourceAnchor,
   type MdMarkRect,
 } from "@/core/annotations/mdSelection";
@@ -146,12 +148,22 @@ function MarkdownCode(
   );
 }
 
-function MarkdownPre({
-  children,
-  ...rest
-}: ComponentPropsWithoutRef<"pre">) {
+type MdPreProps = ComponentPropsWithoutRef<"pre"> & {
+  /** hast node from react-markdown; carries the fence's source position. */
+  node?: { position?: { start?: { line?: number }; end?: { line?: number } } };
+};
+
+/** Source line range of a rendered block, for scoping comment anchors. */
+function sourceLineAttrs(node: MdPreProps["node"]): Record<string, number> {
+  const start = node?.position?.start?.line;
+  const end = node?.position?.end?.line;
+  if (typeof start !== "number" || typeof end !== "number") return {};
+  return { "data-md-start-line": start, "data-md-end-line": end };
+}
+
+export function MarkdownPre({ children, node, ...rest }: MdPreProps) {
   // react-markdown wraps fenced code as <pre><code class="language-…">.
-  // Lift mermaid out of <pre> so the diagram is not monospaced/preformatted.
+  const lineAttrs = sourceLineAttrs(node);
   const only = Array.isArray(children)
     ? children.length === 1
       ? children[0]
@@ -163,11 +175,24 @@ function MarkdownPre({
       children?: ReactNode;
     };
     if (isMermaidLanguage(props.className)) {
+      // Show the fence source (selectable/commentable like any code block)
+      // and the rendered diagram right below it.
       const text = codeChildToText(props.children).replace(/\n$/, "");
-      return <MermaidBlock chart={text} />;
+      return (
+        <div className="md-mermaid-group">
+          <pre {...rest} {...lineAttrs} className="md-mermaid-group__source">
+            <code className={props.className}>{text}</code>
+          </pre>
+          <MermaidBlock chart={text} className="md-mermaid md-mermaid--attached" />
+        </div>
+      );
     }
   }
-  return <pre {...rest}>{children}</pre>;
+  return (
+    <pre {...rest} {...lineAttrs}>
+      {children}
+    </pre>
+  );
 }
 
 export function MarkdownViewer({
@@ -221,7 +246,7 @@ export function MarkdownViewer({
       <div className="md-viewer__toolbar">
         <span className="muted toolbar-hint">
           {effectiveMode === "rendered"
-            ? "Select text to comment · mermaid fences render as diagrams"
+            ? "Select text to comment · mermaid fences show source and diagram"
             : "Annotate via Monaco selection"}
         </span>
         <div className="md-viewer__toolbar-end">
@@ -321,6 +346,7 @@ function RenderedMarkdownPane({
   const bubbleRef = useRef<BubbleState | null>(null);
   const pendingSelectionTextRef = useRef<string | null>(null);
   const pendingSelectionRectRef = useRef<DOMRect | null>(null);
+  const pendingSelectionScopeRef = useRef<MarkdownLineScope | null>(null);
   const handledRevealRef = useRef<string | null>(null);
   const fontSize = useThemeStore((s) => s.fontSize);
   const mdFontSize = markdownFontSize(fontSize);
@@ -461,6 +487,7 @@ function RenderedMarkdownPane({
     // Cache selected text: clicking the chip can clear the live DOM selection.
     pendingSelectionTextRef.current = sel.text;
     pendingSelectionRectRef.current = rect;
+    pendingSelectionScopeRef.current = selectionLineScope(sel.range);
     setSelToolbar({ left, top, text: sel.text });
   }, []);
 
@@ -518,19 +545,24 @@ function RenderedMarkdownPane({
         setLocateError("Select text in the rendered document first.");
         return;
       }
-      const anchor = locateSelectionInMarkdown(content, text);
+      const liveSel = readDomSelectionIn(bodyRef.current);
+      const scope = liveSel
+        ? selectionLineScope(liveSel.range)
+        : pendingSelectionScopeRef.current;
+      const anchor = locateSelectionInMarkdown(content, text, scope);
       if (!anchor) {
         setLocateError(
           "Could not map the selection back to the Markdown source. Try a longer phrase or switch to Raw.",
         );
         return;
       }
-      const liveRect = readDomSelectionIn(bodyRef.current)?.range.getBoundingClientRect();
+      const liveRect = liveSel?.range.getBoundingClientRect();
       const popAnchor = rangeAnchor(liveRect) ?? rangeAnchor(pendingSelectionRectRef.current);
       setLocateError(null);
       setBubble(null);
       pendingSelectionTextRef.current = null;
       pendingSelectionRectRef.current = null;
+      pendingSelectionScopeRef.current = null;
       setSelToolbar(null);
       setComposer({ ...anchor, forceNewSession, anchor: popAnchor });
       // Clear DOM selection so highlight doesn't fight the composer.
@@ -715,7 +747,11 @@ function RenderedMarkdownPane({
                   pendingSelectionTextRef.current ?? selToolbar.text ?? ""
                 ).trim();
                 if (!text) return;
-                const anchor = locateSelectionInMarkdown(content, text);
+                const anchor = locateSelectionInMarkdown(
+                  content,
+                  text,
+                  pendingSelectionScopeRef.current,
+                );
                 const selectionEndAnchor = () => {
                   const s = window.getSelection();
                   if (!s || s.rangeCount === 0) return null;

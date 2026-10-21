@@ -93,6 +93,73 @@ export function findAllIndices(haystack: string, needle: string): number[] {
 export function locateSelectionInMarkdown(
   source: string,
   selectedRaw: string,
+  scope?: MarkdownLineScope | null,
+): MarkdownSourceAnchor | null {
+  if (scope) {
+    const scoped = locateInLineScope(source, selectedRaw, scope);
+    if (scoped) return scoped;
+  }
+  return locateAnywhere(source, selectedRaw);
+}
+
+/** 1-based inclusive source line range a rendered block came from. */
+export type MarkdownLineScope = { startLine: number; endLine: number };
+
+/**
+ * Search only inside `scope` (e.g. the fenced code block the selection lives
+ * in) so repeated text elsewhere in the file cannot steal the anchor, then
+ * translate the hit back to whole-file line numbers.
+ */
+function locateInLineScope(
+  source: string,
+  selectedRaw: string,
+  scope: MarkdownLineScope,
+): MarkdownSourceAnchor | null {
+  const content = normalizeNewlines(source);
+  const lines = content.split("\n");
+  const start = Math.max(1, Math.floor(scope.startLine));
+  const end = Math.min(lines.length, Math.floor(scope.endLine));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+  const hit = locateAnywhere(lines.slice(start - 1, end).join("\n"), selectedRaw);
+  if (!hit) return null;
+  const shift = start - 1;
+  const startLine = hit.startLine + shift;
+  const endLine = hit.endLine + shift;
+  return {
+    ...hit,
+    startLine,
+    endLine,
+    beforeContext: startLine > 1 ? lineAt(lines, startLine - 1) : "",
+    afterContext: endLine < lines.length ? lineAt(lines, endLine + 1) : "",
+    lineText: lineAt(lines, startLine),
+  };
+}
+
+/**
+ * Line scope of the rendered source block containing the whole selection,
+ * read from `data-md-start-line` / `data-md-end-line` on an ancestor.
+ */
+export function selectionLineScope(
+  range: Range | null | undefined,
+): MarkdownLineScope | null {
+  if (!range) return null;
+  const blockOf = (node: Node | null): HTMLElement | null => {
+    const el = node instanceof Element ? node : node?.parentElement ?? null;
+    return (el?.closest("[data-md-start-line]") as HTMLElement | null) ?? null;
+  };
+  const block = blockOf(range.startContainer);
+  if (!block || block !== blockOf(range.endContainer)) return null;
+  const startLine = Number(block.dataset.mdStartLine);
+  const endLine = Number(block.dataset.mdEndLine);
+  if (!Number.isFinite(startLine) || !Number.isFinite(endLine)) return null;
+  return { startLine, endLine };
+}
+
+function locateAnywhere(
+  source: string,
+  selectedRaw: string,
 ): MarkdownSourceAnchor | null {
   const content = normalizeNewlines(source);
   const selected = normalizeNewlines(selectedRaw);

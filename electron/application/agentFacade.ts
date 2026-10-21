@@ -8,7 +8,7 @@ import {
   setDefaultAgentId,
   upsertAgentProfile,
 } from "../services/agentCli.js";
-import { buildAgentLaunchArgs, buildAgentResumeArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
+import { agentReadOnlyArgs, buildAgentLaunchArgs, buildAgentResumeArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
 import {
   listAgentSessionIds,
   listAgentSessions,
@@ -106,7 +106,14 @@ export class AgentFacade {
       .filter(Boolean)
       .join(" · ");
     const extra = input.resume && input.sessionId
-      ? buildAgentResumeArgs(profile.id, input.sessionId)
+      ? (() => {
+          const resumeArgs = buildAgentResumeArgs(profile.id, input.sessionId);
+          if (!resumeArgs) return null;
+          // Keep read-only flags on resume (Ask sessions must stay plan/read-only).
+          return input.readOnly
+            ? [...agentReadOnlyArgs(profile.id), ...resumeArgs]
+            : resumeArgs;
+        })()
       : buildAgentLaunchArgs(profile.id, {
           model: input.model,
           effort: input.effort,

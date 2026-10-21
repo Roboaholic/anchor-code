@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PREVIEW_CONTEXT,
+  PREVIEW_MAX_LEAD,
   appendHitsToGroups,
+  buildSearchPreview,
   computeVirtualWindow,
   countHits,
   excludeRegexError,
@@ -10,6 +13,7 @@ import {
   parseExcludeList,
   saveSearchSettings,
   searchCompletionStatus,
+  actionableSearchDiagnostics,
   searchResultsSummary,
 } from "./searchResults";
 
@@ -123,5 +127,60 @@ describe("misc", () => {
     expect(parseExcludeList("a\n b ,c\n\n")).toEqual(["a", "b", "c"]);
     expect(excludeRegexError("")).toBeNull();
     expect(excludeRegexError("(")).toMatch(/./);
+  });
+});
+
+describe("actionableSearchDiagnostics", () => {
+  it("drops always-on scope notes and keeps real warnings", () => {
+    expect(
+      actionableSearchDiagnostics([
+        { code: "rg-scope", message: "scope" },
+        { code: "tracked-only", message: "tracked" },
+        { code: "scan-scope", message: "scan" },
+        { code: "anchorignore", message: "ignore" },
+        { code: "result-limit", message: "limit" },
+        { code: "timeout", message: "slow" },
+      ]).map((d) => d.code),
+    ).toEqual(["result-limit", "timeout"]);
+  });
+});
+
+describe("buildSearchPreview", () => {
+  it("trims leading indentation and splits around the first match", () => {
+    expect(buildSearchPreview("\t    useState,", "usestate", false, false)).toEqual({
+      clipped: false,
+      before: "",
+      match: "useState",
+      after: ",",
+    });
+  });
+
+  it("windows long lead-ins so the match stays visible", () => {
+    const line = "    const [value, setValue] = React.useState<number | null>(initial);";
+    const p = buildSearchPreview(line, "useState", false, true);
+    expect(p.clipped).toBe(true);
+    expect(p.match).toBe("useState");
+    expect(p.before.length).toBeLessThanOrEqual(PREVIEW_CONTEXT);
+    expect(p.before).toBe("React.");
+    expect(p.after).toBe("<number | null>(initial);");
+  });
+
+  it("keeps short lead-ins intact", () => {
+    const p = buildSearchPreview("import { useState } from 'react';", "useState", false, true);
+    expect(p).toEqual({ clipped: false, before: "import { ", match: "useState", after: " } from 'react';" });
+    expect("import { ".length).toBeLessThanOrEqual(PREVIEW_MAX_LEAD);
+  });
+
+  it("honors case sensitivity, regex queries and literal special characters", () => {
+    expect(buildSearchPreview("Foo foo", "foo", false, true).before).toBe("Foo ");
+    expect(buildSearchPreview("a1 b22", "b\\d+", true, false).match).toBe("b22");
+    expect(buildSearchPreview("call(x)", "(x", false, false).match).toBe("(x");
+  });
+
+  it("falls back to the trimmed line for no match, empty or invalid queries", () => {
+    const none = { clipped: false, match: "", after: "" };
+    expect(buildSearchPreview("  plain  ", "zzz", false, false)).toEqual({ ...none, before: "plain" });
+    expect(buildSearchPreview("  plain", "", false, false)).toEqual({ ...none, before: "plain" });
+    expect(buildSearchPreview("plain", "[", true, false)).toEqual({ ...none, before: "plain" });
   });
 });

@@ -73,6 +73,8 @@ type PersistedAgent = {
   resumable?: boolean;
   /** User/caller-set title (e.g. "Ask · file L3"): re-pinned on resume. */
   titlePinned?: boolean;
+  /** Ask / plan-mode sessions must resume with read-only CLI flags. */
+  readOnly?: boolean;
 };
 
 export type ParkedAgent = {
@@ -87,6 +89,8 @@ export type ParkedAgent = {
   resumable?: boolean;
   /** Last resume failure (shown in the sidebar). */
   error?: string;
+  /** Ask / plan-mode sessions must resume with read-only CLI flags. */
+  readOnly?: boolean;
 };
 
 const UNRESUMABLE_PREFIX = "unresumable:";
@@ -95,6 +99,11 @@ export const RESUME_FAIL_WINDOW_MS = 5_000;
 const agentLastActiveAt = new Map<string, number>();
 const resumingSessions = new Set<string>();
 const resumeWatch = new Map<string, { parked: ParkedAgent; at: number }>();
+const agentReadOnlyByTabId = new Map<string, boolean>();
+
+export function isAgentTabReadOnly(tabId: string): boolean {
+  return agentReadOnlyByTabId.get(tabId) === true;
+}
 
 export function markAgentActive(tabId: string, at = Date.now()): void {
   agentLastActiveAt.set(tabId, at);
@@ -230,6 +239,7 @@ function parkedFromPersisted(
       ...(saved.lastActiveAt ? { lastActiveAt: saved.lastActiveAt } : {}),
       ...(saved.titlePinned ? { titlePinned: true } : {}),
       ...(resumable ? {} : { resumable: false }),
+      ...(saved.readOnly ? { readOnly: true } : {}),
     }];
   }));
 }
@@ -409,6 +419,7 @@ export function saveWorkspaceAgents(
             (state.activeByMode.agent === tab.id ? now : undefined),
           ...(sessionId ? {} : { resumable: false }),
           ...(tab.titleSource === "user" ? { titlePinned: true } : {}),
+          ...(agentReadOnlyByTabId.get(tab.id) ? { readOnly: true } : {}),
         };
       });
     const bySession = new Map<string, PersistedAgent>();
@@ -421,6 +432,7 @@ export function saveWorkspaceAgents(
         lastActiveAt: item.lastActiveAt,
         ...(item.resumable === false ? { resumable: false } : {}),
         ...(item.titlePinned ? { titlePinned: true } : {}),
+        ...(item.readOnly ? { readOnly: true } : {}),
       });
     }
     for (const item of live) bySession.set(item.sessionId, item);
@@ -498,6 +510,7 @@ export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
     const ok = await useTerminalStore.getState().createAgentTab(profile, {
       title: parked.title,
       resumeSessionId: parked.sessionId,
+      readOnly: parked.readOnly,
     });
     if (!ok) {
       // createAgentTab keeps the parked entry on failure; record why.
@@ -926,6 +939,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         cols: 80,
         rows: 24,
       });
+      if (launch?.readOnly) agentReadOnlyByTabId.set(tab.id, true);
+      else agentReadOnlyByTabId.delete(tab.id);
       set((s) => {
         const existing = s.tabs.find((item) => item.id === tab.id);
         const groupId = existing
@@ -1017,6 +1032,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   removeTabLocal: (id) => {
     disposeXtermSession(id);
     clearAgentCompletionTimer(id);
+    agentReadOnlyByTabId.delete(id);
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const closed = s.tabs.find((t) => t.id === id);

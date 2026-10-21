@@ -23,7 +23,7 @@ import {
 } from "@/features/document/copyPath";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
-import { fitBlameText } from "./blameDisplay";
+import { fitBlameText, formatBlameTime } from "./blameDisplay";
 import "./monacoSetup";
 import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
@@ -46,19 +46,6 @@ type SelectionToolbarState = {
 const HOVER_OPEN_MS = 420;
 const HOVER_CLOSE_MS = 220;
 
-export function formatBlameTime(dateIso: string, nowMs = Date.now()): string {
-  const timestamp = Date.parse(dateIso);
-  if (!Number.isFinite(timestamp)) return "unknown time";
-  const elapsed = Math.max(0, nowMs - timestamp);
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  const year = 365 * day;
-  if (elapsed < hour) return `${Math.max(1, Math.floor(elapsed / minute))}m ago`;
-  if (elapsed < day) return `${Math.floor(elapsed / hour)}h ago`;
-  if (elapsed < year) return `${Math.floor(elapsed / day)}d ago`;
-  return `${Math.floor(elapsed / year)}y ago`;
-}
 
 /** Resolve the column range of a search hit on a single line (1-based columns). */
 export function matchRangeOnLine(

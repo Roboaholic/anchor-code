@@ -25,11 +25,12 @@ import { joinPath, relativeToRoot } from "@/core/workspace/paths";
 import { setActiveInterval } from "@/shared/appActivity";
 import { Icon } from "@/shared/Icon";
 import { confirmDialog } from "@/shared/ConfirmDialog";
-import { Disclosure } from "@/shared/Disclosure";
 import type { CodiconName } from "@/shared/Icon";
 
 import {
+  actionableSearchDiagnostics,
   appendHitsToGroups,
+  buildSearchPreview,
   computeVirtualWindow,
   countHits,
   excludeRegexError,
@@ -52,42 +53,33 @@ const SEARCH_PAGE = 2_000;
 /** Fixed row height (px) for the virtualized results list. */
 const SEARCH_ROW_HEIGHT = 22;
 
-/** Collapse noisy whitespace for preview rows. */
-function previewLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/** Highlight the first match of query in a line (fixed or simple regex). */
+/**
+ * Render a windowed preview as three flex cells so the first match can never
+ * be ellipsized: `before` truncates on its LEFT, the match never shrinks, and
+ * `after` truncates on its right.
+ */
 function highlightPreview(
   text: string,
   query: string,
   useRegex: boolean,
   caseSensitive: boolean,
 ): ReactNode {
-  const line = previewLine(text);
-  if (!query.trim() || !line) return line;
-  try {
-    let re: RegExp;
-    if (useRegex) {
-      re = new RegExp(query, caseSensitive ? "" : "i");
-    } else {
-      const esc = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      re = new RegExp(esc, caseSensitive ? "" : "i");
-    }
-    const m = line.match(re);
-    if (!m || m.index === undefined || m[0] === "") return line;
-    const i = m.index;
-    const end = i + m[0].length;
-    return (
-      <>
-        {line.slice(0, i)}
-        <mark className="files-search-hit__mark">{line.slice(i, end)}</mark>
-        {line.slice(end)}
-      </>
-    );
-  } catch {
-    return line;
+  const p = buildSearchPreview(text, query, useRegex, caseSensitive);
+  if (!p.match) {
+    return <span className="files-search-hit__after">{p.before}</span>;
   }
+  const before = `${p.clipped ? "…" : ""}${p.before}`;
+  return (
+    <>
+      {before ? (
+        <span className="files-search-hit__before">
+          <span className="files-search-hit__ltr">{before}</span>
+        </span>
+      ) : null}
+      <mark className="files-search-hit__mark">{p.match}</mark>
+      {p.after ? <span className="files-search-hit__after">{p.after}</span> : null}
+    </>
+  );
 }
 
 export function FileTree() {
@@ -418,6 +410,10 @@ export function FileTree() {
   const [searching, setSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null);
   const [searchDiagnostics, setSearchDiagnostics] = useState<SearchDiagnostic[]>([]);
+  const searchWarnings = useMemo(
+    () => actionableSearchDiagnostics(searchDiagnostics),
+    [searchDiagnostics],
+  );
   const [groups, setGroups] = useState<SearchFileGroup[]>([]);
   const hitCount = useMemo(() => countHits(groups), [groups]);
   const activeSearch = useRef<{
@@ -1116,7 +1112,6 @@ export function FileTree() {
         <button
           type="button"
           className={`icon-btn files-search__toggle${useRegex ? " is-active" : ""}`}
-          title="Use regular expression"
           aria-label="Use regular expression"
           aria-pressed={useRegex}
           onClick={() => setUseRegex((v) => !v)}
@@ -1126,7 +1121,6 @@ export function FileTree() {
         <button
           type="button"
           className={`icon-btn files-search__toggle${caseSensitive ? " is-active" : ""}`}
-          title="Match case"
           aria-label="Match case"
           aria-pressed={caseSensitive}
           onClick={() => setCaseSensitive((v) => !v)}
@@ -1136,7 +1130,6 @@ export function FileTree() {
         <button
           type="button"
           className={`icon-btn files-search__toggle${filtersOpen || include || exclude || excludeRegex || !respectIgnore ? " is-active" : ""}`}
-          title="Include / exclude files"
           aria-label="Include and exclude filters"
           aria-pressed={filtersOpen}
           onClick={() => setFiltersOpen((v) => !v)}
@@ -1299,20 +1292,39 @@ export function FileTree() {
                 />
                 <span className="files-section__label">RESULTS</span>
                 <span className="files-section__meta files-search-summary" role="status">
-                  <span className="files-search-summary__text" title={resultsMeta}>{resultsMeta}</span>
+                  <span className="files-search-summary__text">{resultsMeta}</span>
                   {searchSource ? (
-                    <span className="files-search-summary__engine" aria-label={`Search engine: ${searchSource}`} title={`Search engine: ${searchSource}`}>
+                    <span className="files-search-summary__engine" aria-label={`Search engine: ${searchSource}`}>
                       {searchSource}
                     </span>
                   ) : null}
                 </span>
               </button>
+              {searchWarnings.length > 0 ? (
+                <div className="files-section__head-actions">
+                  <button
+                    type="button"
+                    className="icon-btn files-search-warn"
+                    aria-label={`Search warnings (${searchWarnings.length})`}
+                  >
+                    <Icon name="warning" />
+                    <span className="files-search-warn__tip" role="tooltip">
+                      <ul>
+                        {searchWarnings.map((diagnostic, i) => (
+                          <li key={`${diagnostic.code}:${i}`}>
+                            {diagnostic.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </span>
+                  </button>
+                </div>
+              ) : null}
               {searching ? (
                 <div className="files-section__head-actions">
                   <button
                     type="button"
                     className="icon-btn files-section__bulk"
-                    title="Stop search (keep results found so far)"
                     aria-label="Stop search"
                     onClick={cancelSearch}
                   >
@@ -1325,11 +1337,6 @@ export function FileTree() {
                   <button
                     type="button"
                     className="icon-btn files-section__bulk"
-                    title={
-                      allFilesExpanded
-                        ? "Collapse all files (filename only)"
-                        : "Expand all files (show match lines)"
-                    }
                     aria-label={
                       allFilesExpanded
                         ? "Collapse all files"
@@ -1344,19 +1351,6 @@ export function FileTree() {
                 </div>
               ) : null}
             </div>
-            {resultsOpen && searchDiagnostics.length > 0 ? (
-              <Disclosure
-                className="files-search-diagnostics"
-                defaultOpen
-                summary={`Search details (${searchDiagnostics.length})`}
-              >
-                <ul>
-                  {searchDiagnostics.map((diagnostic, i) => (
-                    <li key={`${diagnostic.code}:${i}`}>{diagnostic.message}</li>
-                  ))}
-                </ul>
-              </Disclosure>
-            ) : null}
             {resultsOpen ? (
               <div
                 className="files-search-results__body"
@@ -1393,11 +1387,7 @@ export function FileTree() {
                             <button
                               type="button"
                               className="files-search-group__head"
-                              title={
-                                collapsed
-                                  ? `Expand ${group.path}`
-                                  : `Collapse ${group.path}`
-                              }
+                              aria-label={`${group.path}, ${group.hits.length} match${group.hits.length === 1 ? "" : "es"}`}
                               aria-expanded={!collapsed}
                               onClick={() => toggleFileGroup(group.path)}
                             >
@@ -1405,15 +1395,24 @@ export function FileTree() {
                                 name={collapsed ? "chevron-right" : "chevron-down"}
                                 className="files-search-group__chevron"
                               />
-                              <span className="files-search-group__file">
-                                {fileBasename(group.path)}
-                              </span>
-                              {dir ? (
-                                <span className="files-search-group__dir">
-                                  {dir}
+                              <Icon
+                                name={fileIcon(fileBasename(group.path))}
+                                className="files-search-group__icon"
+                              />
+                              <span className="files-search-group__name">
+                                <span className="files-search-group__file">
+                                  {fileBasename(group.path)}
                                 </span>
-                              ) : null}
-                              <span className="files-search-group__count">
+                                {dir ? (
+                                  <span className="files-search-group__dir">
+                                    {dir}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span
+                                className="files-search-group__count"
+                                aria-label={`${group.hits.length} match${group.hits.length === 1 ? "" : "es"}`}
+                              >
                                 {group.hits.length}
                               </span>
                             </button>
@@ -1421,17 +1420,21 @@ export function FileTree() {
                         );
                       }
                       const hit = row.hit;
+                      const idx = virtualWindow.start + i;
+                      const hitEdges =
+                        (searchRows[idx - 1]?.kind !== "hit" ? " is-first" : "") +
+                        (searchRows[idx + 1]?.kind !== "hit" ? " is-last" : "");
                       return (
                         <div
                           key={row.key}
                           role="listitem"
                           style={style}
-                          className="files-search-group__hits"
+                          className={`files-search-group__hits${hitEdges}`}
                         >
                           <button
                             type="button"
                             className="files-search-hit"
-                            title={`${hit.path}:${hit.line}`}
+                            aria-label={`${hit.path}:${hit.line} ${hit.text.trim()}`}
                             onClick={() => openHit(hit)}
                           >
                             <span className="files-search-hit__line">

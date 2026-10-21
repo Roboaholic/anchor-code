@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { HostSession } from "../host/types.js";
 import { resolveHostHome } from "./skillInstall.js";
 
@@ -53,6 +54,104 @@ export interface AgentSessionSummary {
   id: string;
   title: string;
   updatedAt: string;
+  /** Working directory the session ran in, when the transcript records it. */
+  cwd?: string;
+}
+
+/**
+ * Directory a transcript ran in. Codex (`session_meta.payload.cwd`), Claude
+ * (`cwd` on every message line), pi / OMP (`cwd` on the `session` header);
+ * older Codex rollouts only carry `<cwd>…</cwd>` inside `<environment_context>`.
+ * Gemini records no cwd (only `projectHash`), so it returns null.
+ */
+export function parseAgentSessionCwd(text: string): string | null {
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.includes("cwd")) continue;
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      const payload = record.payload && typeof record.payload === "object"
+        ? record.payload as Record<string, unknown>
+        : null;
+      const cwd = typeof record.cwd === "string"
+        ? record.cwd
+        : typeof payload?.cwd === "string"
+          ? payload.cwd
+          : null;
+      if (cwd?.trim()) return cwd.trim();
+    } catch {
+      // Ignore partially written JSONL lines.
+    }
+  }
+  const legacy = text.match(/<cwd>([^<]+)<\/cwd>/);
+  if (legacy?.[1]) {
+    try {
+      return (JSON.parse(`"${legacy[1]}"`) as string).trim() || null;
+    } catch {
+      return legacy[1].trim() || null;
+    }
+  }
+  return null;
+}
+
+function parseGeminiProjectHash(text: string): string | null {
+  return text.match(/"projectHash"\s*:\s*"([0-9a-f]{64})"/i)?.[1]?.toLowerCase() ?? null;
+}
+
+/** Gemini CLI keys sessions by sha256(project root) instead of recording a cwd. */
+export function geminiProjectHash(root: string): string {
+  return createHash("sha256").update(root).digest("hex");
+}
+
+function normalizeSessionPath(value: string, caseInsensitive: boolean): string {
+  let out = value.trim().replace(/\\/g, "/");
+  const unc = out.startsWith("//");
+  out = out.replace(/\/{2,}/g, "/");
+  if (unc) out = `/${out}`;
+  if (out.length > 1 && !/^[a-z]:\/$/i.test(out)) out = out.replace(/\/+$/, "");
+  if (/^[a-z]:/i.test(out) || caseInsensitive) out = out.toLowerCase();
+  return out;
+}
+
+/** True when `cwd` is `root` or a directory below it (separator- and case-aware). */
+export function isPathWithin(cwd: string, root: string, caseInsensitive = false): boolean {
+  const child = normalizeSessionPath(cwd, caseInsensitive);
+  const parent = normalizeSessionPath(root, caseInsensitive);
+  if (!child || !parent) return false;
+  if (child === parent) return true;
+  return child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
+}
+
+export interface SessionWorkspaceFilter {
+  root: string;
+  caseInsensitive?: boolean;
+}
+
+/**
+ * Keep sessions that ran in the workspace root or below it. Sessions without
+ * any cwd metadata are dropped: we cannot tell which project they belong to.
+ */
+export function sessionInWorkspace(
+  profileId: string,
+  session: { cwd?: string; filePath?: string; projectHash?: string | null },
+  filter: SessionWorkspaceFilter,
+): boolean {
+  if (session.cwd) return isPathWithin(session.cwd, filter.root, filter.caseInsensitive);
+  if (profileId.trim().toLowerCase() === "gemini") {
+    const hash = geminiProjectHash(filter.root);
+    return session.projectHash === hash || Boolean(session.filePath?.toLowerCase().includes(hash));
+  }
+  return false;
+}
+
+/** Strings a matching transcript must contain (cheap grep before parsing). */
+export function sessionScanNeedles(profileId: string, root: string): string[] {
+  const needles = new Set<string>();
+  const trimmed = root.replace(/[\\/]+$/, "") || root;
+  needles.add(JSON.stringify(trimmed).slice(1, -1));
+  needles.add(trimmed.replace(/\\/g, "/"));
+  needles.add(trimmed);
+  if (profileId.trim().toLowerCase() === "gemini") needles.add(geminiProjectHash(root));
+  return [...needles].filter(Boolean);
 }
 
 function sessionRoot(home: string, profileId: string): string | null {
@@ -133,6 +232,7 @@ export function parseAgentSessionTitle(profileId: string, text: string): string 
 export function parseAgentSessionList(
   profileId: string,
   text: string,
+  filter?: SessionWorkspaceFilter | null,
 ): AgentSessionSummary[] {
   const pattern = sessionIdPattern(profileId);
   const sessions: AgentSessionSummary[] = [];
@@ -152,12 +252,22 @@ export function parseAgentSessionList(
     const contentId = first ? first[1] ?? first[2] : undefined;
     const id = (pathId ?? contentId)?.toLowerCase();
     if (!id) continue;
+    const cwd = parseAgentSessionCwd(transcript) ?? undefined;
+    if (
+      filter &&
+      !sessionInWorkspace(
+        profileId,
+        { cwd, filePath, projectHash: parseGeminiProjectHash(transcript) },
+        filter,
+      )
+    ) continue;
     sessions.push({
       id,
       title: parseAgentSessionTitle(profileId, transcript) ?? `Session ${id.slice(0, 8)}`,
       updatedAt: Number.isFinite(modifiedSeconds)
         ? new Date(modifiedSeconds * 1_000).toISOString()
         : new Date(0).toISOString(),
+      ...(cwd ? { cwd } : {}),
     });
   }
   return sessions;
@@ -178,17 +288,38 @@ function hostHomeCwd(host: HostSession): string {
 }
 
 
+/** Newest transcripts inspected when scoping history to a workspace. */
+export const AGENT_SESSION_WORKSPACE_SCAN_WINDOW = 400;
+
+interface RecentScanOptions {
+  /** Max transcripts emitted. */
+  limit: number;
+  /** Max newest transcripts inspected (>= limit). */
+  window: number;
+  /** When set, only transcripts whose path or first 128 lines contain one of these. */
+  needles?: string[];
+}
+
+function posixRecentScanScript(rootExpr: string, opts: RecentScanOptions): string {
+  const needles = opts.needles?.filter(Boolean) ?? [];
+  const grepArgs = needles.map((n) => `-e ${shellQuote(n)}`).join(" ");
+  const pathCase = needles.map((n) => `*${shellQuote(n)}*`).join("|");
+  const keep = needles.length > 0
+    ? `case "$file" in ${pathCase}) ;; *) head -n 128 "$file" 2>/dev/null | grep -qF ${grepArgs} || continue;; esac; `
+    : "";
+  return `root=${rootExpr}; if [ -d "$root" ]; then find "$root" -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${opts.window} | { n=0; while IFS="$(printf '\\t')" read -r mtime file; do ${keep}printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; n=$((n+1)); [ "$n" -ge ${opts.limit} ] && break; done; }; fi`;
+}
+
 async function runRecentSessionScanFromHome(
   host: HostSession,
   profileId: string,
-  limit: number,
+  opts: RecentScanOptions,
 ): Promise<string> {
   const segment = sessionSegments(profileId);
   if (!segment) return "";
   // Session files live under $HOME, so workspace validity is irrelevant.
   const cwd = hostHomeCwd(host);
-  const root = `"$HOME/${segment}"`;
-  const script = `root=${root}; if [ -d "$root" ]; then find "$root" -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${limit} | while IFS="$(printf '\\t')" read -r mtime file; do printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; done; fi`;
+  const script = posixRecentScanScript(`"$HOME/${segment}"`, opts);
   return (await host.run(cwd, "bash", ["-s"], {
     stdin: script,
     timeoutMs: AGENT_SESSION_SCAN_TIMEOUT_MS,
@@ -198,40 +329,69 @@ async function runRecentSessionScanFromHome(
 async function runRecentSessionScan(
   host: HostSession,
   root: string,
-  limit: number,
+  opts: RecentScanOptions,
 ): Promise<string> {
   const cwd = host.workspaceRoot || (host.kind === "local" ? process.cwd() : "/");
   if (host.kind === "local" && process.platform === "win32") {
     const rootArg = powershellQuote(root.replace(/\//g, "\\\\"));
+    const needles = opts.needles?.filter(Boolean) ?? [];
+    const filter = needles.length > 0
+      ? ` | Where-Object { $f = $_.FullName; $hit = $false; foreach ($n in $needles) { if ($f.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true } }; $hit -or (Get-Content -LiteralPath $f -TotalCount 128 -ErrorAction SilentlyContinue | Select-String -SimpleMatch -Pattern $needles -Quiet) }`
+      : "";
     const command = [
       `$root=${rootArg}`,
-      `if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ${limit} | ForEach-Object { [Console]::Out.Write([char]30 + ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds().ToString() + [char]9 + $_.FullName + [char]10); Get-Content -LiteralPath $_.FullName -TotalCount 128; [Console]::Out.Write([char]31 + [char]10) } }`,
+      `$needles=@(${needles.map(powershellQuote).join(",")})`,
+      `if (Test-Path -LiteralPath $root) { Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.jsonl -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ${opts.window}${filter} | Select-Object -First ${opts.limit} | ForEach-Object { [Console]::Out.Write([char]30 + ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds().ToString() + [char]9 + $_.FullName + [char]10); Get-Content -LiteralPath $_.FullName -TotalCount 128; [Console]::Out.Write([char]31 + [char]10) } }`,
     ].join("; ");
     return (await host.run(cwd, "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { timeoutMs: 8_000 })).stdout;
   }
-  const rootArg = shellQuote(root);
-  const script = `if [ -d ${rootArg} ]; then find ${rootArg} -type f -name '*.jsonl' -printf '%T@\\t%p\\n' 2>/dev/null | sort -nr | head -n ${limit} | while IFS="$(printf '\\t')" read -r mtime file; do printf '\\036%s\\t%s\\n' "$mtime" "$file"; head -n 128 "$file"; printf '\\037\\n'; done; fi`;
+  const script = posixRecentScanScript(shellQuote(root), opts);
   if (host.kind === "wsl" || host.kind === "ssh") {
     return (await host.run(cwd, "bash", ["-s"], { stdin: script, timeoutMs: 8_000 })).stdout;
   }
   return (await host.run(cwd, "sh", ["-lc", script], { timeoutMs: 8_000 })).stdout;
 }
 
+export interface ListAgentSessionsOptions {
+  /**
+   * Only sessions that ran in this directory or below it (host-native path:
+   * remote POSIX path on SSH, Linux path on WSL). Null / omitted = all sessions.
+   */
+  workspaceRoot?: string | null;
+}
+
 export async function listAgentSessions(
   host: HostSession,
   profileId: string,
   limit = 12,
+  options: ListAgentSessionsOptions = {},
 ): Promise<AgentSessionSummary[]> {
   if (!sessionIdPattern(profileId)) return [];
   const count = Math.min(30, Math.max(1, limit));
+  const root = options.workspaceRoot?.trim() || null;
+  const filter: SessionWorkspaceFilter | null = root
+    ? {
+        root,
+        caseInsensitive:
+          host.kind === "local" && (process.platform === "win32" || process.platform === "darwin"),
+      }
+    : null;
+  const scan: RecentScanOptions = filter
+    ? {
+        // Prefilter over-matches (e.g. /repo vs /repo2); parse then trim.
+        limit: count * 2 + 10,
+        window: AGENT_SESSION_WORKSPACE_SCAN_WINDOW,
+        needles: sessionScanNeedles(profileId, filter.root),
+      }
+    : { limit: count, window: count };
   const text = host.kind === "wsl" || host.kind === "ssh"
-    ? await runRecentSessionScanFromHome(host, profileId, count)
+    ? await runRecentSessionScanFromHome(host, profileId, scan)
     : await (async () => {
         const home = await resolveHostHome(host);
-        const root = sessionRoot(home, profileId);
-        return root ? runRecentSessionScan(host, root, count) : "";
+        const sessionDir = sessionRoot(home, profileId);
+        return sessionDir ? runRecentSessionScan(host, sessionDir, scan) : "";
       })();
-  return parseAgentSessionList(profileId, text);
+  return parseAgentSessionList(profileId, text, filter).slice(0, count);
 }
 
 async function runSessionPathScan(

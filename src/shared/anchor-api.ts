@@ -266,6 +266,8 @@ export interface AgentSessionSummary {
   id: string;
   title: string;
   updatedAt: string;
+  /** Working directory the session ran in, when the transcript records it. */
+  cwd?: string;
 }
 
 export interface AgentModelOption {

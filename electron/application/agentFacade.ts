@@ -53,8 +53,10 @@ export class AgentFacade {
     return discoverAgentLaunchOptions(this.hosts.session, profileId, options);
   }
 
+  /** Resumable sessions that ran in the active workspace (root or below). */
   sessions(profileId: string, limit?: number) {
-    return listAgentSessions(this.hosts.session, profileId, limit);
+    const host = this.hosts.session;
+    return listAgentSessions(host, profileId, limit, { workspaceRoot: host.workspaceRoot });
   }
 
   private watchSessionTitle(

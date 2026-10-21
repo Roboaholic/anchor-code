@@ -19,6 +19,57 @@ import {
 type HistoryItem = AgentSessionSummary & { profileId: string; profileName: string };
 
 const HISTORY_OPEN_KEY = "anchor.agent.historyOpen";
+const EMPTY_HISTORY: HistoryItem[] = [];
+
+type HistoryResult = { items: HistoryItem[]; error: string | null };
+
+/** One in-flight history request per scope + profile set (StrictMode, remounts). */
+let inflightHistory: { key: string; promise: Promise<HistoryResult> } | null = null;
+
+function loadSessionHistory(
+  key: string,
+  profiles: AgentCliProfile[],
+): Promise<HistoryResult> {
+  if (inflightHistory?.key === key) return inflightHistory.promise;
+  const promise = (async (): Promise<HistoryResult> => {
+    const batches = await Promise.allSettled(
+      profiles.map(async (profile) => {
+        const items = await window.anchor.agent.listSessions({
+          profileId: profile.id,
+          limit: 30,
+        });
+        return items.map((item) => ({
+          ...item,
+          profileId: profile.id,
+          profileName: profile.name,
+        }));
+      }),
+    );
+    const unique = new Map<string, HistoryItem>();
+    for (const batch of batches) {
+      if (batch.status !== "fulfilled") continue;
+      for (const item of batch.value) unique.set(`${item.profileId}:${item.id}`, item);
+    }
+    const failed = batches.find((batch) => batch.status === "rejected");
+    return {
+      items: [...unique.values()].sort(
+        (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+      ),
+      error:
+        unique.size === 0 && failed?.status === "rejected"
+          ? failed.reason instanceof Error
+            ? failed.reason.message
+            : String(failed.reason)
+          : null,
+    };
+  })();
+  const entry = { key, promise };
+  inflightHistory = entry;
+  void promise.finally(() => {
+    if (inflightHistory === entry) inflightHistory = null;
+  });
+  return promise;
+}
 
 function formatSessionTime(value: string): string {
   const date = new Date(value);
@@ -67,6 +118,8 @@ export function AgentSidebar() {
   const createAgentTab = useTerminalStore((s) => s.createAgentTab);
   const resumeParkedAgent = useTerminalStore((s) => s.resumeParkedAgent);
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
+  const workspaceCwd = useTerminalStore((s) => s.workspaceCwd);
+  const workspaceHostProfileId = useTerminalStore((s) => s.workspaceHostProfileId);
 
   const liveSessionIds = useMemo(
     () =>
@@ -159,65 +212,58 @@ export function AgentSidebar() {
     [agentProfiles],
   );
 
+  // Keyed by content, not identity: loadAgentProfiles() / detectAgents() each
+  // store a fresh array even when nothing changed, and workspace open fires
+  // both (plus this sidebar's own load) — that used to refetch history 3×.
+  const enabledProfileKey = useMemo(
+    () =>
+      enabledProfiles
+        .map((profile) => `${profile.id}\u0000${profile.name}`)
+        .join("\u0001"),
+    [enabledProfiles],
+  );
+  const profilesReady = agentProfiles.length > 0;
+  const historyScope = `${workspaceHostProfileId ?? ""}\u0000${workspaceCwd ?? ""}`;
+  const [historyLoadedScope, setHistoryLoadedScope] = useState<string | null>(null);
+
   useEffect(() => {
-    if (!historyOpen || !window.anchor?.agent?.listSessions) {
-      if (!historyOpen) return;
+    if (!historyOpen) return;
+    if (!window.anchor?.agent?.listSessions) {
       setHistory([]);
       return;
     }
+    // Profiles not loaded yet: the mount effect above loads them; fetching now
+    // would only be repeated once they land.
+    if (!profilesReady) return;
     let cancelled = false;
-    setHistoryLoading(true);
     setHistoryError(null);
-    void (async () => {
-      const profiles =
-        enabledProfiles.length > 0
-          ? enabledProfiles
-          : await window.anchor.agent.listProfiles();
-      const usable = profiles.filter((profile) => profile.enabled !== false);
-      const batches = await Promise.allSettled(
-        usable.map(async (profile) => {
-          const items = await window.anchor.agent.listSessions({
-            profileId: profile.id,
-            limit: 30,
-          });
-          return items.map((item) => ({
-            ...item,
-            profileId: profile.id,
-            profileName: profile.name,
-          }));
-        }),
-      );
-      if (cancelled) return;
-      const merged = batches.flatMap((batch) =>
-        batch.status === "fulfilled" ? batch.value : [],
-      );
-      const unique = new Map<string, HistoryItem>();
-      for (const item of merged) {
-        unique.set(`${item.profileId}:${item.id}`, item);
-      }
-      setHistory(
-        [...unique.values()].sort(
-          (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-        ),
-      );
-      const failed = batches.find((batch) => batch.status === "rejected");
-      setHistoryError(
-        unique.size === 0 && failed?.status === "rejected"
-          ? failed.reason instanceof Error
-            ? failed.reason.message
-            : String(failed.reason)
-          : null,
-      );
-      setHistoryLoading(false);
-    })();
+    setHistoryLoading(true);
+    const profiles = useTerminalStore
+      .getState()
+      .agentProfiles.filter((profile) => profile.enabled !== false);
+    void loadSessionHistory(`${historyScope}\u0002${enabledProfileKey}`, profiles).then(
+      ({ items, error }) => {
+        if (cancelled) return;
+        setHistory(items);
+        setHistoryError(error);
+        setHistoryLoadedScope(historyScope);
+        setHistoryLoading(false);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [enabledProfiles, historyOpen]);
+  }, [enabledProfileKey, historyOpen, historyScope, profilesReady]);
+
+  // Placeholder only until this workspace's list first arrives; later
+  // refreshes keep the current rows on screen (stale-while-revalidate).
+  const showHistoryLoading =
+    historyLoadedScope !== historyScope && (historyLoading || !profilesReady);
+  const visibleHistory = historyLoadedScope === historyScope ? history : EMPTY_HISTORY;
 
   const filteredHistory = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return history.filter((item) => {
+    return visibleHistory.filter((item) => {
       if (liveSessionIds.has(item.id)) return false;
       if (!needle) return true;
       return (
@@ -225,7 +271,7 @@ export function AgentSidebar() {
         item.profileName.toLowerCase().includes(needle)
       );
     });
-  }, [history, liveSessionIds, query]);
+  }, [visibleHistory, liveSessionIds, query]);
 
   const startRenameGroup = (group: AgentWorkgroup) => {
     setRenamingGroupId(group.id);
@@ -597,7 +643,7 @@ export function AgentSidebar() {
                 onChange={(event) => setQuery(event.target.value)}
               />
             </div>
-            {historyLoading ? (
+            {showHistoryLoading ? (
               <p className="agent-sidebar__empty muted">Loading…</p>
             ) : filteredHistory.length === 0 ? (
               <p className="agent-sidebar__empty muted">

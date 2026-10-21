@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_SESSION_CAPTURE_TIMEOUT_MS,
   AGENT_SESSION_SCAN_TIMEOUT_MS,
+  AGENT_SESSION_WORKSPACE_SCAN_WINDOW,
   claimCreatedAgentSession,
+  geminiProjectHash,
+  isPathWithin,
+  parseAgentSessionCwd,
+  sessionScanNeedles,
   parseAgentSessionTitle,
   listAgentSessions,
   parseAgentSessionList,
@@ -163,5 +168,75 @@ describe("pi sessions", () => {
       `{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Explain the limiter"}]}}`,
     ].join("\n"))).toBe("Explain the limiter");
     expect(parseAgentSessionTitle("pi", `{"type":"session_info","id":"b","name":"Limiter review"}`)).toBe("Limiter review");
+  });
+});
+
+describe("workspace-scoped session history", () => {
+  const a = "11111111-2222-4333-8444-555555555555";
+  const b = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const c = "99999999-8888-4777-8666-555555555555";
+  const rec = (file: string, lines: string[], mtime = 1_700_000_000) =>
+    `\x1e${mtime}\t${file}\n${lines.join("\n")}\n\x1f\n`;
+
+  it("reads cwd from codex, claude, pi/omp and legacy codex transcripts", () => {
+    expect(parseAgentSessionCwd(`{"type":"session_meta","payload":{"id":"${a}","cwd":"/repo"}}`)).toBe("/repo");
+    expect(parseAgentSessionCwd([
+      `{"type":"summary","summary":"x"}`,
+      `{"type":"user","sessionId":"${a}","cwd":"/repo/pkg","message":{"role":"user","content":"hi"}}`,
+    ].join("\n"))).toBe("/repo/pkg");
+    expect(parseAgentSessionCwd(`{"type":"session","version":3,"id":"${a}","cwd":"/tmp"}`)).toBe("/tmp");
+    expect(parseAgentSessionCwd(
+      `{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\\n  <cwd>C:\\\\code\\\\repo</cwd>\\n</environment_context>"}]}`,
+    )).toBe("C:\\code\\repo");
+    expect(parseAgentSessionCwd(`{"sessionId":"${a}","projectHash":"abc"}`)).toBeNull();
+  });
+
+  it("matches the workspace root and its subdirectories only", () => {
+    expect(isPathWithin("/repo", "/repo")).toBe(true);
+    expect(isPathWithin("/repo/src/", "/repo/")).toBe(true);
+    expect(isPathWithin("/repo2", "/repo")).toBe(false);
+    expect(isPathWithin("/", "/repo")).toBe(false);
+    expect(isPathWithin("/anything", "/")).toBe(true);
+    expect(isPathWithin("c:\\Code\\Repo\\sub", "C:\\code\\repo")).toBe(true);
+    expect(isPathWithin("/Users/me/Repo", "/Users/me/repo")).toBe(false);
+    expect(isPathWithin("/Users/me/Repo", "/Users/me/repo", true)).toBe(true);
+  });
+
+  it("filters listed sessions by cwd and drops sessions without metadata", () => {
+    const text = [
+      rec(`/h/.codex/sessions/2026/10/21/rollout-x-${a}.jsonl`, [`{"type":"session_meta","payload":{"id":"${a}","cwd":"/repo/app"}}`]),
+      rec(`/h/.codex/sessions/2026/10/21/rollout-x-${b}.jsonl`, [`{"type":"session_meta","payload":{"id":"${b}","cwd":"/repo2"}}`]),
+      rec(`/h/.codex/sessions/2026/10/21/rollout-x-${c}.jsonl`, [`{"type":"session_meta","payload":{"id":"${c}"}}`]),
+    ].join("");
+    const scoped = parseAgentSessionList("codex", text, { root: "/repo" });
+    expect(scoped.map((s) => [s.id, s.cwd])).toEqual([[a, "/repo/app"]]);
+    expect(parseAgentSessionList("codex", text)).toHaveLength(3);
+  });
+
+  it("matches gemini sessions by project hash", () => {
+    const hash = geminiProjectHash("/repo");
+    const text = [
+      rec(`/h/.gemini/tmp/${hash}/chats/${a}.jsonl`, [`{"sessionId":"${a}","projectHash":"${hash}"}`]),
+      rec(`/h/.gemini/tmp/${"0".repeat(64)}/chats/${b}.jsonl`, [`{"sessionId":"${b}","projectHash":"${"0".repeat(64)}"}`]),
+    ].join("");
+    expect(parseAgentSessionList("gemini", text, { root: "/repo" }).map((s) => s.id)).toEqual([a]);
+  });
+
+  it("scans with the workspace prefilter on WSL/SSH and trims to the limit", async () => {
+    const run = vi.fn(async () => ({
+      stdout: [
+        rec(`/home/u/.omp/agent/sessions/--home-u-repo--/x_${a}.jsonl`, [`{"type":"session","id":"${a}","cwd":"/home/u/repo"}`]),
+        rec(`/home/u/.omp/agent/sessions/--home-u-repo2--/x_${b}.jsonl`, [`{"type":"session","id":"${b}","cwd":"/home/u/repo2"}`]),
+      ].join(""),
+      stderr: "",
+      code: 0,
+    }));
+    const host = { kind: "ssh", workspaceRoot: "/home/u/repo", run } as never;
+    const sessions = await listAgentSessions(host, "omp", 1, { workspaceRoot: "/home/u/repo" });
+    expect(sessions.map((s) => s.id)).toEqual([a]);
+    const script = (run.mock.calls[0] as unknown as [string, string, string[], { stdin: string }])[3].stdin;
+    expect(script).toContain(`head -n ${AGENT_SESSION_WORKSPACE_SCAN_WINDOW}`);
+    expect(script).toContain("grep -qF -e '/home/u/repo'");
+    expect(sessionScanNeedles("omp", "/home/u/repo/")).toEqual(["/home/u/repo"]);
   });
 });

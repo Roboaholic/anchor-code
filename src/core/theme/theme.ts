@@ -8,10 +8,39 @@ export const UI_THEMES: UiTheme[] = ["light", "light-modern", "dark", "dark-mode
 export const EDITOR_FONT_FAMILY =
   "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, 'Courier New', monospace";
 
+/** Named presets shown in Settings → Appearance. Values are CSS font-family stacks. */
+export const EDITOR_FONT_PRESETS: Array<{ id: string; label: string; value: string }> = [
+  {
+    id: "default",
+    label: "Default",
+    value: EDITOR_FONT_FAMILY,
+  },
+  {
+    id: "menlo",
+    label: "Menlo / Monaco",
+    value: "Menlo, Monaco, Consolas, monospace",
+  },
+  {
+    id: "cascadia",
+    label: "Cascadia Code",
+    value: "Cascadia Code, Consolas, monospace",
+  },
+  {
+    id: "system",
+    label: "System mono",
+    value: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  },
+];
+
 /** Default editor / terminal / markdown reading font size (px). */
 export const DEFAULT_FONT_SIZE = 13;
 export const MIN_FONT_SIZE = 11;
 export const MAX_FONT_SIZE = 20;
+
+/** Line-height multiplier for Monaco (fontSize × multiplier, rounded). */
+export const DEFAULT_LINE_HEIGHT = 1.5;
+export const MIN_LINE_HEIGHT = 1.2;
+export const MAX_LINE_HEIGHT = 2.0;
 
 /** Whole-workbench zoom percentage. */
 export const DEFAULT_UI_SCALE = 100;
@@ -52,9 +81,33 @@ export function fontSizeShortcutDelta(event: {
   return 0;
 }
 
-/** Monaco line height scaled from font size (13px → 20). */
-export function editorLineHeight(fontSize: number): number {
-  return Math.max(16, Math.round(normalizeFontSize(fontSize) * (20 / 13)));
+export function normalizeEditorFontFamily(value: unknown): string {
+  if (typeof value !== "string") return EDITOR_FONT_FAMILY;
+  const trimmed = value.trim();
+  return trimmed || EDITOR_FONT_FAMILY;
+}
+
+export function normalizeLineHeight(value: unknown): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_LINE_HEIGHT;
+  const stepped = Math.round(n * 10) / 10;
+  return Math.min(MAX_LINE_HEIGHT, Math.max(MIN_LINE_HEIGHT, stepped));
+}
+
+/** Monaco line height = fontSize × multiplier (default 1.5 → 13px → 20). */
+export function editorLineHeight(
+  fontSize: number,
+  lineHeight: number = DEFAULT_LINE_HEIGHT,
+): number {
+  return Math.max(
+    16,
+    Math.round(normalizeFontSize(fontSize) * normalizeLineHeight(lineHeight)),
+  );
 }
 
 /** Rendered Markdown body size — slightly larger than editor mono. */

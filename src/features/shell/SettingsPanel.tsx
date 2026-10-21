@@ -1,23 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSmoothScrollStore } from "./smoothScrollStore";
 import {
   DEFAULT_FONT_SIZE,
+  DEFAULT_LINE_HEIGHT,
   DEFAULT_UI_SCALE,
+  EDITOR_FONT_FAMILY,
+  EDITOR_FONT_PRESETS,
   MAX_FONT_SIZE,
+  MAX_LINE_HEIGHT,
   MIN_FONT_SIZE,
+  MIN_LINE_HEIGHT,
   MAX_UI_SCALE,
   MIN_UI_SCALE,
 } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
+import { Dropdown } from "@/shared/Dropdown";
 import type {
   AppUpdateState,
   SessionTabLayout,
-  SkillInstallStatus,
   UiTheme,
 } from "@/shared/anchor-api";
-import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
+import { SettingsAgentSection } from "./SettingsAgentSection";
 
 const THEME_OPTIONS: Array<{
   id: UiTheme;
@@ -63,13 +68,15 @@ const LAYOUT_OPTIONS: Array<{
   },
 ];
 
-type SettingsSection = "appearance" | "agent-skill" | "updates";
+type SettingsSection = "appearance" | "agent" | "updates";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
-  { id: "agent-skill", label: "Agent skill" },
+  { id: "agent", label: "Agent" },
   { id: "updates", label: "Updates" },
 ];
+
+const FONT_CUSTOM = "__custom__";
 
 /**
  * Floating settings dialog (modal). Controlled by themeStore.settingsOpen.
@@ -84,22 +91,18 @@ export function SettingsPanel() {
   const setSessionTabLayout = useThemeStore((s) => s.setSessionTabLayout);
   const fontSize = useThemeStore((s) => s.fontSize);
   const setFontSize = useThemeStore((s) => s.setFontSize);
+  const editorFontFamily = useThemeStore((s) => s.editorFontFamily);
+  const setEditorFontFamily = useThemeStore((s) => s.setEditorFontFamily);
+  const lineHeight = useThemeStore((s) => s.lineHeight);
+  const setLineHeight = useThemeStore((s) => s.setLineHeight);
   const uiScale = useThemeStore((s) => s.uiScale);
   const setUiScale = useThemeStore((s) => s.setUiScale);
   const versionLabel = useShellStore((s) => s.versionLabel);
-  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const [section, setSection] = useState<SettingsSection>("appearance");
   const [update, setUpdate] = useState<AppUpdateState | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const [skillStatus, setSkillStatus] = useState<SkillInstallStatus | null>(
-    null,
-  );
-  const [skillBusy, setSkillBusy] = useState(false);
-  const [skillMessage, setSkillMessage] = useState<string | null>(null);
-  const [skillError, setSkillError] = useState<string | null>(null);
-  const [selectedTargets, setSelectedTargets] = useState<Record<string, true>>(
-    {},
-  );
+  const [customFontDraft, setCustomFontDraft] = useState(editorFontFamily);
+  const [forceCustomFont, setForceCustomFont] = useState(false);
   const onClose = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   const [restoreLastWorkspace, setRestoreLastWorkspaceState] = useState(true);
   const smoothScrollEnabled = useSmoothScrollStore((s) => s.enabled);
@@ -135,14 +138,43 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
-    if (
-      settingsFocusSection === "appearance" ||
-      settingsFocusSection === "agent-skill" ||
-      settingsFocusSection === "updates"
-    ) {
+    if (settingsFocusSection === "appearance" || settingsFocusSection === "updates") {
       setSection(settingsFocusSection);
+    } else if (
+      settingsFocusSection === "agent" ||
+      settingsFocusSection === "agent-skill"
+    ) {
+      setSection("agent");
     }
   }, [open, settingsFocusSection]);
+
+  useEffect(() => {
+    setCustomFontDraft(editorFontFamily);
+    if (EDITOR_FONT_PRESETS.some((p) => p.value === editorFontFamily)) {
+      setForceCustomFont(false);
+    }
+  }, [editorFontFamily]);
+
+  const matchedFontPresetId = useMemo(() => {
+    const match = EDITOR_FONT_PRESETS.find((p) => p.value === editorFontFamily);
+    return match?.id ?? null;
+  }, [editorFontFamily]);
+
+  const fontPresetValue =
+    forceCustomFont || !matchedFontPresetId ? FONT_CUSTOM : matchedFontPresetId;
+
+  const fontOptions = useMemo(
+    () => [
+      ...EDITOR_FONT_PRESETS.map((p) => ({
+        value: p.id,
+        label: p.label,
+        textValue: p.label,
+        hint: p.id === "default" ? "SF Mono / JetBrains" : undefined,
+      })),
+      { value: FONT_CUSTOM, label: "Custom…", textValue: "Custom" },
+    ],
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -156,33 +188,6 @@ export function SettingsPanel() {
       off?.();
     };
   }, [open]);
-
-  const refreshSkillStatus = useCallback(async () => {
-    if (!window.anchor?.skill?.status) return;
-    try {
-      const status = await window.anchor.skill.status({
-        workspaceRoot,
-      });
-      setSkillStatus(status);
-      const next: Record<string, true> = {};
-      for (const t of status.targets) {
-        if (!t.installed || !t.upToDate) next[t.id] = true;
-      }
-      if (Object.keys(next).length === 0) {
-        for (const t of status.targets) next[t.id] = true;
-      }
-      setSelectedTargets(next);
-    } catch (err) {
-      setSkillError(err instanceof Error ? err.message : String(err));
-    }
-  }, [workspaceRoot]);
-
-  useEffect(() => {
-    if (!open) return;
-    setSkillMessage(null);
-    setSkillError(null);
-    void refreshSkillStatus();
-  }, [open, refreshSkillStatus]);
 
   const runCheck = useCallback(async () => {
     if (!window.anchor?.updates?.check) return;
@@ -248,41 +253,6 @@ export function SettingsPanel() {
       setUpdateBusy(false);
     }
   }, []);
-
-  const runSkillInstall = useCallback(async () => {
-    if (!window.anchor?.skill?.install) return;
-    const targetIds = Object.keys(selectedTargets);
-    if (targetIds.length === 0) {
-      setSkillError("Select at least one install target.");
-      return;
-    }
-    setSkillBusy(true);
-    setSkillError(null);
-    setSkillMessage(null);
-    try {
-      const result = await window.anchor.skill.install({
-        workspaceRoot,
-        targetIds,
-      });
-      if (!result.ok) {
-        setSkillError(result.error ?? "Install failed");
-      } else {
-        const paths = result.installed.map((i) => i.skillPath).join(", ");
-        setSkillMessage(
-          `Installed ${result.installed.length} target(s): ${paths}`,
-        );
-        if (result.installed.some((i) => i.id === "workspace")) {
-          useShellStore.getState().dismissSkillInstallPrompt();
-        }
-      }
-      await refreshSkillStatus();
-    } catch (err) {
-      setSkillError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSkillBusy(false);
-    }
-  }, [refreshSkillStatus, selectedTargets, workspaceRoot]);
-
 
   if (!open) return null;
 
@@ -423,6 +393,133 @@ export function SettingsPanel() {
                       type="button"
                       className="btn btn--ghost btn--small"
                       onClick={() => void setFontSize(DEFAULT_FONT_SIZE)}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </div>
+
+                <h3 className="settings-section__title settings-section__title--spaced">
+                  Font family
+                </h3>
+                <p className="settings-section__desc muted">
+                  Monospace stack for the editor, diffs, and terminal.
+                </p>
+                <div className="settings-field-row">
+                  <Dropdown
+                    aria-label="Font family"
+                    data-testid="settings-font-family"
+                    value={fontPresetValue}
+                    options={fontOptions}
+                    onChange={(id) => {
+                      if (id === FONT_CUSTOM) {
+                        setForceCustomFont(true);
+                        setCustomFontDraft(editorFontFamily);
+                        return;
+                      }
+                      setForceCustomFont(false);
+                      const preset = EDITOR_FONT_PRESETS.find((p) => p.id === id);
+                      if (preset) void setEditorFontFamily(preset.value);
+                    }}
+                    className="settings-dropdown"
+                    minMenuWidth={260}
+                  />
+                  {editorFontFamily !== EDITOR_FONT_FAMILY ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => {
+                        setForceCustomFont(false);
+                        void setEditorFontFamily(EDITOR_FONT_FAMILY);
+                      }}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </div>
+                {fontPresetValue === FONT_CUSTOM ? (
+                  <div className="settings-field-row settings-field-row--stack">
+                    <input
+                      className="settings-text-input"
+                      type="text"
+                      value={customFontDraft}
+                      spellCheck={false}
+                      aria-label="Custom font family"
+                      data-testid="settings-font-family-custom"
+                      onChange={(e) => setCustomFontDraft(e.target.value)}
+                      onBlur={() => {
+                        const next = customFontDraft.trim();
+                        if (next) void setEditorFontFamily(next);
+                        else setCustomFontDraft(editorFontFamily);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                <h3 className="settings-section__title settings-section__title--spaced">
+                  Line height
+                </h3>
+                <p className="settings-section__desc muted">
+                  Editor and diff line spacing. Default {DEFAULT_LINE_HEIGHT}.
+                </p>
+                <div
+                  className="settings-font-size"
+                  role="group"
+                  aria-label="Line height"
+                >
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Tighter"
+                    aria-label="Decrease line height"
+                    disabled={lineHeight <= MIN_LINE_HEIGHT}
+                    onClick={() =>
+                      void setLineHeight(Math.round((lineHeight - 0.1) * 10) / 10)
+                    }
+                  >
+                    <Icon name="remove" />
+                  </button>
+                  <input
+                    className="settings-font-size__range"
+                    type="range"
+                    min={MIN_LINE_HEIGHT}
+                    max={MAX_LINE_HEIGHT}
+                    step={0.1}
+                    value={lineHeight}
+                    onChange={(e) =>
+                      void setLineHeight(Number.parseFloat(e.target.value))
+                    }
+                    aria-valuemin={MIN_LINE_HEIGHT}
+                    aria-valuemax={MAX_LINE_HEIGHT}
+                    aria-valuenow={lineHeight}
+                    aria-label="Line height multiplier"
+                    data-testid="settings-line-height"
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn settings-font-size__btn"
+                    title="Looser"
+                    aria-label="Increase line height"
+                    disabled={lineHeight >= MAX_LINE_HEIGHT}
+                    onClick={() =>
+                      void setLineHeight(Math.round((lineHeight + 0.1) * 10) / 10)
+                    }
+                  >
+                    <Icon name="add" />
+                  </button>
+                  <span className="settings-font-size__value" aria-live="polite">
+                    {lineHeight.toFixed(1)}
+                  </span>
+                  {lineHeight !== DEFAULT_LINE_HEIGHT ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => void setLineHeight(DEFAULT_LINE_HEIGHT)}
                     >
                       Reset
                     </button>
@@ -591,115 +688,7 @@ export function SettingsPanel() {
             ) : null}
 
 
-            {section === "agent-skill" ? (
-              <section className="settings-section" aria-label="Agent skill">
-                <h3 className="settings-section__title">Anchor Review skill</h3>
-                <p className="settings-section__desc muted">
-                  Install the agent skill that teaches coding CLIs how to read{" "}
-                  <code>.anchor-code</code> session YAML, honor{" "}
-                  <code>need_modify</code>, and mark finished comments{" "}
-                  <code>closed</code>. Prefer workspace install so the skill
-                  travels with the repo; optional user homes install into
-                  detected agent skill directories on this host.
-                </p>
-
-                {!workspaceRoot ? (
-                  <p className="settings-update-card__hint">
-                    Open a workspace to enable workspace install. User-level
-                    targets still appear when agent homes exist on the host.
-                  </p>
-                ) : null}
-
-                {skillStatus?.targets?.length ? (
-                  <ul className="settings-skill-targets">
-                    {skillStatus.targets.map((t) => {
-                      const checked = Boolean(selectedTargets[t.id]);
-                      const statusLabel = t.installed
-                        ? t.upToDate
-                          ? "Installed · up to date"
-                          : "Installed · outdated"
-                        : "Not installed";
-                      return (
-                        <li key={t.id} className="settings-skill-target">
-                          <label className="settings-skill-target__label">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                setSelectedTargets((prev) => {
-                                  const next = { ...prev };
-                                  if (next[t.id]) delete next[t.id];
-                                  else next[t.id] = true;
-                                  return next;
-                                });
-                              }}
-                            />
-                            <span className="settings-skill-target__meta">
-                              <span className="settings-skill-target__name">
-                                {t.label}
-                              </span>
-                              <span className="settings-skill-target__path muted">
-                                {t.skillPath}
-                              </span>
-                              <span
-                                className={`settings-skill-target__status${
-                                  t.installed && t.upToDate
-                                    ? " is-ok"
-                                    : t.installed
-                                      ? " is-stale"
-                                      : ""
-                                }`}
-                              >
-                                {statusLabel}
-                              </span>
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="settings-update-card__hint">
-                    No install targets found yet. Open a workspace, or ensure an
-                    agent skill home exists (for example{" "}
-                    <code>~/.codex</code> or <code>~/.claude</code>) on this
-                    host.
-                  </p>
-                )}
-
-                {skillMessage ? (
-                  <p className="settings-update-card__msg" role="status">
-                    {skillMessage}
-                  </p>
-                ) : null}
-                {skillError ? (
-                  <p className="settings-update-card__err" role="alert">
-                    {skillError}
-                  </p>
-                ) : null}
-
-                <div className="settings-update-card__actions">
-                  <button
-                    type="button"
-                    className="btn btn--accent btn--small"
-                    disabled={
-                      skillBusy || !(skillStatus?.targets?.length)
-                    }
-                    onClick={() => void runSkillInstall()}
-                  >
-                    {skillBusy ? "Installing…" : "Install selected"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--small"
-                    disabled={skillBusy}
-                    onClick={() => void refreshSkillStatus()}
-                  >
-                    Refresh status
-                  </button>
-                </div>
-              </section>
-            ) : null}
+            {section === "agent" ? <SettingsAgentSection /> : null}
 
             {section === "updates" ? (
               <section className="settings-section" aria-label="Updates">

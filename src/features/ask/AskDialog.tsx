@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
+import { formatError } from "@/shared/formatError";
 import { Icon } from "@/shared/Icon";
 import { useShellStore } from "@/features/shell/shellStore";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
@@ -222,7 +223,7 @@ export function AskDialog() {
       dismiss();
     } catch (err) {
       setSending(false);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
   };
 

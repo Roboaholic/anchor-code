@@ -3,6 +3,7 @@ import {
   rejoinDiffCommentBody,
 } from "@/core/history/diffComment";
 import { Icon } from "@/shared/Icon";
+import { EmptyState } from "@/shared/EmptyState";
 import { confirmDialog } from "@/shared/ConfirmDialog";
 import { jumpToComment } from "@/features/shell/orchestrate";
 import { useAnnotationsStore } from "./annotationsStore";
@@ -270,10 +271,11 @@ export function CommentsPane() {
       {loading ? <p className="pane-hint">Loading…</p> : null}
 
       {!loading && sessions.length === 0 ? (
-        <p className="pane-hint">
-          No sessions yet. Select code and add a comment, or start a new
-          session.
-        </p>
+        <EmptyState
+          icon="comment-discussion"
+          title="No review sessions yet"
+          hint="Select code and add a comment, or start a new session."
+        />
       ) : (
         <ul className="session-list">
           {sessions.map((session) => {

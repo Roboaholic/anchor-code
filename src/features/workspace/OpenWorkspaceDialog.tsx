@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import { Dropdown } from "@/shared/Dropdown";
 import { Disclosure } from "@/shared/Disclosure";
 import { Icon } from "@/shared/Icon";
@@ -104,7 +105,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       setPathInput(path);
       return true;
     } catch (err) {
-      if (version === requestVersion.current) setError(err instanceof Error ? err.message : String(err));
+      if (version === requestVersion.current) setError(formatError(err));
       return false;
     } finally {
       if (version === requestVersion.current) setBrowseLoading(false);
@@ -162,7 +163,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           if (cancelled) return;
           setConfigHosts([]);
           if (interaction === interactionVersion.current) setSshMode("manual");
-          setConfigWarning(`SSH config discovery unavailable: ${err instanceof Error ? err.message : String(err)}`);
+          setConfigWarning(`SSH config discovery unavailable: ${formatError(err)}`);
         }
         if (win) {
           const d = (await window.anchor?.host?.listWslDistros?.()) ?? [];
@@ -172,7 +173,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
         }
       } catch (err) {
         if (!cancelled && interaction === interactionVersion.current) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(formatError(err));
         }
       }
     })();
@@ -194,7 +195,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
         await loadBrowse(home, selectedDistro);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(formatError(err));
         }
       }
     })();
@@ -268,7 +269,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       committingWorkspace.current = false;
       setOpeningWorkspace(false);
@@ -307,7 +308,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       committingWorkspace.current = false;
       setOpeningWorkspace(false);
@@ -374,7 +375,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       // loadBrowse advances the request version once. A later edit/close cancels this result.
       if (connected && requestVersion.current === version + 1) setConnectedSshProfileId(profile.id);
     } catch (err) {
-      if (version === requestVersion.current) setError(err instanceof Error ? err.message : String(err));
+      if (version === requestVersion.current) setError(formatError(err));
     } finally {
       if (requestVersion.current === version || requestVersion.current === version + 1) setBusy(false);
     }
@@ -393,7 +394,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
       if (version !== requestVersion.current) return;
       onOpen({ path, hostProfileId: connectedSshProfileId, hostKind: "ssh" });
       onClose();
-    } catch (err) { if (version === requestVersion.current) setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { if (version === requestVersion.current) setError(formatError(err)); }
     finally {
       committingWorkspace.current = false;
       setOpeningWorkspace(false);

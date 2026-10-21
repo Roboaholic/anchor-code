@@ -95,6 +95,27 @@ function codeChildToText(children: unknown): string {
   return String(children);
 }
 
+
+function MarkdownImg(props: ComponentPropsWithoutRef<"img">) {
+  const src = props.src ?? "";
+  const isRemote =
+    /^(https?:|data:|blob:)/i.test(src) || src.startsWith("//");
+  if (isRemote) {
+    return <img {...props} />;
+  }
+  // Relative / local paths need a custom protocol we do not expose yet.
+  const label = props.alt?.trim() || src || "Image";
+  return (
+    <span className="md-img-placeholder" role="img" aria-label={label}>
+      <span className="md-img-placeholder__icon" aria-hidden>
+        ▢
+      </span>
+      <span className="md-img-placeholder__label">{label}</span>
+      {src ? <span className="md-img-placeholder__src muted">{src}</span> : null}
+    </span>
+  );
+}
+
 function MarkdownCode(
   props: ComponentPropsWithoutRef<"code"> & { inline?: boolean },
 ) {
@@ -405,6 +426,10 @@ function RenderedMarkdownPane({
     });
   }, [focusCommentId, revealNonce, marks]);
 
+  useEffect(() => {
+    setSelToolbar(null);
+  }, [path]);
+
   const updateSelectionToolbar = useCallback(() => {
     if (composerOpenRef.current) {
       pendingSelectionTextRef.current = null;
@@ -612,6 +637,7 @@ function RenderedMarkdownPane({
             components={{
               code: MarkdownCode,
               pre: MarkdownPre,
+              img: MarkdownImg,
             }}
           >
             {content}

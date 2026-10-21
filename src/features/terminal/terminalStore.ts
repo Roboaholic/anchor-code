@@ -4,6 +4,7 @@ import type {
   TerminalSessionKind,
   TerminalTabInfo,
 } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import {
   disposeXtermSession,
 } from "./xtermSessionPool";
@@ -116,6 +117,7 @@ type TerminalWorkspaceView = {
   tabWorkgroupById: Record<string, string>;
   sessionGroupById: Record<string, string>;
   parkedAgents: ParkedAgent[];
+  exitCodeById: Record<string, number>;
   workspaceHostProfileId: string | null;
 };
 const terminalWorkspaceViews = new Map<string, TerminalWorkspaceView>();
@@ -328,6 +330,11 @@ export function captureWorkspaceTerminalView(
     ),
     sessionGroupById: state.sessionGroupById,
     parkedAgents: state.parkedAgents,
+    exitCodeById: Object.fromEntries(
+      Object.entries(state.exitCodeById).filter(([id]) =>
+        tabs.some((tab) => tab.id === id),
+      ),
+    ),
     workspaceHostProfileId: hostProfileId,
   });
 }
@@ -366,6 +373,7 @@ function setTerminalWorkspaceView(view: TerminalWorkspaceView, cwd: string): voi
     tabWorkgroupById: assigned.tabWorkgroupById,
     sessionGroupById: assigned.sessionGroupById,
     parkedAgents: view.parkedAgents ?? [],
+    exitCodeById: view.exitCodeById ?? {},
     agentMenuOpen: false,
     error: null,
   });
@@ -616,6 +624,8 @@ export interface TerminalState {
   sessionGroupById: Record<string, string>;
   /** Saved conversations shown in the workgroup list until clicked. */
   parkedAgents: ParkedAgent[];
+  /** Exit code for tabs that have ended (banner). */
+  exitCodeById: Record<string, number>;
   agentProfiles: AgentCliProfile[];
   defaultAgentId: string | null;
   agentMenuOpen: boolean;
@@ -632,6 +642,7 @@ export interface TerminalState {
   ) => Promise<boolean>;
   createAgentDefault: () => Promise<void>;
   closeTab: (id: string) => Promise<void>;
+  noteSessionExit: (id: string, exitCode: number) => void;
   /** Drop tab after process exit without kill (already dead). */
   removeTabLocal: (id: string) => void;
   setActive: (id: string) => void;
@@ -690,6 +701,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabWorkgroupById: {},
   sessionGroupById: {},
   parkedAgents: [],
+  exitCodeById: {},
   agentProfiles: [],
   defaultAgentId: null,
   agentMenuOpen: false,
@@ -789,7 +801,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           ),
           activeByMode: { terminal: null, agent: null },
           mode: "terminal",
-          error: err instanceof Error ? err.message : String(err),
+          error: formatError(err),
           agentMenuOpen: s.agentMenuOpen,
           agentMenuIntent: s.agentMenuIntent,
         }));
@@ -874,7 +886,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       });
     }
   },
@@ -954,7 +966,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return true;
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
         agentMenuOpen: false,
         agentMenuIntent: { kind: "new" },
       });
@@ -983,6 +995,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
+
+  noteSessionExit: (id, exitCode) => {
+    set((s) => ({
+      exitCodeById: { ...s.exitCodeById, [id]: exitCode },
+      tabs: s.tabs.map((tab) =>
+        tab.id === id ? { ...tab, status: "exited" as const } : tab,
+      ),
+    }));
+  },
+
   closeTab: async (id) => {
     try {
       await window.anchor.terminal.kill(id);
@@ -1007,10 +1029,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const mode =
         closedMode === "agent" && !hasAgent ? "terminal" : s.mode;
       const { [id]: _closedGroup, ...tabWorkgroupById } = s.tabWorkgroupById;
+      const { [id]: _exit, ...exitCodeById } = s.exitCodeById;
       return {
         tabs,
         activeByMode,
         tabWorkgroupById,
+        exitCodeById,
         agentActivity: Object.fromEntries(
           Object.entries(s.agentActivity).filter(([tabId]) => tabId !== id),
         ),
@@ -1048,7 +1072,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }));
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       });
     }
   },
@@ -1132,7 +1156,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       });
     }
   },
@@ -1183,7 +1207,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return profiles.find((p) => p.id === id) ?? null;
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       });
       return null;
     }
@@ -1362,7 +1386,7 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onUpdated) {
 }
 
 if (typeof window !== "undefined" && window.anchor?.terminal?.onExit) {
-  window.anchor.terminal.onExit(({ id }) => {
+  window.anchor.terminal.onExit(({ id, exitCode }) => {
     clearAgentCompletionTimer(id);
     const watched = resumeWatch.get(id);
     resumeWatch.delete(id);
@@ -1375,22 +1399,18 @@ if (typeof window !== "undefined" && window.anchor?.terminal?.onExit) {
           : [{ ...watched.parked, error }, ...state.parkedAgents],
       }));
     }
+    useTerminalStore.getState().noteSessionExit(id, exitCode);
     useTerminalStore.setState((state) => {
       const tab = state.tabs.find((item) => item.id === id);
+      if (tab?.kind !== "agent") return state;
       return {
-        tabs: state.tabs.map((item) =>
-          item.id === id ? { ...item, status: "exited" } : item,
-        ),
-        agentActivity:
-          tab?.kind === "agent"
-            ? {
-                ...state.agentActivity,
-                [id]: nextAgentActivity(
-                  state.agentActivity[id] ?? "idle",
-                  state.activeByMode.agent === id ? "viewed" : "completed",
-                ),
-              }
-            : state.agentActivity,
+        agentActivity: {
+          ...state.agentActivity,
+          [id]: nextAgentActivity(
+            state.agentActivity[id] ?? "idle",
+            state.activeByMode.agent === id ? "viewed" : "completed",
+          ),
+        },
       };
     });
   });

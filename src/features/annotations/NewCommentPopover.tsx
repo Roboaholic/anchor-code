@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { askPopoverPosition, type AskAnchorRect } from "@/features/ask/askPrompt";
 import type { CommentRecord } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
 import {
   DEFAULT_COMMENT_DRAFT,
@@ -142,7 +143,7 @@ export function NewCommentPopover({
       clearDraft(key);
       closeRef.current();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setSaving(false);
     }

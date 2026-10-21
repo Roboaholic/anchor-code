@@ -30,6 +30,7 @@ import {
 } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { CommentRecord, HostKind } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import {
   captureWorkspaceShellView,
   restoreWorkspaceShellView,
@@ -72,7 +73,7 @@ export async function openWorkspacePath(
       await afterWorkspaceOpened(workspace.workspaceRoot, workspace.hostProfileId);
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatError(err);
     console.error("[shell] openWorkspacePath failed:", err);
     useWorkspaceStore.setState({ status: "error", error: message });
   }
@@ -149,7 +150,7 @@ export async function activateWorkspace(id: string): Promise<void> {
     const key = workspaceViewKey(workspace.workspaceRoot, workspace.hostProfileId);
     restoreWorkspaceShellView(key);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatError(err);
     console.error("[shell] activateWorkspace failed:", err);
     useWorkspaceStore.setState({ status: "error", error: message });
   }

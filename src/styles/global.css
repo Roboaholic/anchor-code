@@ -4625,7 +4625,8 @@ body.terminal-session-rail-resizing {
 /* Floating status chip — does not push the comment list. */
 .pane-toast {
   position: absolute;
-  top: 10px;
+  /* Sit below the Sessions header / "+" so toasts don't cover controls. */
+  top: 48px;
   left: 10px;
   right: 10px;
   z-index: 20;
@@ -8995,4 +8996,172 @@ input[type="range"].anchor-range:focus-visible,
 
 .workspace-dialog__details.anchor-disclosure {
   background: var(--bg-muted);
+}
+
+/* ── Empty state / inline error / session ended (polish C) ── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 20px;
+  text-align: center;
+  min-height: 120px;
+}
+.empty-state__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-muted));
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  margin-bottom: 4px;
+}
+.empty-state__icon .codicon {
+  font-size: 18px;
+}
+.empty-state__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.empty-state__hint {
+  margin: 0;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.empty-state__action {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.inline-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 12.5px;
+}
+.inline-error__summary {
+  margin: 0;
+  font-weight: 600;
+}
+.inline-error__toggle {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--danger);
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.inline-error__details {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 140px;
+  overflow: auto;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-panel));
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.session-ended-banner {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  color: var(--text);
+}
+.session-ended-banner__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 550;
+}
+.session-ended-banner__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.diff-binary-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 160px;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.diff-binary-placeholder__title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Keep skill-install toast clear of the Comments header / "+" */
+.skill-install-toast {
+  bottom: 24px;
+  right: 24px;
+}
+.comments-pane ~ .skill-install-toast,
+body:has(.comments-pane) .skill-install-toast {
+  bottom: 24px;
+}
+
+
+.md-img-placeholder {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.md-img-placeholder__icon {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+.md-img-placeholder__label {
+  font-weight: 600;
+  color: var(--text);
+}
+.md-img-placeholder__src {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
 }

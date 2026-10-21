@@ -288,12 +288,7 @@ export function acquireXtermSession(
   });
   const offExit = window.anchor.terminal.onExit((payload) => {
     if (payload.id !== id) return;
-    term.writeln(`\r\n[process exited: ${payload.exitCode}]`);
-    useTerminalStore.setState((state) => ({
-      tabs: state.tabs.map((tab) =>
-        tab.id === id ? { ...tab, status: "exited" } : tab,
-      ),
-    }));
+    useTerminalStore.getState().noteSessionExit(id, payload.exitCode);
   });
 
   term.onData((data) => {

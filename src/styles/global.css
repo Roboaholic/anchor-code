@@ -9545,3 +9545,13 @@ body:has(.comments-pane) .skill-install-toast {
   color: var(--text);
   font-weight: 600;
 }
+
+/* Search rows are a fixed 22px (SEARCH_ROW_HEIGHT), centred by flex, so the
+   line box never sets the row height. Give the clipped text spans a line box
+   tall enough for the UI font's ascent + descent (Segoe UI / Inter need ~1.25em)
+   — `line-height: 1` cut "g/y/p" at every zoom once overflow:hidden clipped
+   the file name / path spans to a 1em box. Hit rows already inherit the
+   body's 1.45 through `font: inherit`. */
+.files-search-group__head {
+  line-height: 1.4;
+}

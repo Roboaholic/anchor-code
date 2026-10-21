@@ -160,7 +160,7 @@ export class ReviewFacade {
     const absolute = this.workspace.safeRepoPath(root, filePath);
     return loadFileBlame(this.hosts.session, root, absolute, revision);
   }
-  async status(repoRoot: string, options?: { badgeOnly?: boolean }) {
+  async status(repoRoot: string, options?: { badgeOnly?: boolean; scanUntracked?: boolean }) {
     return loadRepoStatus(this.hosts.session, await this.approvedRepoRoot(repoRoot), options);
   }
   async statusBulk(

@@ -364,6 +364,9 @@ describe("historyStore refreshRepo (header Refresh)", () => {
 
   it("refreshes status, history (when loaded) and compares together", async () => {
     await useHistoryStore.getState().discover("/ws");
+    // Let discover's background tracked pass + untracked scan settle first.
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+    await useHistoryStore.getState().scanUntracked();
     await useHistoryStore.getState().toggleHistory("/ws/repo-a");
     const api = window.anchor.history as unknown as Record<string, ReturnType<typeof vi.fn>>;
     const statusCalls = api.status!.mock.calls.length;

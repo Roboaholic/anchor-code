@@ -204,11 +204,18 @@ export function mergeUntrackedFilePaths(
 }
 
 /**
- * Badge-only status omits or collapses untracked files. Keep a richer untracked
- * file list from a previous full status, and take tracked M/A/D from `next`.
+ * Merge a badge status into the previous one.
+ *
+ * - Tracked-only poll (`-uno`, `untrackedScanned` not true): it cannot see
+ *   untracked files, so keep the previous untracked list (minus paths that are
+ *   now tracked) and the previous `untrackedScanned`.
+ * - Untracked scan (`untrackedScanned: true`): authoritative for *which*
+ *   untracked paths exist — none clears U. A `normal` scan reports untracked
+ *   dirs collapsed (`?? dir/`); when the previous status already listed files
+ *   inside such a dir, keep those files instead of the collapsed entry.
  */
 export function mergeBadgePorcelain<
-  T extends { entries: StatusEntry[]; untracked: number },
+  T extends { entries: StatusEntry[]; untracked: number; untrackedScanned?: boolean },
 >(prev: T | null | undefined, next: T): T {
   if (!prev) return next;
   const tracked = next.entries.filter((e) => e.status !== "?");
@@ -217,11 +224,27 @@ export function mergeBadgePorcelain<
     (e) => e.status === "?" && !trackedPaths.has(e.path),
   );
   const nextUntracked = next.entries.filter((e) => e.status === "?");
-  const usePrev =
-    prevUntracked.length > 0 && prevUntracked.length >= nextUntracked.length;
-  const untrackedEntries = (usePrev ? prevUntracked : nextUntracked).filter(
-    (e) => !trackedPaths.has(e.path),
-  );
+
+  let untrackedEntries: StatusEntry[];
+  let untrackedScanned: boolean;
+  if (next.untrackedScanned === true) {
+    untrackedEntries = [];
+    for (const n of nextUntracked) {
+      const inside = isUntrackedDirectoryPath(n.path)
+        ? prevUntracked.filter((p) => p.path !== n.path && p.path.startsWith(n.path))
+        : [];
+      if (inside.length > 0) untrackedEntries.push(...inside);
+      else untrackedEntries.push(n);
+    }
+    untrackedScanned = true;
+  } else {
+    const usePrev =
+      prevUntracked.length > 0 && prevUntracked.length >= nextUntracked.length;
+    untrackedEntries = (usePrev ? prevUntracked : nextUntracked).filter(
+      (e) => !trackedPaths.has(e.path),
+    );
+    untrackedScanned = prev.untrackedScanned === true;
+  }
   const entries = [...tracked, ...untrackedEntries].sort(
     (a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code),
   );
@@ -229,5 +252,6 @@ export function mergeBadgePorcelain<
     ...next,
     entries,
     untracked: untrackedEntries.length,
+    untrackedScanned,
   };
 }

@@ -176,6 +176,15 @@ describe("historyService (integration, temp git repo)", () => {
 
     const badge = await loadRepoStatus(host, root, { badgeOnly: true });
     expect(badge.entries.some((e) => e.status === "?")).toBe(false);
+    expect(badge.untrackedScanned).toBe(false);
+    expect(status.untrackedScanned).toBe(true);
+
+    // Badge untracked scan (`normal`): the untracked tree collapses to its top dir.
+    const scan = await loadRepoStatus(host, root, { badgeOnly: true, scanUntracked: true });
+    expect(scan.untrackedScanned).toBe(true);
+    expect(scan.entries.filter((e) => e.status === "?").map((e) => e.path.replace(/\\/g, "/"))).toEqual([
+      "filter/",
+    ]);
 
     const payload = await compareToWorktree(host, root, "HEAD");
     const files = payload.files.map((f) => f.path.replace(/\\/g, "/"));

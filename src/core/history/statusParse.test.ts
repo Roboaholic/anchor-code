@@ -188,4 +188,47 @@ describe("mergeBadgePorcelain", () => {
     ]);
     expect(merged.untracked).toBe(2);
   });
+
+  it("a scanned status is authoritative: none found clears U", () => {
+    const prev = {
+      entries: [{ path: "notes.txt", status: "?", code: "??" }],
+      untracked: 1,
+      untrackedScanned: true,
+    };
+    const merged = mergeBadgePorcelain(prev, { entries: [], untracked: 0, untrackedScanned: true });
+    expect(merged).toMatchObject({ entries: [], untracked: 0, untrackedScanned: true });
+  });
+
+  it("a tracked-only poll keeps scanned U and the scanned flag", () => {
+    const prev = {
+      entries: [{ path: "notes.txt", status: "?", code: "??" }],
+      untracked: 1,
+      untrackedScanned: true,
+    };
+    const merged = mergeBadgePorcelain(prev, { entries: [], untracked: 0, untrackedScanned: false });
+    expect(merged).toMatchObject({ untracked: 1, untrackedScanned: true });
+  });
+
+  it("a normal scan keeps known files inside a collapsed dir and drops stale ones", () => {
+    const prev = {
+      entries: [
+        { path: "build/a.o", status: "?", code: "??" },
+        { path: "build/b.o", status: "?", code: "??" },
+        { path: "gone.txt", status: "?", code: "??" },
+      ],
+      untracked: 3,
+      untrackedScanned: true,
+    };
+    const next = {
+      entries: [
+        { path: "build/", status: "?", code: "??" },
+        { path: "new/", status: "?", code: "??" },
+      ],
+      untracked: 2,
+      untrackedScanned: true,
+    };
+    const merged = mergeBadgePorcelain(prev, next);
+    expect(merged.entries.map((e) => e.path)).toEqual(["build/a.o", "build/b.o", "new/"]);
+    expect(merged.untracked).toBe(3);
+  });
 });

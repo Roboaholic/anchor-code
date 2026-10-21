@@ -12,6 +12,7 @@ export type CodiconName =
   | "copy"
   | "diff"
   | "error"
+  | "warning"
   | "edit"
   | "trash"
   | "export"

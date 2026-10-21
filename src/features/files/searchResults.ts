@@ -9,6 +9,22 @@ export type SearchHit = { path: string; line: number; text: string };
 export type SearchStatus = "complete" | "partial" | "failed" | "cancelled";
 export type SearchDiagnostic = { code: string; message: string };
 
+/** Always-on coverage notes from describeCoverage — never surface in the UI. */
+const HIDDEN_SCOPE_DIAGNOSTIC_CODES = new Set([
+  "rg-scope",
+  "tracked-only",
+  "scan-scope",
+  "anchorignore",
+]);
+
+/** Real warnings/errors the RESULTS header should expose (timeout, limits, etc.). */
+export function actionableSearchDiagnostics(
+  diagnostics: SearchDiagnostic[],
+): SearchDiagnostic[] {
+  return diagnostics.filter((d) => !HIDDEN_SCOPE_DIAGNOSTIC_CODES.has(d.code));
+}
+
+
 /** Older hosts may only report aborted; pagination never means incomplete coverage. */
 export function searchCompletionStatus(result: {
   status?: SearchStatus;
@@ -87,6 +103,66 @@ export function countHits(groups: SearchFileGroup[]): number {
   let n = 0;
   for (const g of groups) n += g.hits.length;
   return n;
+}
+
+/** Preview split around the first match, windowed so the match stays visible. */
+export type SearchPreview = {
+  /** True when text before the window was dropped (render a leading "…"). */
+  clipped: boolean;
+  before: string;
+  match: string;
+  after: string;
+};
+
+/** Match starting past this many chars gets a windowed preview. */
+export const PREVIEW_MAX_LEAD = 24;
+/** Chars of context kept before the match when windowing. */
+export const PREVIEW_CONTEXT = 10;
+
+function previewRegex(query: string, useRegex: boolean, caseSensitive: boolean): RegExp | null {
+  if (!query.trim()) return null;
+  try {
+    const source = useRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(source, caseSensitive ? "" : "i");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a one-line preview: tabs → spaces, leading/trailing whitespace trimmed,
+ * and when the match starts beyond PREVIEW_MAX_LEAD chars the preview starts
+ * PREVIEW_CONTEXT chars before it (on a word boundary when one is close), so
+ * a CSS end-ellipsis can never hide the match itself.
+ */
+export function buildSearchPreview(
+  text: string,
+  query: string,
+  useRegex: boolean,
+  caseSensitive: boolean,
+): SearchPreview {
+  const line = text.replace(/\t/g, "  ").replace(/\s+$/, "").replace(/^\s+/, "");
+  const re = previewRegex(query, useRegex, caseSensitive);
+  const m = re ? line.match(re) : null;
+  if (!m || m.index === undefined || m[0] === "") {
+    return { clipped: false, before: line, match: "", after: "" };
+  }
+  const start = m.index;
+  const end = start + m[0].length;
+  let from = 0;
+  if (start > PREVIEW_MAX_LEAD) {
+    from = start - PREVIEW_CONTEXT;
+    // Prefer starting at a word boundary within the context window.
+    const space = line.lastIndexOf(" ", start - 1);
+    if (space >= from && space < start - 1) from = space + 1;
+  }
+  const before = from > 0 ? line.slice(from, start).trimStart() : line.slice(0, start);
+  return {
+    clipped: from > 0,
+    before,
+    match: line.slice(start, end),
+    after: line.slice(end),
+  };
 }
 
 export type SearchRow =

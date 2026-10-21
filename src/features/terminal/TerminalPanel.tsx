@@ -14,6 +14,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   agentTabsInWorkgroup,
   sessionsForMode,
+  isAgentTabReadOnly,
   useTerminalStore,
   type AgentActivityState,
   type RightTermMode,
@@ -339,6 +340,7 @@ export function TerminalPanel({
                           const sessionId = activeTab.agentSessionId!.trim();
                           const title = activeTab.title;
                           const profileId = activeTab.agentId;
+                          const readOnly = isAgentTabReadOnly(activeTab.id);
                           void (async () => {
                             await closeTab(activeTab.id);
                             const profiles =
@@ -352,6 +354,7 @@ export function TerminalPanel({
                               .createAgentTab(profile, {
                                 title,
                                 resumeSessionId: sessionId,
+                                readOnly,
                               });
                           })();
                         }}

@@ -36,7 +36,7 @@ import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { isBinaryFile } from "@/shared/binaryFile";
 import { Icon } from "@/shared/Icon";
-import { fitBlameText } from "./blameDisplay";
+import { fitBlameText, formatBlameTime } from "./blameDisplay";
 import "./monacoSetup";
 import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
@@ -63,19 +63,6 @@ const DIFF_FILES_MIN_WIDTH = 160;
 const DIFF_FILES_MAX_WIDTH = 480;
 const DIFF_FILES_DEFAULT_WIDTH = 220;
 
-export function formatDiffBlameTime(dateIso: string, nowMs = Date.now()): string {
-  const timestamp = Date.parse(dateIso);
-  if (!Number.isFinite(timestamp)) return "unknown time";
-  const elapsed = Math.max(0, nowMs - timestamp);
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  const year = 365 * day;
-  if (elapsed < hour) return `${Math.max(1, Math.floor(elapsed / minute))}m ago`;
-  if (elapsed < day) return `${Math.floor(elapsed / hour)}h ago`;
-  if (elapsed < year) return `${Math.floor(elapsed / day)}d ago`;
-  return `${Math.floor(elapsed / year)}y ago`;
-}
 
 function loadDiffFilesWidth(): number {
   try {
@@ -536,7 +523,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     const content = fitBlameText(
       editor,
       entry.line,
-      `${entry.author} · ${formatDiffBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
+      `${entry.author} · ${formatBlameTime(entry.dateIso)} · ${entry.subject || "No commit message"}`,
       fontSize,
     );
     if (!content) return;

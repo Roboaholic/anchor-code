@@ -423,3 +423,17 @@ describe("pi agent", () => {
     ]);
   });
 });
+
+describe("resume + readOnly args", () => {
+  it("prefixes read-only flags before resume args", () => {
+    const id = "sess-1";
+    expect([
+      ...agentReadOnlyArgs("pi"),
+      ...(buildAgentResumeArgs("pi", id) ?? []),
+    ]).toEqual(["--tools", "read,grep,find,ls", "--session", id]);
+    expect([
+      ...agentReadOnlyArgs("claude"),
+      ...(buildAgentResumeArgs("claude", id) ?? []),
+    ]).toEqual(["--permission-mode", "plan", "--resume", id]);
+  });
+});

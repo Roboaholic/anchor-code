@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, session } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, session, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,7 +117,7 @@ function createWindow(theme: UiTheme) {
     // Keep accelerators (Ctrl+P etc.) via application menu, but never paint
     // a second File/View/Window row under the title bar.
     autoHideMenuBar: true,
-    show: true,
+    show: false,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -153,11 +153,34 @@ function createWindow(theme: UiTheme) {
     console.error("[main] preload-error:", failedPath, error);
   });
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else {
-    void mainWindow.loadFile(path.join(process.env.DIST!, "index.html"));
-  }
+  mainWindow.once("ready-to-show", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.show();
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[main] render-process-gone:", details.reason, details.exitCode);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // Recover from occasional blank-window renderer crashes (e.g. opening a diff).
+    try {
+      mainWindow.webContents.reload();
+    } catch (err) {
+      console.error("[main] reload after render-process-gone failed:", err);
+      try {
+        mainWindow.show();
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  const loadPromise = process.env.VITE_DEV_SERVER_URL
+    ? mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+    : mainWindow.loadFile(path.join(process.env.DIST!, "index.html"));
+  void loadPromise.catch((err) => {
+    console.error("[main] failed to load window:", err);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -268,6 +291,37 @@ function buildMenu() {
               { role: "front" as const },
             ]
           : [{ role: "close" as const }]),
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About Anchor Code",
+          click: () => {
+            app.setAboutPanelOptions({
+              applicationName: "Anchor Code",
+              applicationVersion: app.getVersion(),
+              copyright: "Roboaholic",
+              website: "https://github.com/Roboaholic/anchor-code",
+            });
+            app.showAboutPanel();
+          },
+        },
+        {
+          label: "GitHub Repository",
+          click: () => {
+            void shell.openExternal("https://github.com/Roboaholic/anchor-code");
+          },
+        },
+        {
+          label: "Releases",
+          click: () => {
+            void shell.openExternal(
+              "https://github.com/Roboaholic/anchor-code/releases",
+            );
+          },
+        },
       ],
     },
   ];

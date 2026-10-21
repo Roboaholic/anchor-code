@@ -523,7 +523,9 @@ button:disabled {
   position: absolute;
   top: calc(100% + 2px);
   left: 0;
-  min-width: 220px;
+  min-width: 240px;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 16px));
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -547,19 +549,26 @@ button:disabled {
   color: var(--text);
   font-size: 12.5px;
   text-align: left;
+  white-space: nowrap;
   cursor: default;
 }
 
 .app-menubar__entry:hover {
-  background: var(--bg-active);
-  color: var(--accent);
+  background: var(--row-selected-bg);
+  color: var(--row-selected-fg);
 }
 
 .app-menubar__entry-label {
+  flex: 1 1 auto;
   min-width: 0;
+  white-space: nowrap;
 }
 
 .app-menubar__entry-accel {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -1705,6 +1714,19 @@ body.files-split-resizing .monaco-editor {
   overscroll-behavior: contain;
 }
 
+/* Soft fade where the results pane meets EXPLORER so a partial row reads as
+   "more below" instead of a hard slice. The spacer keeps the last row clear
+   of the fade at scroll end (outside the virtual list, so math is unchanged). */
+.files-search-results.is-open .files-search-results__body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+}
+.files-search-results__body::after {
+  content: "";
+  display: block;
+  height: 10px;
+}
+
 .files-search-results__list {
   list-style: none;
   margin: 0;
@@ -1712,137 +1734,169 @@ body.files-split-resizing .monaco-editor {
   min-height: 0;
 }
 
-/* One file head + N line hits (VS Code-style) */
+/* One file head + N line hits (VS Code-style). Rows are fixed-height
+   (SEARCH_ROW_HEIGHT in FileTree.tsx) for the virtual list. */
 .files-search-group {
   margin: 0;
-  padding: 0 0 2px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-}
-
-.files-search-group:last-child {
-  border-bottom: none;
+  padding: 0;
 }
 
 .files-search-group__head {
   display: flex;
   align-items: center;
-  gap: 3px;
-  width: 100%;
+  gap: 6px;
   min-width: 0;
-  padding: 2px 8px;
+  padding: 0 6px;
   border: none;
   background: transparent;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1.25;
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1;
   text-align: left;
-  color: inherit;
+  color: var(--text);
   cursor: pointer;
 }
 
-.files-search-group__head:hover {
-  background: var(--bg-hover);
+.files-search-group__chevron {
+  flex: 0 0 14px;
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
-.files-search-group__chevron {
-  flex-shrink: 0;
-  width: 12px;
+.files-search-group__icon {
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+.files-search-group__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.files-search-group__file {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.files-search-group__dir {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   color: var(--text-muted);
 }
 
-.files-search-group.is-collapsed .files-search-group__head {
-  padding-bottom: 2px;
-}
-
-.files-search-group__file {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--accent);
-  font-size: 10.5px;
-}
-
-.files-search-group__dir {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
 .files-search-group__count {
-  flex-shrink: 0;
-  font-size: 9px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  background: var(--bg-muted);
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 0 6px;
   border-radius: 999px;
-  padding: 0 5px;
-  line-height: 14px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
 }
 
 .files-search-group__hits {
-  list-style: none;
   margin: 0;
   padding: 0;
 }
 
+/* Hit rows sit under the file name: 6px pad + 14px chevron + 6px gap. */
 .files-search-hit {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  width: 100%;
-  padding: 1px 8px 1px 10px;
-  text-align: left;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 26px;
   border: none;
   background: transparent;
-  color: inherit;
+  color: var(--text-muted);
+  text-align: left;
   cursor: pointer;
   font: inherit;
-  line-height: 1.3;
   min-width: 0;
-}
-
-.files-search-hit:hover {
-  background: var(--bg-hover);
 }
 
 .files-search-hit__line {
-  flex-shrink: 0;
-  width: 2.2em;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
+  flex: 0 0 auto;
+  min-width: 4ch;
+  font-family: var(--font);
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+  opacity: 0.8;
   text-align: right;
 }
 
+/* Code preview: [before …|match|… after]. The match cell never shrinks;
+   `before` ellipsizes on the left (rtl box + isolated ltr text), `after` on
+   the right — so the first match is always fully visible at any width. */
 .files-search-hit__text {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
   margin: 0;
   padding: 0;
-  border: none;
-  background: transparent;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1.3;
-  color: var(--text);
+  font-family: var(--font);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  white-space: pre;
+}
+
+.files-search-hit__before,
+.files-search-hit__after {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
+}
+
+.files-search-hit__before {
+  flex: 0 1 auto;
+  direction: rtl;
+  text-align: left;
+}
+
+.files-search-hit__ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.files-search-hit__after {
+  flex: 1 1 auto;
 }
 
 .files-search-hit__mark {
+  flex: none;
   padding: 0 1px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
   color: var(--text);
-  font-weight: 600;
+  font-weight: inherit;
 }
 
 /* Editor highlight when jumping from workspace search */
@@ -7490,7 +7544,8 @@ select.field__input {
   font-style: normal;
   /* Transparent so the line's diff / selection highlight shows through. */
   background: transparent !important;
-  padding-left: 16px;
+  /* Single gap (was padding-left 16px + two-space prefix). */
+  padding-left: 8px;
   white-space: pre;
 }
 
@@ -7920,9 +7975,6 @@ select.field__input {
   white-space: nowrap;
 }
 
-.files-search-results__virtual .files-search-hit {
-  align-items: center;
-}
 
 .files-search-results__more {
   display: flex;
@@ -8453,7 +8505,6 @@ input[type="radio"] {
 
 /* Selected / expanded rows must read differently from hover in every theme
    (Light Modern uses the same grey for both). Dark Modern keeps its blue. */
-:root:not([data-theme="dark-modern"]) .file-tree__row.is-selected,
 :root:not([data-theme="dark-modern"]) .repo-row.is-expanded > .repo-row__header {
   background: color-mix(in srgb, var(--accent) 13%, var(--bg-panel));
 }
@@ -9164,4 +9215,275 @@ body:has(.comments-pane) .skill-install-toast {
   font-family: var(--font-mono);
   font-size: 11px;
   word-break: break-all;
+}
+
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 16px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+  max-width: 480px;
+}
+.error-boundary__title {
+  margin: 0;
+  font-weight: 650;
+  font-size: 13px;
+}
+.error-boundary__message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ── Shared list-row highlight ───────────────────────────────────────
+   One look for every selectable list row (explorer tree, search results,
+   diff changed-files rail, History changes + commits, agent sidebar,
+   quick open): inset rounded rect, same hover/selected colours, matching
+   the top tabs. Colours come from theme tokens so all 4 themes agree. */
+:root {
+  --row-inset: 6px;
+  --row-radius: var(--radius);
+  --row-hover-bg: var(--bg-hover);
+  --row-selected-bg: color-mix(in srgb, var(--accent) 13%, var(--bg-panel));
+  --row-selected-hover-bg: color-mix(in srgb, var(--accent) 17%, var(--bg-panel));
+  --row-selected-fg: var(--text);
+}
+:root[data-theme="dark-modern"] {
+  --row-selected-bg: var(--bg-active);
+  --row-selected-hover-bg: color-mix(in srgb, var(--bg-active) 85%, var(--accent));
+}
+
+.diff-file-list__row {
+  width: calc(100% - 2 * var(--row-inset));
+  margin-inline: var(--row-inset);
+  padding: 5px 8px;
+  border-radius: var(--row-radius);
+  box-sizing: border-box;
+}
+.diff-file-list {
+  padding-block: 2px;
+}
+.wt-row,
+.commit-row {
+  border-radius: var(--row-radius);
+}
+
+.file-tree__row:hover,
+.files-search-group__head:hover,
+.files-search-hit:hover,
+.diff-file-list__row:hover,
+.wt-row--btn:hover:not(:disabled),
+.commit-row:hover,
+.agent-sidebar__row:hover,
+.quick-open__item:hover {
+  background: var(--row-hover-bg);
+}
+
+.file-tree__row.is-selected,
+.diff-file-list__row.is-selected,
+.commit-row.is-selected,
+.agent-sidebar__row.is-active,
+.quick-open__item.is-active {
+  background: var(--row-selected-bg);
+  color: var(--row-selected-fg);
+  box-shadow: none;
+}
+.file-tree__row.is-selected:hover,
+.diff-file-list__row.is-selected:hover,
+.commit-row.is-selected:hover,
+.agent-sidebar__row.is-active:hover {
+  background: var(--row-selected-hover-bg);
+}
+.file-tree__row:focus-visible,
+.files-search-hit:focus-visible,
+.files-search-group__head:focus-visible,
+.diff-file-list__row:focus-visible,
+.wt-row--btn:focus-visible,
+.commit-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent-border-strong);
+}
+
+/* ── Search panel: one field, one focus ring ─────────────────────── */
+.files-search {
+  gap: 2px;
+  height: 28px;
+  margin: 0 8px 6px;
+  padding: 0 3px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--duration-popover) ease, box-shadow var(--duration-popover) ease;
+}
+.files-search:focus-within {
+  border-color: var(--border);
+  box-shadow: none;
+}
+.files-search:has(.files-search__input:focus-visible),
+.files-search:has(.files-search__input:focus) {
+  border-color: var(--accent-border-strong);
+  box-shadow: var(--focus-ring);
+}
+.files-search__icon {
+  margin-right: 4px;
+}
+.files-search__input,
+.files-search__input:focus,
+.files-search__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.files-search__input,
+.files-search__input::placeholder {
+  font-size: var(--row-font-size);
+}
+.files-search__toggle {
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.files-search__toggle:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.files-search__toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.files-search-filters__input:focus,
+.files-search-filters__input:focus-visible {
+  border-color: var(--accent-border-strong);
+  box-shadow: var(--focus-ring);
+}
+
+/* RESULTS header: same rhythm as the explorer section head. */
+.files-search-results > .files-section__head-row {
+  height: 26px;
+  border-bottom: 1px solid var(--border);
+}
+.files-search-results > .files-section__head-row > .files-section__head {
+  height: 100%;
+}
+.files-search-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.files-search-summary__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-search-summary__engine {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-muted);
+}
+
+.files-search-hit:hover .files-search-hit__text,
+.files-search-hit:focus-visible .files-search-hit__text {
+  color: var(--text);
+}
+
+/* ── Sidebar type scale ──────────────────────────────────────────────
+   Explorer rows use --row-font-size (13px, same as body). Search is a
+   deliberately denser scale of its own so results never read larger than
+   the tree; hit code uses the UI mono stack, not the user's editor font. */
+:root {
+  --row-font-size: 13px;
+  --search-font-size: 12px;
+  --search-code-font-size: 11.5px;
+  --search-meta-font-size: 10.5px;
+  --search-input-mono-font-size: 11px;
+  --search-label-font-size: 10px;
+}
+.file-tree__row {
+  font-size: var(--row-font-size);
+}
+.files-search__input,
+.files-search__input::placeholder,
+.files-search-group__head,
+.files-search-group__file {
+  font-size: var(--search-font-size);
+}
+.files-search-hit__text {
+  font-family: var(--font);
+  font-size: var(--search-code-font-size);
+}
+.files-search-hit__line {
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+.files-search-filters__input,
+.files-search-filters__textarea {
+  font-family: var(--font);
+}
+.files-search-group__dir,
+.files-search-group__count,
+.files-search-hit__line {
+  font-size: var(--search-meta-font-size);
+}
+.files-search-results .files-section__meta {
+  font-size: 11px;
+}
+.files-search-filters__input,
+.files-search-filters__textarea,
+.files-search-filters__input::placeholder {
+  font-size: var(--search-input-mono-font-size);
+}
+.files-search-filters__label,
+.files-section__label,
+.files-search-summary__engine,
+.files-search-filters__hint {
+  font-size: var(--search-label-font-size);
+}
+
+/* ── Search results: hit block + match highlight ──────────────────────
+   No search-only colours: the hit lines under a file head sit on the
+   theme's recessed --field-well (same token as inputs/repo rows), so each
+   file's matches read as one block against the --bg-panel sidebar and the
+   file-head rows. Row hover still paints --row-hover-bg on the button above
+   it. The match itself uses the editor's jump highlight (--accent @ 38%,
+   same as .search-jump-match) plus weight, so search and editor agree. */
+.files-search-group__hits::before {
+  content: "";
+  position: absolute;
+  inset: 0 6px;
+  background: var(--field-well);
+  pointer-events: none;
+}
+.files-search-group__hits.is-first::before {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+.files-search-group__hits.is-last::before {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+.files-search-group__hits > .files-search-hit {
+  position: relative;
+}
+.files-search-hit__mark {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow: none;
+  border-radius: 2px;
+  color: var(--text);
+  font-weight: 600;
 }

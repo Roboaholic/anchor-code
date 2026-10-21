@@ -1,39 +1,71 @@
+/* FileTree-local search chrome (shared tokens live in global.css). */
+
 .files-search-summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .files-search-summary__text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.files-search-summary__engine {
-  flex-shrink: 0;
-  color: var(--text-secondary);
+.files-search-warn {
+  position: relative;
+  color: var(--warn-strong);
 }
 
-.files-search-diagnostics {
-  flex: 0 1 auto;
-  max-height: 40%;
-  overflow: auto;
-  margin: 4px 8px;
-  padding: 6px 8px;
+.files-search-warn:hover,
+.files-search-warn:focus-visible {
+  color: var(--warn-strong);
+  background: var(--warn-bg);
+}
+
+.files-search-warn__tip {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-tooltip);
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid var(--warn-border);
   border-radius: var(--radius);
-  background: var(--bg-muted);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
   color: var(--text-secondary);
   font-size: 11px;
-  line-height: 1.4;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
   overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity var(--duration-popover) ease, transform var(--duration-popover) ease, visibility 0s linear var(--duration-popover);
 }
 
-.files-search-diagnostics summary {
-  cursor: pointer;
+.files-search-warn:hover .files-search-warn__tip,
+.files-search-warn:focus-visible .files-search-warn__tip,
+.files-search-warn:focus-within .files-search-warn__tip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
 }
 
-.files-search-diagnostics ul {
-  margin: 6px 0 0;
-  padding-left: 16px;
+.files-search-warn__tip ul {
+  margin: 0;
+  padding-left: 14px;
+}
+
+.files-search-warn__tip li + li {
+  margin-top: 4px;
 }

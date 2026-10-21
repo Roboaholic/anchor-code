@@ -132,6 +132,89 @@ describe("FileTree search coverage", () => {
     expect(screen.getByLabelText(`Search engine: ${source}`)).toBeTruthy();
   });
 
+    it("renders a file header with count pill and a windowed, highlighted hit preview", async () => {
+    render(<FileTree />);
+    const request = await search("needle");
+    const long = "        const someVeryLongIdentifierName = computeSomething(needle, other);";
+    await finish(request, { hits: [{ path: "src/deep/found.ts", line: 157, text: long }] });
+    expect(screen.getByText("found.ts")).toBeTruthy();
+    expect(screen.getByText("src/deep")).toBeTruthy();
+    expect(screen.getByLabelText("1 match").textContent).toBe("1");
+    const mark = document.querySelector(".files-search-hit__mark");
+    expect(mark?.textContent).toBe("needle");
+    const code = mark!.parentElement!;
+    expect(code.className).toBe("files-search-hit__text");
+    // Three cells: left-truncating before (with JS lead "…"), match, right-truncating after.
+    expect([...code.children].map((el) => el.className)).toEqual([
+      "files-search-hit__before",
+      "files-search-hit__mark",
+      "files-search-hit__after",
+    ]);
+    expect(code.querySelector(".files-search-hit__before > .files-search-hit__ltr")?.textContent).toBe("…Something(");
+    expect(code.querySelector(".files-search-hit__after")?.textContent).toBe(", other);");
+    const row = mark!.closest("button")!;
+    expect(row.hasAttribute("title")).toBe(false);
+    // No native tooltips anywhere in the results list or its header.
+    expect(document.querySelectorAll(".files-search-results [title]").length).toBe(0);
+    expect(
+      screen.getByRole("button", { name: "src/deep/found.ts, 1 match" }).getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(row.getAttribute("aria-label")).toBe(`src/deep/found.ts:157 ${long.trim()}`);
+    expect(row.querySelector(".files-search-hit__line")?.textContent).toBe("157");
+  });
+
+  it("marks the first and last hit of each file so the hit block gets rounded ends", async () => {
+    render(<FileTree />);
+    const request = await search("needle");
+    await finish(request, {
+      hits: [
+        { path: "a.ts", line: 1, text: "needle" },
+        { path: "a.ts", line: 2, text: "needle" },
+        { path: "a.ts", line: 3, text: "needle" },
+        { path: "b.ts", line: 4, text: "needle" },
+      ],
+    });
+    const blocks = [...document.querySelectorAll(".files-search-group__hits")].map((el) => el.className);
+    expect(blocks).toEqual([
+      "files-search-group__hits is-first",
+      "files-search-group__hits",
+      "files-search-group__hits is-last",
+      "files-search-group__hits is-first is-last",
+    ]);
+  });
+
+  it("renders match-only and no-match previews without empty cells", async () => {
+    render(<FileTree />);
+    const request = await search("needle");
+    await finish(request, {
+      hits: [
+        { path: "a.ts", line: 1, text: "   needle" },
+        { path: "b.ts", line: 2, text: "  unrelated text" },
+      ],
+    });
+    const rows = [...document.querySelectorAll(".files-search-hit__text")];
+    expect([...rows[0]!.children].map((el) => el.className)).toEqual(["files-search-hit__mark"]);
+    expect([...rows[1]!.children].map((el) => el.className)).toEqual(["files-search-hit__after"]);
+    expect(rows[1]!.textContent).toBe("unrelated text");
+  });
+
+  it("hides always-on scope diagnostics and only shows a warning icon for real issues", async () => {
+    render(<FileTree />);
+    const request = await search();
+    await finish(request, {
+      source: "rg",
+      diagnostics: [
+        { code: "rg-scope", message: "Search scope: at most 8 matching lines per file." },
+        { code: "tracked-only", message: "Should stay hidden." },
+        { code: "scan-scope", message: "Should stay hidden too." },
+        { code: "anchorignore", message: "Also hidden by default." },
+      ],
+    });
+    expect(screen.queryByRole("button", { name: /Search warnings/ })).toBeNull();
+    expect(screen.queryByText(/Search scope/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Search details/ })).toBeNull();
+  });
+
   it.each([0, 1])("shows partial coverage and actionable diagnostics with %i matches, without inventing a next page", async (count) => {
     render(<FileTree />);
     const request = await search();
@@ -144,11 +227,12 @@ describe("FileTree search coverage", () => {
     expect(screen.getByRole("status").textContent).toContain("Search incomplete");
     expect(screen.getByLabelText("Search engine: scan")).toBeTruthy();
     expect(
+      screen.getByRole("button", { name: /Search warnings \(1\)/ }).hasAttribute("title"),
+    ).toBe(false);
+    expect(
       screen.getByText("Some files were skipped. Narrow the include filter and search again."),
     ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /Search details/ }).getAttribute("aria-expanded"),
-    ).toBe("true");
+    expect(screen.queryByRole("button", { name: /Search details/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Show more/ })).toBeNull();
     if (!count) expect(screen.getByRole("status").textContent).toContain("No matches in searched files");
   });
@@ -163,6 +247,9 @@ describe("FileTree search coverage", () => {
     });
     expect(screen.getByText("Search failed")).toBeTruthy();
     expect(screen.getByLabelText("Search engine: git-grep")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Search warnings \(1\)/ }),
+    ).toBeTruthy();
     expect(screen.getByText("Cannot read the workspace. Check folder permissions.")).toBeTruthy();
     expect(screen.queryByText(/No matches/)).toBeNull();
   });

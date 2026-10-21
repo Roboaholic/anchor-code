@@ -5,42 +5,49 @@ import type { UiTheme } from "./settings.js";
 export const MENUBAR_OVERLAY_HEIGHT = 32;
 
 /**
+ * Panel / shell colors — keep in sync with `src/styles/global.css` `--bg-panel`
+ * and `--bg` / `--text` for each theme.
+ */
+export const THEME_CHROME = {
+  light: {
+    panel: "#faf9f7",
+    shell: "#f4f3f1",
+    text: "#1c1b19",
+  },
+  "light-modern": {
+    panel: "#ffffff",
+    shell: "#f3f3f3",
+    text: "#3b3b3b",
+  },
+  dark: {
+    panel: "#171718",
+    shell: "#101011",
+    text: "#ececec",
+  },
+  "dark-modern": {
+    panel: "#1f1f1f",
+    shell: "#181818",
+    text: "#cccccc",
+  },
+} as const satisfies Record<
+  UiTheme,
+  { panel: string; shell: string; text: string }
+>;
+
+/**
  * Caption overlay must match --bg-panel exactly so the top row is one surface.
  */
 export function titleBarOverlayFor(theme: UiTheme): Electron.TitleBarOverlay {
-  if (theme === "dark-modern") {
-    return {
-      color: "#1f1f1f",
-      symbolColor: "#cccccc",
-      height: MENUBAR_OVERLAY_HEIGHT,
-    };
-  }
-  if (theme === "dark") {
-    return {
-      color: "#171718",
-      symbolColor: "#ececec",
-      height: MENUBAR_OVERLAY_HEIGHT,
-    };
-  }
-  if (theme === "light-modern") {
-    return {
-      color: "#ffffff",
-      symbolColor: "#3b3b3b",
-      height: MENUBAR_OVERLAY_HEIGHT,
-    };
-  }
+  const c = THEME_CHROME[theme] ?? THEME_CHROME["dark-modern"];
   return {
-    color: "#faf9f7",
-    symbolColor: "#1c1b19",
+    color: c.panel,
+    symbolColor: c.text,
     height: MENUBAR_OVERLAY_HEIGHT,
   };
 }
 
 export function shellBackground(theme: UiTheme): string {
-  if (theme === "dark-modern") return "#181818";
-  if (theme === "dark") return "#101011";
-  if (theme === "light-modern") return "#f3f3f3";
-  return "#f4f3f1";
+  return (THEME_CHROME[theme] ?? THEME_CHROME["dark-modern"]).shell;
 }
 
 export function applyWindowChromeTheme(

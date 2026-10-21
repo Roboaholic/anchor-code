@@ -221,6 +221,12 @@ export interface RepoStatus {
   ahead: number | null;
   /** Commits behind the same base; null when no base. */
   behind: number | null;
+  /**
+   * True when this status looked for untracked files (`normal` / `all`);
+   * false for the tracked-only (`-uno`) badge poll, whose untracked count is
+   * unknown rather than zero.
+   */
+  untrackedScanned?: boolean;
 }
 
 export interface BranchInfo {
@@ -578,11 +584,13 @@ export interface AnchorApi {
     }) => Promise<BlameLine[]>;
     status: (
       repoRoot: string,
-      opts?: { badgeOnly?: boolean },
+      opts?: { badgeOnly?: boolean; scanUntracked?: boolean },
     ) => Promise<RepoStatus>;
     statusBulk: (args: {
       repoRoots: string[];
       badgeOnly?: boolean;
+      /** Badge mode: also scan for untracked files (`--untracked-files=normal`). */
+      scanUntracked?: boolean;
     }) => Promise<RepoStatus[]>;
     onStatusBulkOne: (cb: (status: RepoStatus) => void) => () => void;
     listBranches: (repoRoot: string) => Promise<BranchInfo[]>;

@@ -456,6 +456,7 @@ const anchor = {
         branch: string | null;
         ahead: number | null;
         behind: number | null;
+        untrackedScanned?: boolean;
       };
       branches: Array<{ name: string; current: boolean }>;
     }> => ipcRenderer.invoke("history:expandBundle", repoRoot, opts ?? {}),
@@ -466,7 +467,7 @@ const anchor = {
     }): Promise<BlameLine[]> => ipcRenderer.invoke("history:fileBlame", args),
     status: (
       repoRoot: string,
-      opts?: { badgeOnly?: boolean },
+      opts?: { badgeOnly?: boolean; scanUntracked?: boolean },
     ): Promise<{
       repoRoot: string;
       entries: { path: string; status: string; code: string }[];
@@ -477,10 +478,12 @@ const anchor = {
       branch: string | null;
       ahead: number | null;
       behind: number | null;
+      untrackedScanned?: boolean;
     }> => ipcRenderer.invoke("history:status", repoRoot, opts),
     statusBulk: (args: {
       repoRoots: string[];
       badgeOnly?: boolean;
+      scanUntracked?: boolean;
     }): Promise<
       Array<{
         repoRoot: string;
@@ -492,6 +495,7 @@ const anchor = {
         branch: string | null;
         ahead: number | null;
         behind: number | null;
+        untrackedScanned?: boolean;
       }>
     > => ipcRenderer.invoke("history:statusBulk", args),
     onStatusBulkOne: (
@@ -505,6 +509,7 @@ const anchor = {
         branch: string | null;
         ahead: number | null;
         behind: number | null;
+        untrackedScanned?: boolean;
       }) => void,
     ): (() => void) => {
       const listener = (
@@ -519,6 +524,7 @@ const anchor = {
           branch: string | null;
           ahead: number | null;
           behind: number | null;
+          untrackedScanned?: boolean;
         },
       ) => cb(status);
       ipcRenderer.on("history:statusBulk:one", listener);

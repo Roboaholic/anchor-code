@@ -8,10 +8,16 @@ vi.mock("@/features/shell/orchestrate", () => ({
   openWorkingTreeFileDiff: vi.fn(),
 }));
 
+vi.mock("@/shared/appActivity", async (orig) => ({
+  ...(await orig<typeof import("@/shared/appActivity")>()),
+  isAppActive: () => true,
+}));
+
 import { HistoryPane } from "./HistoryPane";
-import { useHistoryStore, type RepoCardState } from "./historyStore";
+import { UNTRACKED_SCAN_MS, useHistoryStore, type RepoCardState } from "./historyStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { RepoStatus } from "@/shared/anchor-api";
+import { mergeBadgePorcelain } from "@/core/history/statusParse";
 
 const ROOT = "/ws";
 
@@ -65,6 +71,8 @@ function setRepos(repos: RepoCardState[]) {
       discoverError: null,
       repos,
       softRefreshStatuses: vi.fn(async () => {}),
+      refreshAllStatuses: vi.fn(async () => {}),
+      scanUntracked: vi.fn(async () => {}),
       refreshRepo: vi.fn(async () => {}),
     });
   });
@@ -85,14 +93,22 @@ describe("HistoryPane repo rows", () => {
       "Changes: 2 modified, 1 added, 1 deleted, 1 untracked",
     );
     expect(screen.queryByText("?1")).toBeNull();
-    // Ahead / behind live on the branch line, not in the badge.
-    const branchLine = document.querySelector(".repo-row__line--branch") as HTMLElement;
-    expect(within(branchLine).getByText("feature/very-long-branch-name-for-layout")).toBeTruthy();
-    expect(within(branchLine).getByText("↑3")).toBeTruthy();
-    expect(within(branchLine).getByText("↓2")).toBeTruthy();
+    // One row: chevron+name, branch inline, fill, then ↑ ↓ and the M badge on the right.
+    const header = document.querySelector(".repo-row__header") as HTMLElement;
+    expect([...header.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "repo-row__expand",
+      "repo-branch",
+      "repo-row__fill",
+      "repo-row__meta",
+    ]);
+    expect(within(header).getByText("feature/very-long-branch-name-for-layout")).toBeTruthy();
+    const meta = header.querySelector(".repo-row__meta") as HTMLElement;
+    expect([...meta.children].map((c) => c.textContent)).toEqual(["↑3", "↓2", "M"]);
+    // No native tooltips on the row except the M breakdown.
+    expect([...header.querySelectorAll("[title]")]).toEqual([badges[0]]);
   });
 
-  it("shows M for untracked-only changes, omits zero parts, and hides it when clean", () => {
+  it("shows M for untracked-only changes, omits zero parts, and shows a quiet check when clean", () => {
     setRepos([
       card({
         root: `${ROOT}/cli`,
@@ -110,8 +126,29 @@ describe("HistoryPane repo rows", () => {
     const dirty = rows[0]!.querySelectorAll(".repo-row__badge");
     expect([...dirty].map((b) => b.textContent)).toEqual(["M"]);
     expect(dirty[0]!.getAttribute("title")).toBe("Changes: 3 untracked");
-    expect(rows[1]!.querySelector(".repo-row__badge")).toBeNull();
+    // Clean repo: no lit M, only the quiet check placeholder (label, no tooltip).
+    expect(rows[1]!.querySelector(".repo-row__badge--modified")).toBeNull();
+    const clean = rows[1]!.querySelector(".repo-row__badge--clean") as HTMLElement;
+    expect(clean).not.toBeNull();
+    expect(clean.textContent).toBe("");
+    expect(clean.getAttribute("aria-label")).toBe("No tracked changes");
+    expect(clean.hasAttribute("title")).toBe(false);
+    expect(rows[0]!.querySelector(".repo-row__badge--clean")).toBeNull();
     expect(document.querySelector(".repo-row__sync")).toBeNull();
+  });
+
+  it("keeps an untracked-only repo lit after a badge-only poll (U in the breakdown)", () => {
+    const base = { repoRoot: `${ROOT}/gtest`, modified: 0, added: 0, deleted: 0, branch: "dev", ahead: 0, behind: 0 };
+    // Full status (repo expanded once) saw the untracked file…
+    const full: RepoStatus = { ...base, entries: [{ path: "notes.txt", status: "?", code: "??" }], untracked: 1 };
+    // …the 30s badge poll runs with --untracked-files=no and sees nothing.
+    const badgeOnly: RepoStatus = { ...base, entries: [], untracked: 0 };
+    setRepos([card({ root: `${ROOT}/gtest`, name: "gtest", status: mergeBadgePorcelain(full, badgeOnly) })]);
+    render(<HistoryPane />);
+    const badge = document.querySelector(".repo-row__badge--modified") as HTMLElement;
+    expect(badge.textContent).toBe("M");
+    expect(badge.getAttribute("title")).toBe("Changes: 1 untracked");
+    expect(document.querySelector(".repo-row__badge--clean")).toBeNull();
   });
 
   it("shows the per-repo refresh only when the repo is expanded", () => {
@@ -123,15 +160,12 @@ describe("HistoryPane repo rows", () => {
     const rows = [...document.querySelectorAll(".repo-row")] as HTMLElement[];
     expect(within(rows[0]!).queryByRole("button", { name: "Refresh" })).toBeNull();
     const refresh = within(rows[1]!).getByRole("button", { name: "Refresh" });
-    expect(refresh.closest(".repo-row__line--branch")).not.toBeNull();
-    // Branch line order: branch, then ↑/↓, then refresh last (far right).
-    const line = refresh.closest(".repo-row__line--branch") as HTMLElement;
-    expect([...line.children].map((c) => c.className.split(" ").find((k) => k.startsWith("repo-")))).toEqual([
-      "repo-branch",
-      "repo-row__sync",
-      "repo-row__sync",
-      "repo-row__refresh",
-    ]);
+    // Never in the repo title row: last item of the CHANGES head (far right).
+    expect(refresh.closest(".repo-row__header")).toBeNull();
+    const head = refresh.closest(".repo-block__head") as HTMLElement;
+    expect(within(head).getByText("Changes")).toBeTruthy();
+    expect(head.lastElementChild).toBe(refresh);
+    expect(refresh.hasAttribute("title")).toBe(false);
     fireEvent.click(refresh);
     expect(useHistoryStore.getState().refreshRepo).toHaveBeenCalledWith(`${ROOT}/b`);
     // Top-level refresh-all stays.
@@ -163,5 +197,59 @@ describe("HistoryPane repo rows", () => {
     expect(screen.getByPlaceholderText("Commit message")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Commit message")).toBeNull();
+  });
+
+  it("labels a clean repo by what is known about untracked files", () => {
+    const clean = { ...dirtyStatus, entries: [], modified: 0, added: 0, deleted: 0, untracked: 0, ahead: 0, behind: 0 };
+    setRepos([
+      card({ root: `${ROOT}/x`, name: "x", status: { ...clean, untrackedScanned: false } }),
+      card({ root: `${ROOT}/y`, name: "y", status: { ...clean, untrackedScanned: true } }),
+    ]);
+    render(<HistoryPane />);
+    const labels = [...document.querySelectorAll(".repo-row__badge--clean")].map((b) => b.getAttribute("aria-label"));
+    expect(labels).toEqual(["No tracked changes", "No local changes"]);
+  });
+});
+
+describe("HistoryPane untracked scan triggers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ workspaceRoot: ROOT });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("scans every 5 minutes, never on the 30s tracked poll", async () => {
+    setRepos([card({ root: `${ROOT}/a`, name: "a", status: dirtyStatus })]);
+    render(<HistoryPane />);
+    const { scanUntracked, softRefreshStatuses } = useHistoryStore.getState() as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNTRACKED_SCAN_MS - 1);
+    });
+    expect(softRefreshStatuses!.mock.calls.length).toBeGreaterThanOrEqual(10);
+    expect(scanUntracked).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(scanUntracked).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNTRACKED_SCAN_MS);
+    });
+    expect(scanUntracked).toHaveBeenCalledTimes(2);
+  });
+
+  it("Repos Refresh runs the tracked pass, then the untracked scan", async () => {
+    setRepos([card({ root: `${ROOT}/a`, name: "a", status: dirtyStatus })]);
+    render(<HistoryPane />);
+    const { scanUntracked, refreshAllStatuses } = useHistoryStore.getState() as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(refreshAllStatuses).toHaveBeenCalledTimes(1);
+    expect(scanUntracked).toHaveBeenCalledTimes(1);
+    expect(refreshAllStatuses!.mock.invocationCallOrder[0]!).toBeLessThan(scanUntracked!.mock.invocationCallOrder[0]!);
   });
 });

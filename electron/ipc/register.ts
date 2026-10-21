@@ -1145,7 +1145,7 @@ export function registerIpc(opts: {
     async (
       _evt,
       repoRoot: string,
-      opts?: { badgeOnly?: boolean },
+      opts?: { badgeOnly?: boolean; scanUntracked?: boolean },
     ) => {
       try {
         return await application.review.status(repoRoot, opts);
@@ -1159,12 +1159,13 @@ export function registerIpc(opts: {
     "history:statusBulk",
     async (
       evt,
-      args: { repoRoots: string[]; badgeOnly?: boolean },
+      args: { repoRoots: string[]; badgeOnly?: boolean; scanUntracked?: boolean },
     ) => {
       try {
         const roots = Array.isArray(args?.repoRoots) ? args.repoRoots : [];
         return await application.review.statusBulk(roots, {
           badgeOnly: args?.badgeOnly !== false,
+          scanUntracked: args?.scanUntracked === true,
           onStatus: (status: RepoStatus) => {
             try {
               evt.sender.send("history:statusBulk:one", status);

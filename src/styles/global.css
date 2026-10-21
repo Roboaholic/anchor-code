@@ -8536,65 +8536,60 @@ input[type="radio"] {
   background: color-mix(in srgb, var(--accent) 17%, var(--bg-panel));
 }
 
-/* ── History repo rows: two-line layout ──────────────────────────────
-   Line 1: chevron · name (ellipsis) · one "M" changes badge (right).
-   Line 2 (indented under the name): branch (ellipsis), then ↑ahead ↓behind
-   and refresh (expanded only) on the right edge. Nothing wraps; the name and
-   branch absorb the squeeze. */
+/* ── History repo rows: one line ─────────────────────────────────────
+   chevron · name · branch (muted) · …fill… · ↑ahead ↓behind · M badge.
+   When narrow the branch ellipsizes first, then the name; the right group
+   never shrinks or wraps. Per-repo Refresh lives in the CHANGES head. */
 .repo-row__header {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  height: auto;
-  min-height: 0;
-  padding: 3px 4px 4px 2px;
-}
-.repo-row__line {
-  display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 6px 0 2px;
+}
+/* The name never shrinks for the branch (a weighted flex-shrink still
+   shaves sub-pixels and triggers the ellipsis); it only ellipsizes once it
+   alone would take more than 70% of the row. */
+.repo-row__expand {
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: 70%;
+  height: 100%;
 }
-.repo-row__line--main {
-  height: 20px;
+.repo-row__fill {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 4px;
+  cursor: pointer;
 }
-.repo-row__line--main .repo-row__expand {
-  height: 20px;
-}
-.repo-row__line--branch {
-  height: 18px;
-  /* chevron (14) + gap (6) + expand padding (2): branch icon sits under the name */
-  padding-left: 17px;
-  gap: 4px;
-  font-size: 10.5px;
-  color: var(--text-muted);
-}
-/* Branch takes the remaining width (ellipsis); ↑/↓ and refresh sit at the
-   far right, sharing the right edge with the M badge on line 1. */
-.repo-row__line--branch .repo-branch {
-  flex: 1 1 auto;
+.repo-row__header > .repo-branch {
+  flex: 0 1 auto;
   min-width: 0;
   max-width: none;
   display: flex;
 }
-.repo-row__line--branch .repo-branch__btn {
+.repo-row__header .repo-branch__btn {
+  /* min-width 0 so the branch (not the repo name) gives way first. */
+  min-width: 0;
   height: 18px;
+  max-width: 100%;
   padding: 0 4px 0 3px;
   gap: 4px;
   background: transparent;
   border-color: transparent;
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
 }
-.repo-row__line--branch .repo-branch__btn:hover:not(:disabled),
-.repo-row__line--branch .repo-branch__btn.is-open {
+.repo-row__header .repo-branch__btn:hover:not(:disabled),
+.repo-row__header .repo-branch__btn.is-open {
   background: color-mix(in srgb, var(--text-muted) 14%, transparent);
   border-color: transparent;
   color: var(--text-secondary);
 }
-.repo-row__line--branch .repo-branch__icon {
+.repo-row__header .repo-branch__icon {
   font-size: 11px !important;
   width: 11px;
   height: 11px;
@@ -8602,8 +8597,9 @@ input[type="radio"] {
 }
 .repo-row__sync {
   flex: 0 0 auto;
+  font-family: var(--font);
   font-size: 10.5px;
-  line-height: 18px;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -8613,7 +8609,8 @@ input[type="radio"] {
 .repo-row__sync--behind {
   color: var(--warn);
 }
-.repo-row__line--branch .repo-row__refresh {
+/* Per-repo refresh: last item of the CHANGES head, same 18px as the toggle. */
+.repo-block__head .repo-row__refresh {
   flex: 0 0 auto;
   margin-left: 0;
   width: 18px;
@@ -8622,7 +8619,10 @@ input[type="radio"] {
   padding: 0;
   font-size: 12px;
 }
-.repo-row__line--branch .repo-row__refresh .codicon {
+.repo-block__toggle + .repo-row__refresh {
+  margin-left: auto;
+}
+.repo-block__head .repo-row__refresh .codicon {
   font-size: 12px;
 }
 
@@ -8654,6 +8654,40 @@ input[type="radio"] {
 .repo-row__badge--modified {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+/* Clean repo: same square, no fill, faint check — fills the right column
+   without competing with the lit "M" of dirty repos. */
+.repo-row__badge--clean {
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+.repo-row__badge--clean .codicon {
+  font-size: 12px;
+}
+
+/* ── Repo list rhythm + dividers ──────────────────────────────────────
+   Each repo is a section: a hairline (existing --border) separates it from
+   the previous one, inset to the rounded row highlight so hover/selected
+   pills sit between dividers. Rows always stretch to the list width. */
+.repo-card-list > li {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 2px 0;
+}
+.repo-card-list > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.repo-row {
+  width: 100%;
 }
 
 /* ── Repo body sections: one-line headers on the same grid as the rows ──

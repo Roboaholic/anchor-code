@@ -13,6 +13,7 @@ import {
   openWorkingTreeFileDiff,
 } from "@/features/shell/orchestrate";
 import {
+  UNTRACKED_SCAN_MS,
   WORKTREE_SELECTION,
   recentForRepo,
   selectionLabelForCard,
@@ -40,6 +41,7 @@ export function HistoryPane() {
   const discover = useHistoryStore((s) => s.discover);
   const softRefreshStatuses = useHistoryStore((s) => s.softRefreshStatuses);
   const refreshAllStatuses = useHistoryStore((s) => s.refreshAllStatuses);
+  const scanUntracked = useHistoryStore((s) => s.scanUntracked);
 
   useEffect(() => {
     if (!workspaceRoot) return;
@@ -52,6 +54,19 @@ export function HistoryPane() {
   // Badge-first (VS Code SCM style):
   // - While HISTORY is open: quiet-poll M/A/D/? + ahead/behind for all repos
   // - Expanding a repo / Changes / History section: refresh that repo's detail
+  // Untracked files light the M badge too, but scanning for them is the
+  // expensive part of `git status` on big trees: every 5 minutes (plus on
+  // workspace load and the Repos Refresh), never on the 30s poll.
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    if (repos.length === 0) return;
+    const interval = window.setInterval(() => {
+      if (!isAppActive()) return;
+      void scanUntracked();
+    }, UNTRACKED_SCAN_MS);
+    return () => window.clearInterval(interval);
+  }, [workspaceRoot, repos.length, scanUntracked]);
+
   useEffect(() => {
     if (!workspaceRoot) return;
     if (repos.length === 0) return;
@@ -152,7 +167,9 @@ export function HistoryPane() {
         <button
           type="button"
           className="icon-btn"
-          onClick={() => void refreshAllStatuses()}
+          onClick={() =>
+            void refreshAllStatuses().then(() => scanUntracked())
+          }
           title="Refresh status"
           aria-label="Refresh status"
         >
@@ -310,55 +327,35 @@ function RepoCard({
 
   return (
     <div className={`repo-row${card.expanded ? " is-expanded" : ""}`}>
+      {/* One line: chevron · name · branch (muted, truncates first) ·
+          ↑ahead ↓behind · M badge. Per-repo refresh lives in the body. */}
       <div className="repo-row__header">
-        <div className="repo-row__line repo-row__line--main">
-          <button
-            type="button"
-            className="repo-row__expand"
-            onClick={() => toggleExpanded(card.root)}
-            aria-expanded={card.expanded}
-            title={card.root}
-          >
-            <Icon
-              name={card.expanded ? "chevron-down" : "chevron-right"}
-              className="repo-row__chevron"
-            />
-            <span className="repo-row__name">{card.name}</span>
-          </button>
-          <span className="repo-row__meta">
-            {card.status && dirty > 0
-              ? (
-                  <span
-                    className="repo-row__badge repo-row__badge--modified"
-                    title={changesSummary(card)}
-                    aria-label={changesSummary(card)}
-                  >
-                    M
-                  </span>
-                )
-              : null}
-            {card.statusState === "loading" ? (
-              <span className="repo-row__badge is-muted" title="Refreshing…">
-                …
-              </span>
-            ) : null}
-            {card.statusState === "error" ? (
-              <span
-                className="repo-row__badge is-muted"
-                title={card.statusError ?? "Status failed"}
-                aria-label={card.statusError ?? "Status failed"}
-              >
-                !
-              </span>
-            ) : null}
-          </span>
-        </div>
-        <div className="repo-row__line repo-row__line--branch">
-          <BranchSwitcher card={card} branchLabel={branchLabel} />
+        <button
+          type="button"
+          className="repo-row__expand"
+          onClick={() => toggleExpanded(card.root)}
+          aria-expanded={card.expanded}
+          aria-label={card.name}
+        >
+          <Icon
+            name={card.expanded ? "chevron-down" : "chevron-right"}
+            className="repo-row__chevron"
+          />
+          <span className="repo-row__name">{card.name}</span>
+        </button>
+        <BranchSwitcher card={card} branchLabel={branchLabel} />
+        {/* Empty middle of the row still toggles (pointer only; the
+            name button is the keyboard target). */}
+        <span
+          className="repo-row__fill"
+          aria-hidden
+          onClick={() => toggleExpanded(card.root)}
+        />
+        <span className="repo-row__meta">
           {(card.status?.ahead ?? 0) > 0 ? (
             <span
               className="repo-row__sync repo-row__sync--ahead"
-              title={`Ahead of base (upstream / origin default): ${card.status?.ahead}`}
+              aria-label={`Ahead ${card.status?.ahead}`}
             >
               ↑{card.status?.ahead}
             </span>
@@ -366,25 +363,53 @@ function RepoCard({
           {(card.status?.behind ?? 0) > 0 ? (
             <span
               className="repo-row__sync repo-row__sync--behind"
-              title={`Behind base (upstream / origin default): ${card.status?.behind}`}
+              aria-label={`Behind ${card.status?.behind}`}
             >
               ↓{card.status?.behind}
             </span>
           ) : null}
-          {card.expanded ? (
-            <button
-              type="button"
-              className={`icon-btn repo-row__refresh${refreshing ? " is-spinning" : ""}`}
-              disabled={refreshing}
-              aria-busy={refreshing}
-              onClick={() => void refreshRepo(card.root)}
-              title="Refresh"
-              aria-label="Refresh"
+          {card.status && dirty > 0
+            ? (
+                <span
+                  className="repo-row__badge repo-row__badge--modified"
+                  title={changesSummary(card)}
+                  aria-label={changesSummary(card)}
+                >
+                  M
+                </span>
+              )
+            : null}
+          {card.status && dirty === 0 && card.statusState === "idle" ? (
+            // Clean: keep the badge column occupied with a quiet mark so the
+            // row still reads edge to edge (no tooltip, label only). Until an
+            // untracked scan has run, only tracked changes are known.
+            <span
+              className="repo-row__badge repo-row__badge--clean"
+              role="img"
+              aria-label={
+                card.status.untrackedScanned
+                  ? "No local changes"
+                  : "No tracked changes"
+              }
             >
-              <Icon name="refresh" />
-            </button>
+              <Icon name="check" />
+            </span>
           ) : null}
-        </div>
+          {card.statusState === "loading" ? (
+            <span className="repo-row__badge is-muted" aria-label="Refreshing">
+              …
+            </span>
+          ) : null}
+          {card.statusState === "error" ? (
+            <span
+              className="repo-row__badge is-muted"
+              title={card.statusError ?? "Status failed"}
+              aria-label={card.statusError ?? "Status failed"}
+            >
+              !
+            </span>
+          ) : null}
+        </span>
       </div>
 
       {card.expanded ? (
@@ -437,6 +462,16 @@ function RepoCard({
                   </button>
                 </div>
               ) : null}
+              <button
+                type="button"
+                className={`icon-btn repo-row__refresh${refreshing ? " is-spinning" : ""}`}
+                disabled={refreshing}
+                aria-busy={refreshing}
+                onClick={() => void refreshRepo(card.root)}
+                aria-label="Refresh"
+              >
+                <Icon name="refresh" />
+              </button>
             </div>
             {card.changesOpen ? (
               <div className="repo-block__body">
@@ -835,7 +870,7 @@ function BranchSwitcher({
         className={`repo-branch__btn${open ? " is-open" : ""}`}
         onClick={toggle}
         disabled={busy}
-        title={
+        aria-label={
           branchLabel
             ? `Current branch: ${branchLabel}. Click to switch.`
             : card.status

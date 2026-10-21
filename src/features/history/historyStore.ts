@@ -77,6 +77,12 @@ export interface HistoryState {
    * Does not reload commit logs — expand History for that.
    */
   softRefreshStatuses: () => Promise<void>;
+  /**
+   * Badge untracked scan (`--untracked-files=normal`) for every repo, in one
+   * bulk host command. Quiet (no dots, no toast on failure/timeout); results
+   * persist through later tracked-only polls. Concurrent calls share one run.
+   */
+  scanUntracked: () => Promise<void>;
   toggleExpanded: (repoRoot: string) => void;
   toggleChanges: (repoRoot: string) => void;
   toggleHistory: (repoRoot: string) => Promise<void>;
@@ -190,6 +196,13 @@ function findCard(
   return repos.find((r) => r.root === repoRoot);
 }
 
+/** Background untracked scan cadence (the tracked-only poll stays 30s). */
+export const UNTRACKED_SCAN_MS = 5 * 60_000;
+/** Renderer-side cap for one untracked scan; expiry is silent. */
+export const UNTRACKED_SCAN_TIMEOUT_MS = 120_000;
+/** In-flight untracked scan shared by every trigger (interval, Refresh, load). */
+let untrackedScanInFlight: Promise<void> | null = null;
+
 async function refreshExpandedFull(
   get: () => HistoryState,
   expandedRoots: Set<string>,
@@ -300,7 +313,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       set({ repos, discoverStatus: "idle", discoverError: null });
       void get().loadRecent(workspaceRoot);
       // Quiet: don't wipe badges mid-refresh; only update under the hood.
-      void get().refreshAllStatuses({ quiet: true });
+      // The untracked scan follows the first tracked pass so it never delays
+      // the first paint of branches / M badges.
+      void get()
+        .refreshAllStatuses({ quiet: true })
+        .then(() => get().scanUntracked());
     } catch (err) {
       set({
         discoverStatus: "error",
@@ -432,6 +449,83 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     if (badgeOnly) {
       await refreshExpandedFull(get, expandedRoots);
     }
+  },
+
+  scanUntracked: () => {
+    if (untrackedScanInFlight) return untrackedScanInFlight;
+    const workspaceRoot = get().workspaceRoot;
+    const roots = get().repos.map((r) => r.root);
+    if (!workspaceRoot || roots.length === 0) return Promise.resolve();
+
+    const applyOne = (st: RepoStatus) => {
+      // Workspace switched mid-scan, or a tracked-only status on the shared
+      // progressive channel: only scan results are applied here.
+      if (get().workspaceRoot !== workspaceRoot) return;
+      if (st.untrackedScanned !== true) return;
+      const prev = findCard(get().repos, st.repoRoot);
+      if (!prev) return;
+      set((s) => ({
+        repos: mapCard(s.repos, st.repoRoot, {
+          status: mergeBadgePorcelain(prev.status, st),
+        }),
+      }));
+    };
+
+    const run = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Untracked scan timed out")),
+          UNTRACKED_SCAN_TIMEOUT_MS,
+        );
+      });
+      const history = window.anchor.history;
+      const unsub =
+        typeof history.onStatusBulkOne === "function"
+          ? history.onStatusBulkOne(applyOne)
+          : null;
+      try {
+        if (typeof history.statusBulk === "function") {
+          const statuses = await Promise.race([
+            history.statusBulk({
+              repoRoots: roots,
+              badgeOnly: true,
+              scanUntracked: true,
+            }),
+            timeout,
+          ]);
+          for (const st of statuses) applyOne(st);
+        } else {
+          // One repo at a time: never more than one host command for the scan.
+          await Promise.race([
+            (async () => {
+              for (const root of roots) {
+                try {
+                  applyOne(
+                    await history.status(root, {
+                      badgeOnly: true,
+                      scanUntracked: true,
+                    }),
+                  );
+                } catch {
+                  // quiet: keep the last known U for this repo
+                }
+              }
+            })(),
+            timeout,
+          ]);
+        }
+      } catch {
+        // Quiet by design: timeouts / host errors keep the last scan's U.
+      } finally {
+        if (timer) clearTimeout(timer);
+        unsub?.();
+      }
+    })().finally(() => {
+      untrackedScanInFlight = null;
+    });
+    untrackedScanInFlight = run;
+    return run;
   },
 
   refreshStatus: async (repoRoot, opts) => {

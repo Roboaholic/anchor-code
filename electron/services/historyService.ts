@@ -93,6 +93,12 @@ export interface RepoStatus {
   ahead: number | null;
   /** Commits behind comparison base; null if no base. */
   behind: number | null;
+  /**
+   * True when this status looked for untracked files (`normal` / `all`);
+   * false for the tracked-only (`-uno`) badge poll, whose untracked count is
+   * unknown rather than zero.
+   */
+  untrackedScanned?: boolean;
 }
 
 export interface BranchInfo {
@@ -428,7 +434,7 @@ export async function loadRepoExpandBundle(
     }
     const head = (sections.HEAD[0] ?? "").trim();
     const commits = parseLogLines(sections.LOG.join("\n"));
-    const status = statusFromPorcelain(repoRoot, sections.STATUS.join("\n"));
+    const status = statusFromPorcelain(repoRoot, sections.STATUS.join("\n"), true);
     const branches = parseBranchFormat(sections.BRANCH.join("\n"));
     return {
       head,
@@ -528,12 +534,15 @@ export function parseBlamePorcelain(output: string): BlameLine[] {
 export async function loadRepoStatus(
   host: HostSession,
   repoRoot: string,
-  opts?: { badgeOnly?: boolean; timeoutMs?: number },
+  opts?: { badgeOnly?: boolean; scanUntracked?: boolean; timeoutMs?: number },
 ): Promise<RepoStatus> {
   // badgeOnly: skip untracked walk (huge SDK trees). Full list when expanding Changes.
+  // badgeOnly + scanUntracked: `normal` — untracked dirs collapse to `?? dir/`
+  // so the scan never descends into them; enough to light the badge.
   // `-b` adds `## branch...upstream [ahead N, behind M]` so we get tracking in one call.
   // `-uall` lists files inside untracked directories; `normal` collapses them to `?? dir/`.
   const badgeOnly = opts?.badgeOnly === true;
+  const untrackedMode = untrackedFilesMode(badgeOnly, opts?.scanUntracked === true);
   const result = await readRun(host, 
     repoRoot,
     "git",
@@ -541,7 +550,7 @@ export async function loadRepoStatus(
       "status",
       "--porcelain",
       "-b",
-      badgeOnly ? "--untracked-files=no" : "--untracked-files=all",
+      `--untracked-files=${untrackedMode}`,
     ],
     { timeoutMs: opts?.timeoutMs ?? (badgeOnly ? 12_000 : 30_000) },
   );
@@ -572,7 +581,17 @@ export async function loadRepoStatus(
     branch: parsed.tracking.branch,
     ahead: parsed.tracking.ahead,
     behind: parsed.tracking.behind,
+    untrackedScanned: untrackedMode !== "no",
   };
+}
+
+/** `no` for the cheap badge poll, `normal` for the badge untracked scan, `all` for expanded views. */
+export function untrackedFilesMode(
+  badgeOnly: boolean,
+  scanUntracked: boolean,
+): "no" | "normal" | "all" {
+  if (!badgeOnly) return "all";
+  return scanUntracked ? "normal" : "no";
 }
 
 async function listUntrackedFiles(
@@ -605,6 +624,8 @@ export async function loadRepoStatusesBulk(
   repoRoots: string[],
   opts?: {
     badgeOnly?: boolean;
+    /** Badge mode only: also look for untracked files (`--untracked-files=normal`). */
+    scanUntracked?: boolean;
     timeoutMs?: number;
     onStatus?: (status: RepoStatus) => void;
   },
@@ -618,7 +639,8 @@ export async function loadRepoStatusesBulk(
   ];
   if (roots.length === 0) return [];
   const badgeOnly = opts?.badgeOnly !== false;
-  const untracked = badgeOnly ? "no" : "all";
+  const scanUntracked = opts?.scanUntracked === true;
+  const untracked = untrackedFilesMode(badgeOnly, scanUntracked);
   const collected: RepoStatus[] = [];
   const seen = new Set<string>();
 
@@ -657,7 +679,7 @@ export async function loadRepoStatusesBulk(
     const flushBlock = () => {
       if (!currentRoot) return;
       if (!failed) {
-        const st = statusFromPorcelain(currentRoot, buf.join("\n"));
+        const st = statusFromPorcelain(currentRoot, buf.join("\n"), untracked !== "no");
         emit(st);
       }
       currentRoot = null;
@@ -702,6 +724,7 @@ export async function loadRepoStatusesBulk(
     try {
       const st = await loadRepoStatus(host, root, {
         badgeOnly,
+        scanUntracked,
         timeoutMs: opts?.timeoutMs,
       });
       emit(st);
@@ -712,7 +735,11 @@ export async function loadRepoStatusesBulk(
   return collected;
 }
 
-function statusFromPorcelain(repoRoot: string, body: string): RepoStatus {
+function statusFromPorcelain(
+  repoRoot: string,
+  body: string,
+  untrackedScanned: boolean,
+): RepoStatus {
   const { entries, tracking } = parsePorcelainStatusDetailed(body);
   const counts = statusCounts(entries);
   return {
@@ -725,6 +752,7 @@ function statusFromPorcelain(repoRoot: string, body: string): RepoStatus {
     branch: tracking.branch,
     ahead: tracking.ahead,
     behind: tracking.behind,
+    untrackedScanned,
   };
 }
 

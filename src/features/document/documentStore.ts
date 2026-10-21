@@ -6,6 +6,7 @@ import {
   relativeToRoot,
 } from "@/core/workspace/paths";
 import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import { invalidateWorktreeDiffCache } from "./fileDiffCache";
 
 export type MdViewMode = "rendered" | "raw";
@@ -429,7 +430,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatError(err);
       set((s) => ({
         openItems: s.openItems.map((item) =>
           item.id === id && item.kind === "file"

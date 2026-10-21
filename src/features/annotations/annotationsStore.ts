@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { setActiveInterval } from "@/shared/appActivity";
+import { formatError } from "@/shared/formatError";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { resolveAnchor } from "@/core/annotations/anchor";
 import { commentBodyForDisplay } from "@/core/history/diffComment";
@@ -392,7 +393,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       stopDiskWatch();
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
         activeSession: null,
         sessions: [],
         expandedSessionId: null,
@@ -437,7 +438,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
     } catch (err) {
       set({
         loading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       });
     }
   },
@@ -454,7 +455,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       });
     } catch (err) {
       set({
-        toast: err instanceof Error ? err.message : String(err),
+        toast: formatError(err),
       });
       throw err;
     }
@@ -543,7 +544,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
           : "Session ended",
       });
     } catch (err) {
-      set({ toast: err instanceof Error ? err.message : String(err) });
+      set({ toast: formatError(err) });
     }
   },
 
@@ -560,7 +561,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
         toast: "New session created",
       });
     } catch (err) {
-      set({ toast: err instanceof Error ? err.message : String(err) });
+      set({ toast: formatError(err) });
     }
   },
 
@@ -587,7 +588,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       });
     } catch (err) {
       set({
-        toast: err instanceof Error ? err.message : String(err),
+        toast: formatError(err),
       });
       throw err;
     }
@@ -607,7 +608,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
         toast: `Restored ${session.title}`,
       });
     } catch (err) {
-      set({ toast: err instanceof Error ? err.message : String(err) });
+      set({ toast: formatError(err) });
     }
   },
 
@@ -626,7 +627,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       set({ toast: `Export path copied: ${result.exportPath}` });
       return result.exportPath;
     } catch (err) {
-      set({ toast: err instanceof Error ? err.message : String(err) });
+      set({ toast: formatError(err) });
       return null;
     }
   },
@@ -644,7 +645,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       set({ toast: `YAML path copied: ${abs}` });
       return abs;
     } catch (err) {
-      set({ toast: err instanceof Error ? err.message : String(err) });
+      set({ toast: formatError(err) });
       return null;
     }
   },

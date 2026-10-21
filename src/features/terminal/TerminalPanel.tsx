@@ -1,6 +1,7 @@
 import { useThemeStore } from "@/features/shell/themeStore";
 import { terminalFontSize } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
+import { EmptyState } from "@/shared/EmptyState";
 import {
   useCallback,
   useEffect,
@@ -51,6 +52,7 @@ export function TerminalPanel({
   const tabWorkgroupById = useTerminalStore((s) => s.tabWorkgroupById);
   const sessionListOpenByMode = useTerminalStore((s) => s.sessionListOpenByMode);
   const agentActivity = useTerminalStore((s) => s.agentActivity);
+  const exitCodeById = useTerminalStore((s) => s.exitCodeById);
   const error = useTerminalStore((s) => s.error);
   const createShellTab = useTerminalStore((s) => s.createShellTab);
   const closeTab = useTerminalStore((s) => s.closeTab);
@@ -312,8 +314,59 @@ export function TerminalPanel({
                 />
               ))}
               {isStage && isAgent && visibleTabs.length === 0 ? (
-                <div className="agent-stage-empty">
-                  <p className="muted">Start a conversation from the workgroup sidebar</p>
+                <EmptyState
+                  className="agent-stage-empty"
+                  icon="comment-discussion"
+                  title="No conversation yet"
+                  hint="Start a conversation from the workgroup sidebar."
+                />
+              ) : null}
+              {activeTab?.status === "exited" ? (
+                <div className="session-ended-banner" role="status">
+                  <span className="session-ended-banner__label">
+                    Session ended
+                    {exitCodeById[activeTab.id] != null
+                      ? ` (exit ${exitCodeById[activeTab.id]})`
+                      : ""}
+                  </span>
+                  <div className="session-ended-banner__actions">
+                    {activeTab.kind === "agent" &&
+                    activeTab.agentSessionId?.trim() ? (
+                      <button
+                        type="button"
+                        className="btn btn--fill btn--small"
+                        onClick={() => {
+                          const sessionId = activeTab.agentSessionId!.trim();
+                          const title = activeTab.title;
+                          const profileId = activeTab.agentId;
+                          void (async () => {
+                            await closeTab(activeTab.id);
+                            const profiles =
+                              await window.anchor.agent.listProfiles();
+                            const profile =
+                              profiles.find((p) => p.id === profileId) ??
+                              profiles.find((p) => p.enabled !== false);
+                            if (!profile) return;
+                            await useTerminalStore
+                              .getState()
+                              .createAgentTab(profile, {
+                                title,
+                                resumeSessionId: sessionId,
+                              });
+                          })();
+                        }}
+                      >
+                        Resume
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => void closeTab(activeTab.id)}
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </>
@@ -377,7 +430,7 @@ function SessionRail({
       </div>
       <ul className="terminal-session-rail__list" role="tablist">
         {tabs.length === 0 ? (
-          <li className="terminal-session-rail__empty muted">No sessions</li>
+          <li className="terminal-session-rail__empty"><EmptyState icon="terminal" title="No sessions yet" hint="Use + to start one." /></li>
         ) : (
           tabs.map((t) => (
             <li key={t.id} className="terminal-session-rail__item">

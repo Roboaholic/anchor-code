@@ -15,6 +15,7 @@ import {
   saveWorkspaceDocuments,
 } from "@/features/document/documentStore";
 import { Icon } from "@/shared/Icon";
+import { formatError } from "@/shared/formatError";
 import { LeftNav } from "./LeftNav";
 import {
   QuickOpenPalette,
@@ -526,7 +527,7 @@ export function Shell() {
                         dismissSkillInstallPrompt();
                       } catch (err) {
                         setSkillInstallError(
-                          err instanceof Error ? err.message : String(err),
+                          formatError(err),
                         );
                       } finally {
                         setSkillInstallBusy(false);

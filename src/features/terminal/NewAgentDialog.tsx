@@ -4,6 +4,7 @@ import type {
   AgentLaunchDiscovery,
   AgentSessionSummary,
 } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import { Dropdown } from "@/shared/Dropdown";
 import { Icon } from "@/shared/Icon";
 import {
@@ -162,7 +163,7 @@ export function NewAgentDialog({
       .catch((err) => {
         if (!cancelled) {
           setSessions([]);
-          setSessionsError(err instanceof Error ? err.message : String(err));
+          setSessionsError(formatError(err));
         }
       })
       .finally(() => {
@@ -230,7 +231,7 @@ export function NewAgentDialog({
         });
       } catch (err) {
         setOpening(false);
-        setSkillError(err instanceof Error ? err.message : String(err));
+        setSkillError(formatError(err));
       }
       return;
     }
@@ -270,7 +271,7 @@ export function NewAgentDialog({
       setSkillError(null);
       await submit();
     } catch (err) {
-      setSkillError(err instanceof Error ? err.message : String(err));
+      setSkillError(formatError(err));
     } finally {
       setSkillInstalling(false);
     }

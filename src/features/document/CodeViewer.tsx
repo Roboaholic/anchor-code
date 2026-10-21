@@ -653,6 +653,10 @@ export function CodeViewer({
     }, HOVER_CLOSE_MS);
   }, [closeBubble]);
 
+  useEffect(() => {
+    setSelToolbar(null);
+  }, [path]);
+
   const updateSelectionToolbar = useCallback(() => {
     const ed = editorRef.current;
     const overlay = overlayRef.current;

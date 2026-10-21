@@ -33,6 +33,8 @@ import {
   monacoThemeId,
 } from "@/core/theme/theme";
 import type { BlameLine, CommentRecord } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
+import { isBinaryFile } from "@/shared/binaryFile";
 import { Icon } from "@/shared/Icon";
 import { fitBlameText } from "./blameDisplay";
 import "./monacoSetup";
@@ -244,6 +246,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sideBySide, setSideBySide] = useState(true);
+  const isBinaryDiff = Boolean(
+    activePath &&
+      (isBinaryFile(activePath, oldText) || isBinaryFile(activePath, newText)),
+  );
   /** Changed-files rail: open by default; user can collapse for more editor space. */
   const [filesOpen, setFilesOpen] = useState(true);
   const [filesWidth, setFilesWidth] = useState(loadDiffFilesWidth);
@@ -298,6 +304,10 @@ export function DiffViewer({ item }: { item: DiffItem }) {
 
 
   useEffect(() => {
+    setSelToolbar(null);
+  }, [activePath]);
+
+  useEffect(() => {
     if (!activePath || !activeMeta) {
       setOldText("");
       setNewText("");
@@ -334,7 +344,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         })
         .catch((err: unknown) => {
           if (cancelled) return;
-          setError(err instanceof Error ? err.message : String(err));
+          setError(formatError(err));
           setLoading(false);
         });
     }
@@ -1244,6 +1254,11 @@ export function DiffViewer({ item }: { item: DiffItem }) {
           ) : error ? (
             <div className="empty-center">
               <p className="error-text">{error}</p>
+            </div>
+          ) : isBinaryDiff ? (
+            <div className="diff-binary-placeholder" role="status">
+              <p className="diff-binary-placeholder__title">Binary file — not shown</p>
+              <p className="muted">{activePath}</p>
             </div>
           ) : (
             <>

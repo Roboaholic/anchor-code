@@ -14,6 +14,7 @@ import {
   MIN_UI_SCALE,
 } from "@/core/theme/theme";
 import { Icon } from "@/shared/Icon";
+import { formatError } from "@/shared/formatError";
 import { Switch } from "@/shared/Switch";
 import { Dropdown } from "@/shared/Dropdown";
 import type {
@@ -205,7 +206,7 @@ export function SettingsPanel() {
         packaged: prev?.packaged ?? false,
         progress: null,
         message: null,
-        error: err instanceof Error ? err.message : String(err),
+        error: formatError(err),
       }));
     } finally {
       setUpdateBusy(false);
@@ -229,7 +230,7 @@ export function SettingsPanel() {
           ? {
               ...prev,
               status: "error",
-              error: err instanceof Error ? err.message : String(err),
+              error: formatError(err),
             }
           : prev,
       );

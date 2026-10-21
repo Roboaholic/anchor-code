@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentCliProfile, SkillInstallStatus } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import { Dropdown } from "@/shared/Dropdown";
 import { Switch } from "@/shared/Switch";
 import { Checkbox } from "@/shared/Checkbox";
@@ -85,7 +86,7 @@ export function SettingsAgentSection() {
       }
       setSelectedTargets(next);
     } catch (err) {
-      setSkillError(err instanceof Error ? err.message : String(err));
+      setSkillError(formatError(err));
     }
   }, [workspaceRoot]);
 
@@ -101,7 +102,7 @@ export function SettingsAgentSection() {
     try {
       await detectAgents();
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : String(err));
+      setAgentError(formatError(err));
     } finally {
       setDetectBusy(false);
     }
@@ -113,7 +114,7 @@ export function SettingsAgentSection() {
       await window.anchor.agent.setDefaultId(id);
       await useTerminalStore.getState().loadAgentProfiles();
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : String(err));
+      setAgentError(formatError(err));
     }
   }, []);
 
@@ -124,7 +125,7 @@ export function SettingsAgentSection() {
         await window.anchor.agent.upsertProfile({ ...profile, enabled });
         await useTerminalStore.getState().loadAgentProfiles();
       } catch (err) {
-        setAgentError(err instanceof Error ? err.message : String(err));
+        setAgentError(formatError(err));
       }
     },
     [],
@@ -169,7 +170,7 @@ export function SettingsAgentSection() {
       await useTerminalStore.getState().loadAgentProfiles();
       setEditingId(null);
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : String(err));
+      setAgentError(formatError(err));
     } finally {
       setEditBusy(false);
     }
@@ -232,7 +233,7 @@ export function SettingsAgentSection() {
       }
       await refreshSkillStatus();
     } catch (err) {
-      setSkillError(err instanceof Error ? err.message : String(err));
+      setSkillError(formatError(err));
     } finally {
       setSkillBusy(false);
     }

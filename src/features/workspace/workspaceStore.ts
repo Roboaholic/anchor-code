@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { DirEntry, RecentWorkspace, WorkspaceInstance } from "@/shared/anchor-api";
+import { formatError } from "@/shared/formatError";
 import {
   joinPath,
   shouldHideTreeEntry,
@@ -240,7 +241,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         try {
           rootEntries = await loadChildren(root);
         } catch (err) {
-          treeError = err instanceof Error ? err.message : String(err);
+          treeError = formatError(err);
         }
       }
 
@@ -286,7 +287,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         console.warn("[workspace] listDir failed:", treeError);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatError(err);
       set({ status: "error", error: message });
       throw err;
     }
@@ -334,7 +335,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           : get().workspaceViews,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatError(err);
       set({ status: "error", error: message });
       throw err;
     }
@@ -387,7 +388,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
                 expanded: true,
                 loaded: true,
                 children: [],
-                error: err instanceof Error ? err.message : String(err),
+                error: formatError(err),
               });
             }
           } else {

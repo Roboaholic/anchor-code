@@ -10,6 +10,7 @@ import {
 import { joinPath } from "@/core/workspace/paths";
 import { rankFuzzyPaths, type FuzzyMatch } from "@/core/workspace/fuzzy";
 import { Icon } from "@/shared/Icon";
+import { formatError } from "@/shared/formatError";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
   loadSearchSettings,
@@ -261,7 +262,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
         setFiles([]);
       })
       .finally(() => {
@@ -290,7 +291,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
           if (!cancelled) setQueryFiles(result.files);
         })
         .catch((err) => {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+          if (!cancelled) setError(formatError(err));
         })
         .finally(() => {
           if (!cancelled) setQueryLoading(false);
@@ -479,7 +480,7 @@ function OpenPathDialog({ onClose }: { onClose: () => void }) {
         onClose();
         await openFileFromTree(resolved);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       } finally {
         setBusy(false);
       }
@@ -508,7 +509,7 @@ function OpenPathDialog({ onClose }: { onClose: () => void }) {
         await openResolved(picked);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
   };
 

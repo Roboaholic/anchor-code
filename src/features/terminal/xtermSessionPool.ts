@@ -24,6 +24,14 @@ import {
   resolveTerminalFilePath,
   terminalFileLinkRange,
 } from "./terminalFileLinks";
+import {
+  encodeWheelReport,
+  mouseModeReportsWheel,
+  nextMouseEncoding,
+  wheelReportCount,
+  type MouseEncoding,
+  type WheelAccumulator,
+} from "./agentWheel";
 
 export type PooledXterm = {
   id: string;
@@ -180,6 +188,66 @@ function registerFileLinkProvider(term: Terminal): IDisposable {
 }
 
 /**
+ * Agent TUIs that capture the mouse in the alternate buffer (Codex fullscreen)
+ * get one wheel report per DOM wheel event from xterm, i.e. one row per notch.
+ * Send WHEEL_ROWS_PER_NOTCH reports per notch instead (see agentWheel.ts).
+ * Shell sessions keep xterm's default so vim/less/htop are unaffected.
+ */
+export function installAgentWheelScrolling(
+  term: Terminal,
+  writeToPty: (data: string) => void,
+): IDisposable[] {
+  // xterm doesn't expose the active mouse encoding; follow DECSET/DECRST.
+  // Returning false lets xterm's own handler apply the mode as usual.
+  let encoding: MouseEncoding = "DEFAULT";
+  const track = (set: boolean) => (params: (number | number[])[]) => {
+    encoding = nextMouseEncoding(encoding, params, set);
+    return false;
+  };
+  const setDisposable = term.parser.registerCsiHandler({ prefix: "?", final: "h" }, track(true));
+  const resetDisposable = term.parser.registerCsiHandler({ prefix: "?", final: "l" }, track(false));
+  const resetAllDisposable = term.parser.registerEscHandler({ final: "c" }, () => {
+    encoding = "DEFAULT";
+    return false;
+  });
+  const acc: WheelAccumulator = { partial: 0 };
+
+  term.attachCustomWheelEventHandler((ev) => {
+    if (
+      term.buffer.active.type !== "alternate" ||
+      !mouseModeReportsWheel(term.modes.mouseTrackingMode) ||
+      ev.ctrlKey || ev.altKey || ev.shiftKey || ev.metaKey
+    ) {
+      return true;
+    }
+    const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
+    const rect = screen?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0 || term.cols < 1 || term.rows < 1) {
+      return true;
+    }
+    const x = Math.min(Math.max(Math.floor(ev.clientX - rect.left), 0), Math.floor(rect.width) - 1);
+    const y = Math.min(Math.max(Math.floor(ev.clientY - rect.top), 0), Math.floor(rect.height) - 1);
+    const pos = {
+      x,
+      y,
+      col: Math.min(term.cols - 1, Math.floor(x / (rect.width / term.cols))),
+      row: Math.min(term.rows - 1, Math.floor(y / (rect.height / term.rows))),
+    };
+    const count = wheelReportCount(ev, acc, term.rows);
+    // Returning false makes xterm skip its own single report; it still
+    // preventDefault()s the event. A zero count is a carried trackpad fraction.
+    if (count === 0) return false;
+    const report = encodeWheelReport(encoding, count < 0, pos);
+    if (!report) return true;
+    // Straight to the PTY (like term.onData) without flagging agent user input.
+    writeToPty(report.repeat(Math.abs(count)));
+    return false;
+  });
+
+  return [setDisposable, resetDisposable, resetAllDisposable];
+}
+
+/**
  * Resize terminal to the host box. Skips when cols/rows already match so
  * panel fold / session-strip toggle doesn't wipe the canvas for no reason.
  */
@@ -261,6 +329,11 @@ export function acquireXtermSession(
     { prefix: "?", intermediates: "$", final: "p" },
     () => true,
   );
+
+  const agentWheelDisposables =
+    kind === "agent"
+      ? installAgentWheelScrolling(term, (data) => useTerminalStore.getState().write(id, data))
+      : [];
 
   let hydrating = true;
   const pendingData: Array<{ data: string; seq: number }> = [];
@@ -358,6 +431,7 @@ export function acquireXtermSession(
       fileLinks.dispose();
       ansiModeQueryDisposable.dispose();
       decModeQueryDisposable.dispose();
+      for (const d of agentWheelDisposables) d.dispose();
     };
 
   const session: PooledXterm = { id, kind, term, fit, hostEl, opened: false };

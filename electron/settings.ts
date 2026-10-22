@@ -206,9 +206,10 @@ export async function loadSettings(): Promise<AppSettings> {
       agentLaunchCache: parsed.agentLaunchCache ?? {},
       historyRecentCompares: parsed.historyRecentCompares ?? {},
       workspaceFilters: parsed.workspaceFilters ?? {},
-      // Mobile access was removed from the desktop app: a legacy
-      // `remoteAccess.relay.enabled: true` is ignored and rewritten as
-      // disabled on the next save, so the relay is never re-enabled.
+      // The relay never auto-starts at launch: a stored
+      // `remoteAccess.relay.enabled: true` (from older builds) is ignored and
+      // rewritten as disabled on the next save. Mobile access is now an
+      // experimental, session-only switch (see RemoteAccessController).
       remoteAccess: {
         enabled: false,
         relay: {
@@ -257,6 +258,24 @@ export function normalizeRemoteRelayConfig(
     ticket: value?.ticket?.trim() || randomBytes(32).toString("base64url"),
     secret: value?.secret?.trim() || randomBytes(32).toString("base64url"),
   };
+}
+
+/**
+ * Relay identity (room / host peer / ticket / secret) used by the
+ * experimental Mobile access page. Missing fields are generated once and
+ * persisted so pairing stays stable across launches. The returned config is
+ * always `enabled: false`; only the in-session controller turns it on.
+ */
+export async function getRemoteRelayIdentity(): Promise<RemoteRelayConfig> {
+  const settings = await loadSettings();
+  const relay: RemoteRelayConfig = {
+    ...normalizeRemoteRelayConfig(settings.remoteAccess?.relay),
+    enabled: false,
+    url: DEFAULT_RELAY_URL,
+  };
+  settings.remoteAccess = { enabled: false, relay };
+  await saveSettings(settings);
+  return relay;
 }
 
 export async function pushRecentWorkspace(

@@ -24,8 +24,26 @@ const profiles = [
   },
 ];
 
+function remoteInfo(enabled: boolean) {
+  return {
+    enabled,
+    relay: {
+      enabled,
+      state: enabled ? ("connecting" as const) : ("disabled" as const),
+      url: enabled ? "https://relay.invalid" : "",
+      roomId: "",
+      hostPeerId: "",
+      connectedGuests: 0,
+      devices: [],
+      pendingDevices: [],
+    },
+  };
+}
+
 describe("SettingsPanel", () => {
+  let remoteOn = false;
   beforeEach(() => {
+    remoteOn = false;
     const anchor = {
       settings: {
         getRestoreLastWorkspace: vi.fn(async () => true),
@@ -62,6 +80,15 @@ describe("SettingsPanel", () => {
         }),
         saveProfiles: vi.fn(async (list: typeof profiles) => list),
       },
+      remote: {
+        getInfo: vi.fn(async () => remoteInfo(remoteOn)),
+        update: vi.fn(async (v: { enabled?: boolean }) => {
+          remoteOn = v.enabled === true;
+          return remoteInfo(remoteOn);
+        }),
+        approveDevice: vi.fn(async () => remoteInfo(true)),
+        revokeDevice: vi.fn(async () => remoteInfo(true)),
+      },
       skill: {
         status: vi.fn(async () => ({ targets: [] })),
         install: vi.fn(async () => ({ ok: true, installed: [] })),
@@ -81,17 +108,49 @@ describe("SettingsPanel", () => {
     act(() => useThemeStore.getState().setSettingsOpen(false));
   });
 
-  it("shows Appearance, Agent, Updates — not Agent skill or mobile", () => {
+  it("shows Appearance, Agent, Updates, Experimental — mobile access only under Experimental", () => {
     render(<SettingsPanel />);
     act(() => useThemeStore.getState().setSettingsOpen(true));
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     const items = Array.from(nav.querySelectorAll("button")).map(
       (b) => b.textContent,
     );
-    expect(items).toEqual(["Appearance", "Agent", "Updates"]);
+    expect(items).toEqual(["Appearance", "Agent", "Updates", "Experimental"]);
     expect(screen.queryByText(/^Agent skill$/)).toBeNull();
-    expect(screen.queryByText(/mobile access/i)).toBeNull();
-    expect(screen.queryByText(/pairing/i)).toBeNull();
+    // Not on the default page.
+    expect(screen.queryByText(/^Mobile access$/)).toBeNull();
+  });
+
+  it("Experimental shows Mobile access with the relay off and no QR until enabled", async () => {
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("experimental"));
+    await waitFor(() => screen.getByText(/^Mobile access$/));
+    expect(screen.getByRole("note").textContent).toMatch(/experimental/i);
+    await waitFor(() => expect(window.anchor.remote.getInfo).toHaveBeenCalled());
+    const toggle = screen.getByTestId("mobile-access-toggle");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByTestId("mobile-access-state").textContent).toBe("disabled");
+    expect(screen.getByText(/Turn on Mobile access to show a pairing code/)).toBeTruthy();
+    // Opening the page must not start the relay by itself.
+    expect(window.anchor.remote.update).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    await waitFor(() => {
+      expect(window.anchor.remote.update).toHaveBeenCalledWith({ enabled: true });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-access-toggle").getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
+  it("does not render a native title tooltip in the Experimental page", async () => {
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("experimental"));
+    await waitFor(() => screen.getByText(/^Mobile access$/));
+    const section = screen.getByLabelText("Experimental");
+    expect(section.querySelector("[title]")).toBeNull();
   });
 
   it("opens Agent section via agent-skill focus alias", async () => {

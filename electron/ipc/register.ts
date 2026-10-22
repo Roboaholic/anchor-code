@@ -3,6 +3,7 @@ import { createSearchHitBatcher } from "./searchBatcher.js";
 import { applyWindowChromeTheme } from "../windowChrome.js";
 import { createHostForProfile, type HostManager } from "../host/hostManager.js";
 import type { AnchorApplication } from "../application/anchorApplication.js";
+import type { RemoteAccessController } from "../remote/remoteAccessController.js";
 import { listSshConfigHosts } from "../host/sshConfig.js";
 import { WslHostSession, listWslDistros } from "../host/wslHost.js";
 import {
@@ -108,6 +109,7 @@ export function registerIpc(opts: {
   terminal: TerminalService;
   fileWatcher: FileWatcherService;
     application: AnchorApplication;
+    remoteAccess: RemoteAccessController;
 }): void {
   const {
     hosts,
@@ -116,6 +118,7 @@ export function registerIpc(opts: {
     terminal,
     fileWatcher,
     application,
+    remoteAccess,
   } = opts;
 
   const host = () => hosts.session;
@@ -140,6 +143,21 @@ export function registerIpc(opts: {
       hostKind: h.kind,
     };
   });
+
+  // Experimental Mobile access: the relay only starts from an explicit
+  // remote:update({ enabled: true }) sent by Settings → Experimental.
+  ipcMain.handle("remote:getInfo", () => remoteAccess.getInfo());
+  ipcMain.handle(
+    "remote:update",
+    (_evt, value: Partial<{ enabled: boolean }>) =>
+      remoteAccess.setEnabled(value?.enabled === true),
+  );
+  ipcMain.handle("remote:revokeDevice", (_evt, peerId: string) =>
+    remoteAccess.revokeDevice(peerId),
+  );
+  ipcMain.handle("remote:approveDevice", (_evt, peerId: string) =>
+    remoteAccess.approveDevice(peerId),
+  );
 
   ipcMain.handle("shell:menuAction", async (_evt, action: string) => {
     const win = getMainWindow();

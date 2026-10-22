@@ -6,9 +6,12 @@ import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 import { FileWatcherService } from "./services/fileWatcherService.js";
-import { getUiTheme, type UiTheme } from "./settings.js";
+import { getRemoteRelayIdentity, getUiTheme, type UiTheme } from "./settings.js";
 import { initAppUpdater } from "./services/appUpdate.js";
 import { AnchorApplication } from "./application/anchorApplication.js";
+import { RemoteRequestHandler } from "./application/remoteRequestHandler.js";
+import { RelayConnector } from "./remote/relayConnector.js";
+import { RemoteAccessController } from "./remote/remoteAccessController.js";
 import { registerRuntimeLifecycle } from "./application/runtimeLifecycle.js";
 import {
   shellBackground,
@@ -55,10 +58,23 @@ application.subscribe((event) => {
     }
   }
 });
-// The desktop app no longer offers Mobile access, so it never creates or
-// starts the Anchor Relay connector, even if a legacy settings file still has
-// remoteAccess.relay.enabled = true. The relay/mobile modules stay in the repo
-// for the mobile package and its verification suites.
+// Experimental Mobile access. Nothing is created or connected at launch, even
+// if a legacy settings file still has remoteAccess.relay.enabled = true. The
+// relay is built and started only when the user turns it on from
+// Settings → Experimental, and that switch is session-only.
+const remoteAccess = new RemoteAccessController({
+  createRelay: () => {
+    const handler = new RemoteRequestHandler({
+      application,
+      appVersion: app.getVersion(),
+    });
+    return {
+      relay: new RelayConnector(handler),
+      dispose: () => handler.dispose(),
+    };
+  },
+  loadRelayIdentity: getRemoteRelayIdentity,
+});
 
 /**
  * Preload must load as CommonJS when package.json has "type":"module".
@@ -340,6 +356,7 @@ void app.whenReady().then(async () => {
     terminal,
     fileWatcher,
     application,
+    remoteAccess,
   });
   initAppUpdater({ getMainWindow: () => mainWindow });
   buildMenu();
@@ -373,6 +390,7 @@ registerRuntimeLifecycle({
   dispose: () => {
     terminal.disposeAll();
     fileWatcher.disposeAll();
+    remoteAccess.dispose();
     void hosts.dispose();
   },
 });

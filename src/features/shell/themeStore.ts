@@ -133,7 +133,8 @@ export type SettingsFocusSection =
   | "appearance"
   | "agent"
   | "agent-skill"
-  | "updates";
+  | "updates"
+  | "experimental";
 
 export interface ThemeState {
   theme: UiTheme;

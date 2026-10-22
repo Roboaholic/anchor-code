@@ -25,6 +25,7 @@ import type {
 import { useShellStore } from "./shellStore";
 import { useThemeStore } from "./themeStore";
 import { SettingsAgentSection } from "./SettingsAgentSection";
+import { SettingsExperimentalSection } from "./SettingsExperimentalSection";
 
 const THEME_OPTIONS: Array<{
   id: UiTheme;
@@ -70,12 +71,13 @@ const LAYOUT_OPTIONS: Array<{
   },
 ];
 
-type SettingsSection = "appearance" | "agent" | "updates";
+type SettingsSection = "appearance" | "agent" | "updates" | "experimental";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
   { id: "agent", label: "Agent" },
   { id: "updates", label: "Updates" },
+  { id: "experimental", label: "Experimental" },
 ];
 
 const FONT_CUSTOM = "__custom__";
@@ -140,7 +142,11 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
-    if (settingsFocusSection === "appearance" || settingsFocusSection === "updates") {
+    if (
+      settingsFocusSection === "appearance" ||
+      settingsFocusSection === "updates" ||
+      settingsFocusSection === "experimental"
+    ) {
       setSection(settingsFocusSection);
     } else if (
       settingsFocusSection === "agent" ||
@@ -690,6 +696,8 @@ export function SettingsPanel() {
 
 
             {section === "agent" ? <SettingsAgentSection /> : null}
+
+            {section === "experimental" ? <SettingsExperimentalSection /> : null}
 
             {section === "updates" ? (
               <section className="settings-section" aria-label="Updates">

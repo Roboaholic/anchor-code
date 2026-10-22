@@ -39,6 +39,31 @@ export interface HostInfo {
   workspaceRoot: string | null;
 }
 
+export interface RemoteAccessInfo {
+  enabled: boolean;
+  relay: {
+    enabled: boolean;
+    state: "disabled" | "connecting" | "online" | "offline";
+    url: string;
+    roomId: string;
+    hostPeerId: string;
+    connectedGuests: number;
+    devices: Array<{ peerId: string; online: boolean }>;
+    pendingDevices: string[];
+    error?: string;
+    pairing?: {
+      v: 1;
+      type: "anchor-code-relay";
+      relayUrl: string;
+      roomId: string;
+      hostPeerId: string;
+      ticket: string;
+      secret: string;
+      expiresAt: string;
+    };
+  };
+}
+
 export interface HostProfile {
   id: string;
   kind: HostKind;
@@ -234,6 +259,19 @@ const anchor = {
     },
     setAgentInputFocused: (focused: boolean): void =>
       ipcRenderer.send("shell:setAgentInputFocused", focused),
+  },
+  /** Experimental Mobile access (session-only; relay starts on explicit enable). */
+  remote: {
+    getInfo: (): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:getInfo"),
+    update: (value: Partial<{
+      enabled: boolean;
+    }>): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:update", value),
+    revokeDevice: (peerId: string): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:revokeDevice", peerId),
+    approveDevice: (peerId: string): Promise<RemoteAccessInfo> =>
+      ipcRenderer.invoke("remote:approveDevice", peerId),
   },
   host: {
     getInfo: (): Promise<HostInfo> => ipcRenderer.invoke("host:getInfo"),

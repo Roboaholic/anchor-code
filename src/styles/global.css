@@ -1185,6 +1185,48 @@ button.search-field:hover {
   background: var(--accent);
 }
 
+/* Vertical panel edges (sidebar | center, center | agent).
+   The 1px line stays on the panel boundary. The element is 9px wide — 4px
+   each side of the line — and overhangs both neighbours via negative margins
+   (layout still 1px). Positioned above the panels, so presses in that zone hit
+   the handle, never the scrollbar underneath. Hit margins are 0 (Shell.tsx),
+   so the element box is the whole hit zone. */
+.resize-handle--edge {
+  position: relative;
+  z-index: 6;
+  width: 9px;
+  margin: 0 -4px;
+  background: transparent;
+  touch-action: none;
+}
+.resize-handle--edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+.resize-handle--edge:hover,
+.resize-handle--edge[data-resize-handle-active] {
+  background: transparent;
+}
+.resize-handle--edge:hover::before,
+.resize-handle--edge[data-resize-handle-active]::before {
+  background: var(--accent);
+}
+@media (pointer: coarse) {
+  .resize-handle--edge {
+    width: 21px;
+    margin: 0 -10px;
+  }
+  .resize-handle--edge::before {
+    left: 10px;
+  }
+}
+
 .shell__center-stack {
   height: 100%;
   width: 100%;
@@ -8369,6 +8411,22 @@ input[type="radio"] {
 .xterm .xterm-scrollable-element > .scrollbar.horizontal > .slider {
   top: 2px !important;
   height: calc(100% - 4px) !important;
+}
+/* Panels whose right edge is a resize handle (sidebar, center): keep the
+   vertical thumb clear of the handle's 4px left hit zone. Native gutter is
+   14px with the 6px thumb at [W-12, W-6]; Monaco/xterm sliders get the same
+   6px at the same spot — a 2px track gap, then the hit zone [W-4, W+5]. */
+.shell__left-panel ::-webkit-scrollbar:vertical,
+.shell__center-panel ::-webkit-scrollbar:vertical {
+  width: 14px;
+}
+.shell__left-panel ::-webkit-scrollbar-thumb:vertical,
+.shell__center-panel ::-webkit-scrollbar-thumb:vertical {
+  border-right-width: 6px;
+}
+.shell__center-panel .monaco-scrollable-element > .scrollbar.vertical > .slider,
+.shell__center-panel .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: calc(100% - 8px) !important;
 }
 
 /* ── Sidebar list rows: inset rounded highlights (match .mode-btn) ──── */

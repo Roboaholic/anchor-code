@@ -39,6 +39,15 @@ import { AskDialog } from "@/features/ask/AskDialog";
 export const LEFT_DEFAULT_SIZE = 16;
 export const LEFT_MAX_SIZE = 28;
 export const AGENT_DEFAULT_SIZE = 22;
+/**
+ * react-resizable-panels adds `hitAreaMargins` around a handle via a
+ * document-level listener, but Chromium hands presses on a native scrollbar
+ * to the scrollbar, so near the sidebar edge the thumb won and only the 1px
+ * line and its right side resized. The vertical edge handles instead carry a
+ * real 9px box (4px each side of the line) stacked above both panels, and the
+ * panel scrollbars are inset to stay left of it (.resize-handle--edge).
+ */
+export const EDGE_HANDLE_HIT_MARGINS = { coarse: 0, fine: 0 } as const;
 
 /**
  * Drive collapsible panel open/closed without remounting siblings.
@@ -565,8 +574,11 @@ export function Shell() {
           >
             <LeftNav />
           </Panel>
+          {/* Hit zone is the element itself (4px each side of the line,
+              above the panels) — see .resize-handle--edge. */}
           <PanelResizeHandle
-            className="resize-handle resize-handle--left"
+            className="resize-handle resize-handle--left resize-handle--edge"
+            hitAreaMargins={EDGE_HANDLE_HIT_MARGINS}
             style={{ display: leftVisible ? undefined : "none" }}
           />
 
@@ -580,6 +592,7 @@ export function Shell() {
               (showAgent ? AGENT_DEFAULT_SIZE : 0)
             }
             minSize={30}
+            className="shell__center-panel"
             id="center"
           >
             <div className="shell__center-stack">
@@ -648,7 +661,8 @@ export function Shell() {
             </div>
           </Panel>
           <PanelResizeHandle
-            className="resize-handle resize-handle--agent"
+            className="resize-handle resize-handle--agent resize-handle--edge"
+            hitAreaMargins={EDGE_HANDLE_HIT_MARGINS}
             style={{ display: showAgent ? undefined : "none" }}
           />
 

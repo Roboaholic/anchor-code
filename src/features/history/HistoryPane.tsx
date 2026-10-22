@@ -327,8 +327,11 @@ function RepoCard({
 
   return (
     <div className={`repo-row${card.expanded ? " is-expanded" : ""}`}>
-      {/* One line: chevron · name · branch (muted, truncates first) ·
-          ↑ahead ↓behind · M badge. Per-repo refresh lives in the body. */}
+      {/* One line: chevron · name (ellipsis) · fill · ↑ahead ↓behind ·
+          branch (muted, right-aligned) · badge slot (M / … / !, empty when
+          clean). ↑↓ sit *before* the branch and the slot is a fixed 16px
+          square, so branch names share one right edge on every row.
+          Refresh lives in the body. */}
       <div className="repo-row__header">
         <button
           type="button"
@@ -343,63 +346,35 @@ function RepoCard({
           />
           <span className="repo-row__name">{card.name}</span>
         </button>
-        <BranchSwitcher card={card} branchLabel={branchLabel} />
-        {/* Empty middle of the row still toggles (pointer only; the
-            name button is the keyboard target). */}
         <span
           className="repo-row__fill"
           aria-hidden
           onClick={() => toggleExpanded(card.root)}
         />
+        {(card.status?.ahead ?? 0) > 0 || (card.status?.behind ?? 0) > 0 ? (
+          <span className="repo-row__syncs">
+            {(card.status?.ahead ?? 0) > 0 ? (
+              <span
+                className="repo-row__sync repo-row__sync--ahead"
+                aria-label={`Ahead ${card.status?.ahead}`}
+              >
+                ↑{card.status?.ahead}
+              </span>
+            ) : null}
+            {(card.status?.behind ?? 0) > 0 ? (
+              <span
+                className="repo-row__sync repo-row__sync--behind"
+                aria-label={`Behind ${card.status?.behind}`}
+              >
+                ↓{card.status?.behind}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+        <BranchSwitcher card={card} branchLabel={branchLabel} />
+        {/* Fixed 16px badge slot, kept (empty) on clean rows so branch
+            names share one right edge: error › M › refreshing › nothing. */}
         <span className="repo-row__meta">
-          {(card.status?.ahead ?? 0) > 0 ? (
-            <span
-              className="repo-row__sync repo-row__sync--ahead"
-              aria-label={`Ahead ${card.status?.ahead}`}
-            >
-              ↑{card.status?.ahead}
-            </span>
-          ) : null}
-          {(card.status?.behind ?? 0) > 0 ? (
-            <span
-              className="repo-row__sync repo-row__sync--behind"
-              aria-label={`Behind ${card.status?.behind}`}
-            >
-              ↓{card.status?.behind}
-            </span>
-          ) : null}
-          {card.status && dirty > 0
-            ? (
-                <span
-                  className="repo-row__badge repo-row__badge--modified"
-                  title={changesSummary(card)}
-                  aria-label={changesSummary(card)}
-                >
-                  M
-                </span>
-              )
-            : null}
-          {card.status && dirty === 0 && card.statusState === "idle" ? (
-            // Clean: keep the badge column occupied with a quiet mark so the
-            // row still reads edge to edge (no tooltip, label only). Until an
-            // untracked scan has run, only tracked changes are known.
-            <span
-              className="repo-row__badge repo-row__badge--clean"
-              role="img"
-              aria-label={
-                card.status.untrackedScanned
-                  ? "No local changes"
-                  : "No tracked changes"
-              }
-            >
-              <Icon name="check" />
-            </span>
-          ) : null}
-          {card.statusState === "loading" ? (
-            <span className="repo-row__badge is-muted" aria-label="Refreshing">
-              …
-            </span>
-          ) : null}
           {card.statusState === "error" ? (
             <span
               className="repo-row__badge is-muted"
@@ -407,6 +382,18 @@ function RepoCard({
               aria-label={card.statusError ?? "Status failed"}
             >
               !
+            </span>
+          ) : card.status && dirty > 0 ? (
+            <span
+              className="repo-row__badge repo-row__badge--modified"
+              title={changesSummary(card)}
+              aria-label={changesSummary(card)}
+            >
+              M
+            </span>
+          ) : card.statusState === "loading" ? (
+            <span className="repo-row__badge is-muted" aria-label="Refreshing">
+              …
             </span>
           ) : null}
         </span>

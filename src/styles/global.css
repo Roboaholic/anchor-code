@@ -8537,9 +8537,12 @@ input[type="radio"] {
 }
 
 /* ── History repo rows: one line ─────────────────────────────────────
-   chevron · name · branch (muted) · …fill… · ↑ahead ↓behind · M badge.
-   When narrow the branch ellipsizes first, then the name; the right group
-   never shrinks or wraps. Per-repo Refresh lives in the CHANGES head. */
+   chevron · name (ellipsis last) · …fill… · ↑ahead ↓behind · branch
+   (muted, right-aligned, ≤45%, truncates first) · one fixed 16px badge
+   slot (empty when clean). Branch and badge columns therefore share the same right edges on
+   every row; ↑↓ sit left of the branch so rows with and without them stay
+   aligned.
+   Per-repo Refresh lives in the CHANGES head. */
 .repo-row__header {
   display: flex;
   flex-direction: row;
@@ -8549,26 +8552,35 @@ input[type="radio"] {
   min-height: 28px;
   padding: 0 6px 0 2px;
 }
-/* The name never shrinks for the branch (a weighted flex-shrink still
-   shaves sub-pixels and triggers the ellipsis); it only ellipsizes once it
-   alone would take more than 70% of the row. */
+/* The name never shrinks for the branch: the branch is the only part that
+   shrinks, so it truncates first. The name ellipsizes only when it would
+   leave less than ~5.5em for branch + badge slot. */
 .repo-row__expand {
   flex: 0 0 auto;
   min-width: 0;
-  max-width: 70%;
+  max-width: calc(100% - 16px - 12px - 5.5em);
   height: 100%;
 }
+/* Empty middle still toggles (pointer only; the name is the keyboard target)
+   and pushes the right group to the edge. */
 .repo-row__fill {
   flex: 1 1 0;
   align-self: stretch;
   min-width: 4px;
   cursor: pointer;
 }
+.repo-row__syncs {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .repo-row__header > .repo-branch {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 45%;
   display: flex;
+  justify-content: flex-end;
 }
 .repo-row__header .repo-branch__btn {
   /* min-width 0 so the branch (not the repo name) gives way first. */
@@ -8582,6 +8594,11 @@ input[type="radio"] {
   font-family: inherit;
   font-size: 11px;
   color: var(--text-muted);
+}
+/* .repo-branch__btn sets line-height: 1 and the label clips (ellipsis), which
+   cut the underscores in names like "miles_lv_suspend". */
+.repo-row__header .repo-branch__label {
+  line-height: 1.4;
 }
 .repo-row__header .repo-branch__btn:hover:not(:disabled),
 .repo-row__header .repo-branch__btn.is-open {
@@ -8626,9 +8643,13 @@ input[type="radio"] {
   font-size: 12px;
 }
 
-/* Repo changes badge: fixed square; the breakdown lives in the tooltip. */
+/* Repo changes badge: fixed square; the breakdown lives in the tooltip.
+   The slot is always 16px wide — empty for clean repos and before status
+   arrives — so the branch column lines up on every row. */
 .repo-row__meta {
-  flex: 0 0 auto;
+  flex: 0 0 16px;
+  width: 16px;
+  justify-content: center;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -8655,17 +8676,6 @@ input[type="radio"] {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
-/* Clean repo: same square, no fill, faint check — fills the right column
-   without competing with the lit "M" of dirty repos. */
-.repo-row__badge--clean {
-  background: transparent;
-  color: var(--text-muted);
-  opacity: 0.55;
-}
-.repo-row__badge--clean .codicon {
-  font-size: 12px;
-}
-
 /* ── Repo list rhythm + dividers ──────────────────────────────────────
    Each repo is a section: a hairline (existing --border) separates it from
    the previous one, inset to the rounded row highlight so hover/selected

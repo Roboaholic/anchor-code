@@ -93,22 +93,25 @@ describe("HistoryPane repo rows", () => {
       "Changes: 2 modified, 1 added, 1 deleted, 1 untracked",
     );
     expect(screen.queryByText("?1")).toBeNull();
-    // One row: chevron+name, branch inline, fill, then ↑ ↓ and the M badge on the right.
+    // One row: name left; right group = ↑↓, branch, one badge slot (last).
     const header = document.querySelector(".repo-row__header") as HTMLElement;
     expect([...header.children].map((c) => c.className.split(" ")[0])).toEqual([
       "repo-row__expand",
-      "repo-branch",
       "repo-row__fill",
+      "repo-row__syncs",
+      "repo-branch",
       "repo-row__meta",
     ]);
-    expect(within(header).getByText("feature/very-long-branch-name-for-layout")).toBeTruthy();
+    expect(within(header.querySelector(".repo-branch") as HTMLElement).getByText("feature/very-long-branch-name-for-layout")).toBeTruthy();
+    const syncs = header.querySelector(".repo-row__syncs") as HTMLElement;
+    expect([...syncs.children].map((c) => c.textContent)).toEqual(["↑3", "↓2"]);
     const meta = header.querySelector(".repo-row__meta") as HTMLElement;
-    expect([...meta.children].map((c) => c.textContent)).toEqual(["↑3", "↓2", "M"]);
+    expect([...meta.children].map((c) => c.textContent)).toEqual(["M"]);
     // No native tooltips on the row except the M breakdown.
     expect([...header.querySelectorAll("[title]")]).toEqual([badges[0]]);
   });
 
-  it("shows M for untracked-only changes, omits zero parts, and shows a quiet check when clean", () => {
+  it("shows M for untracked-only changes, omits zero parts, and shows nothing when clean", () => {
     setRepos([
       card({
         root: `${ROOT}/cli`,
@@ -126,14 +129,13 @@ describe("HistoryPane repo rows", () => {
     const dirty = rows[0]!.querySelectorAll(".repo-row__badge");
     expect([...dirty].map((b) => b.textContent)).toEqual(["M"]);
     expect(dirty[0]!.getAttribute("title")).toBe("Changes: 3 untracked");
-    // Clean repo: no lit M, only the quiet check placeholder (label, no tooltip).
-    expect(rows[1]!.querySelector(".repo-row__badge--modified")).toBeNull();
-    const clean = rows[1]!.querySelector(".repo-row__badge--clean") as HTMLElement;
-    expect(clean).not.toBeNull();
-    expect(clean.textContent).toBe("");
-    expect(clean.getAttribute("aria-label")).toBe("No tracked changes");
-    expect(clean.hasAttribute("title")).toBe(false);
-    expect(rows[0]!.querySelector(".repo-row__badge--clean")).toBeNull();
+    // Clean repo: nothing in the badge slot (no ✓, no label), slot still there.
+    const cleanMeta = rows[1]!.querySelector(".repo-row__meta") as HTMLElement;
+    expect(cleanMeta).not.toBeNull();
+    expect(cleanMeta.children.length).toBe(0);
+    expect(cleanMeta.textContent).toBe("");
+    expect(screen.queryByLabelText("No local changes")).toBeNull();
+    expect(screen.queryByLabelText("No tracked changes")).toBeNull();
     expect(document.querySelector(".repo-row__sync")).toBeNull();
   });
 
@@ -199,15 +201,26 @@ describe("HistoryPane repo rows", () => {
     expect(screen.queryByPlaceholderText("Commit message")).toBeNull();
   });
 
-  it("labels a clean repo by what is known about untracked files", () => {
-    const clean = { ...dirtyStatus, entries: [], modified: 0, added: 0, deleted: 0, untracked: 0, ahead: 0, behind: 0 };
+  it("keeps the branch + badge columns aligned: ↑↓ left of the branch, fixed badge slot last", () => {
+    const clean = { ...dirtyStatus, entries: [], modified: 0, added: 0, deleted: 0, untracked: 0, ahead: 0, behind: 0, branch: "miles_lv_suspend" };
     setRepos([
-      card({ root: `${ROOT}/x`, name: "x", status: { ...clean, untrackedScanned: false } }),
-      card({ root: `${ROOT}/y`, name: "y", status: { ...clean, untrackedScanned: true } }),
+      card({ root: `${ROOT}/a`, name: "a", status: clean }),
+      card({ root: `${ROOT}/b`, name: "b", status: { ...dirtyStatus, branch: null, ahead: 0, behind: 0 } }),
+      card({ root: `${ROOT}/c`, name: "c", status: dirtyStatus, statusState: "loading" }),
     ]);
     render(<HistoryPane />);
-    const labels = [...document.querySelectorAll(".repo-row__badge--clean")].map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["No tracked changes", "No local changes"]);
+    const headers = [...document.querySelectorAll(".repo-row__header")] as HTMLElement[];
+    for (const h of headers) {
+      // Branch then the badge slot are always the last two items.
+      expect([...h.children].slice(-2).map((c) => c.className.split(" ")[0])).toEqual(["repo-branch", "repo-row__meta"]);
+    }
+    // Slot holds at most one badge; empty for the clean repo.
+    expect(headers.map((h) => h.querySelector(".repo-row__meta")!.children.length)).toEqual([0, 1, 1]);
+    expect(headers[0]!.querySelector(".repo-row__syncs")).toBeNull();
+    expect(within(headers[0]!).getByText("miles_lv_suspend")).toBeTruthy();
+    expect(within(headers[1]!).getByText("detached")).toBeTruthy();
+    // Dirty + refreshing keeps the lit M (no second "…" badge).
+    expect(headers[2]!.querySelector(".repo-row__meta")!.textContent).toBe("M");
   });
 });
 

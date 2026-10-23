@@ -129,9 +129,14 @@ export function TerminalPanel({
   // The store coalesces this with any concurrent explicit workspace reset.
   useEffect(() => {
     if (panelMode !== "terminal") return;
+    let current = true;
     if (workspaceRoot && tabs.length === 0 && !error) {
-      void resetForWorkspace(workspaceRoot, hostProfileId);
+      void resetForWorkspace(workspaceRoot, hostProfileId, () => {
+        const workspace = useWorkspaceStore.getState();
+        return current && workspace.workspaceRoot === workspaceRoot && workspace.hostProfileId === hostProfileId;
+      });
     }
+    return () => { current = false; };
   }, [panelMode, workspaceRoot, hostProfileId, tabs.length, error, resetForWorkspace]);
 
   // Top layout: expand this mode's session strip by default once when switching to top.

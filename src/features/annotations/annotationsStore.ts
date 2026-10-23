@@ -168,6 +168,11 @@ type AnnotationWorkspaceView = {
 };
 const annotationWorkspaceViews = new Map<string, AnnotationWorkspaceView>();
 
+export function dropWorkspaceAnnotationsView(root: string): void {
+  annotationWorkspaceViews.delete(annotationWorkspaceKey(root));
+  if (diskWatchRoot === root) stopDiskWatch();
+}
+
 function annotationWorkspaceKey(root: string): string {
   return root.replace(/\\/g, "/").replace(/\/+$/, "");
 }

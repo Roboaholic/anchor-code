@@ -85,6 +85,11 @@ describe("workspace root refresh", () => {
       hostKind: workspaceB.hostKind,
       hostProfileId: workspaceB.hostProfileId,
       workspaceInstance: workspaceB,
+      workspaceInstances: {
+        version: 1,
+        activeWorkspaceId: workspaceB.id,
+        openWorkspaces: [workspaceA, workspaceB],
+      },
     });
     const listOpenInstances = vi.fn().mockResolvedValue({
       version: 1 as const,
@@ -122,11 +127,42 @@ describe("workspace root refresh", () => {
     await useWorkspaceStore.getState().activateWorkspace(workspaceB.id);
 
     expect(activate).toHaveBeenCalledWith(workspaceB.id);
-    expect(listOpenInstances).toHaveBeenCalledTimes(1);
+    expect(listOpenInstances).not.toHaveBeenCalled();
     expect(useWorkspaceStore.getState().workspaceRoot).toBe(workspaceB.root);
     expect(useWorkspaceStore.getState().rootEntries).toBe(cachedTree);
     expect(useWorkspaceStore.getState().selectedPath).toBe(cachedTree[0]!.path);
     expect(useWorkspaceStore.getState().status).toBe("ready");
+  });
+
+  it("does not apply a directory refresh after switching the host at the same path", async () => {
+    let finish!: (entries: Array<{ name: string; type: "file" }>) => void;
+    const listDir = vi.fn(() => new Promise<Array<{ name: string; type: "file" }>>((resolve) => { finish = resolve; }));
+    vi.stubGlobal("window", { anchor: { workspace: { listDir } } });
+    const refresh = useWorkspaceStore.getState().refreshDir("/workspace");
+    const currentTree = useWorkspaceStore.getState().rootEntries;
+    useWorkspaceStore.setState({ hostProfileId: "other-host" });
+    finish([{ name: "stale.ts", type: "file" }]);
+    await refresh;
+    expect(useWorkspaceStore.getState().rootEntries).toBe(currentTree);
+  });
+
+  it("keeps the newest workspace when activation replies arrive out of order", async () => {
+    const response = (root: string) => ({
+      root, name: root, hostKind: "local", hostProfileId: "local-default",
+      workspaceInstance: { id: root },
+      workspaceInstances: { version: 1, activeWorkspaceId: root, openWorkspaces: [] },
+    });
+    let finishFirst!: (value: ReturnType<typeof response>) => void;
+    const activate = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockResolvedValueOnce(response("/latest"));
+    vi.stubGlobal("window", { anchor: { workspace: { activate } } });
+    const first = useWorkspaceStore.getState().activateWorkspace("/older");
+    await useWorkspaceStore.getState().activateWorkspace("/latest");
+    finishFirst(response("/older"));
+    await first;
+    expect(useWorkspaceStore.getState().workspaceRoot).toBe("/latest");
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("/latest");
   });
   it("restores a cached open workspace tree without reloading the root", async () => {
     const cachedTree = [

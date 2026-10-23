@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnchorApi } from "@/shared/anchor-api";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { FileTree } from "./FileTree";
+import { applyFileIndexDelta, invalidateFileIndexCache, warmFileIndexCache } from "@/features/shell/QuickOpen";
+import { DEFAULT_SEARCH_SETTINGS, saveSearchSettings } from "./searchResults";
 
 vi.mock("@/features/shell/orchestrate", () => ({
   openFileFromTree: vi.fn(),
@@ -19,6 +21,7 @@ type SearchArgs = Parameters<AnchorApi["workspace"]["searchContent"]>[0];
 type SearchResult = Awaited<ReturnType<AnchorApi["workspace"]["searchContent"]>>;
 type HitListener = Parameters<AnchorApi["workspace"]["onSearchHits"]>[0];
 type MetaListener = Parameters<AnchorApi["workspace"]["onSearchMeta"]>[0];
+type FileListener = Parameters<AnchorApi["workspace"]["onFileChange"]>[0];
 type Request = {
   args: SearchArgs;
   resolve: (value: SearchResult) => void;
@@ -29,6 +32,7 @@ const hit = (path: string, line = 1) => ({ path, line, text: `needle in ${path}`
 let requests: Request[];
 let hitListeners: Set<HitListener>;
 let metaListeners: Set<MetaListener>;
+let fileListeners: Set<FileListener>;
 let frames: Map<number, FrameRequestCallback>;
 let cancelSearch: ReturnType<typeof vi.fn>;
 
@@ -38,6 +42,10 @@ beforeEach(() => {
   requests = [];
   hitListeners = new Set();
   metaListeners = new Set();
+  fileListeners = new Set();
+  vi.mocked(applyFileIndexDelta).mockClear();
+  vi.mocked(invalidateFileIndexCache).mockClear();
+  vi.mocked(warmFileIndexCache).mockClear();
   frames = new Map();
   let nextFrame = 1;
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -52,6 +60,10 @@ beforeEach(() => {
       workspace: {
         watchStart: vi.fn(async () => ({ ok: true })),
         watchStop: vi.fn(async () => ({ ok: true })),
+        onFileChange: (listener: FileListener) => {
+          fileListeners.add(listener);
+          return () => { fileListeners.delete(listener); };
+        },
         readSearchIgnore: vi.fn(async () => ({ path: "/repo/.anchorignore", text: "", defaultExcludes: [] })),
         cancelSearch,
         searchContent: vi.fn((args: SearchArgs) => new Promise<SearchResult>((resolve, reject) => {
@@ -72,6 +84,7 @@ beforeEach(() => {
     workspaceRoot: "/repo",
     workspaceName: "repo",
     hostKind: "local",
+    hostProfileId: "local-default",
     status: "ready",
     error: null,
     rootEntries: [],
@@ -98,6 +111,16 @@ function stream(request: Request, hits: SearchResult["hits"]) {
   });
 }
 
+function paintSearchFrame() {
+  act(() => {
+    const queued = [...frames.values()];
+    frames.clear();
+    queued.forEach((callback) => callback(performance.now()));
+  });
+}
+
+const searchSpinner = () => document.querySelector(".files-search-summary__spinner");
+
 function engine(request: Request, source: SearchResult["source"]) {
   act(() => {
     metaListeners.forEach((listener) => listener({ requestId: request.args.requestId!, source }));
@@ -120,6 +143,64 @@ async function finish(request: Request, overrides: Partial<SearchResult> = {}) {
 }
 
 describe("FileTree search coverage", () => {
+  it("animates from query debounce through streamed batches until the search completes", async () => {
+    render(<FileTree />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search in files" }), { target: { value: "needle" } });
+    expect(requests).toHaveLength(0);
+    expect(searchSpinner()).not.toBeNull();
+    expect(screen.getByRole("list", { name: "Search results" }).getAttribute("aria-busy")).toBe("true");
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    const request = requests[0]!;
+    expect(screen.getByRole("status").textContent).toBe("Searching…");
+
+    stream(request, [hit("first.ts")]);
+    expect(screen.getByText("first.ts")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Searching… · 1 result in 1 file");
+    expect(searchSpinner()).not.toBeNull();
+
+    stream(request, [hit("second.ts")]);
+    paintSearchFrame();
+    expect(screen.getByText("first.ts")).toBeTruthy();
+    expect(screen.getByText("second.ts")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Searching… · 2 results in 2 files");
+    expect(searchSpinner()).not.toBeNull();
+
+    await finish(request, { hits: [hit("first.ts"), hit("second.ts")] });
+    expect(screen.getByText("2 results in 2 files")).toBeTruthy();
+    expect(searchSpinner()).toBeNull();
+    expect(screen.getByRole("list", { name: "Search results" }).getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("keeps the latest search animating when a superseded search finishes", async () => {
+    render(<FileTree />);
+    const old = await search();
+    const current = await search("replacement");
+    stream(current, [hit("current.ts")]);
+    await finish(old, { hits: [hit("stale.ts")] });
+    expect(searchSpinner()).not.toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("Searching… · 1 result in 1 file");
+    expect(screen.queryByText("stale.ts")).toBeNull();
+    await finish(current, { hits: [hit("current.ts")] });
+    expect(searchSpinner()).toBeNull();
+  });
+
+  it("cancels search when the same workspace path switches to another host", async () => {
+    render(<FileTree />);
+    const old = await search();
+    stream(old, [hit("old-host.ts")]);
+    act(() => { useWorkspaceStore.setState({ hostProfileId: "another-host" }); });
+    expect(cancelSearch).toHaveBeenCalledWith(old.args.requestId);
+    expect(screen.queryByText("old-host.ts")).toBeNull();
+    expect(searchSpinner()).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    const current = requests[1]!;
+    await finish(old, { hits: [hit("late-old-host.ts")] });
+    expect(screen.queryByText("late-old-host.ts")).toBeNull();
+    expect(searchSpinner()).not.toBeNull();
+    await finish(current);
+    expect(searchSpinner()).toBeNull();
+  });
+
   it.each(["rg", "git-grep", "scan"] as const)("shows the %s engine even when it finds no matches", async (source) => {
     render(<FileTree />);
     const request = await search();
@@ -263,6 +344,7 @@ describe("FileTree search coverage", () => {
     expect(screen.queryByText("pending.ts")).toBeNull();
     expect(frames.size).toBe(1);
     await act(async () => { request.reject(new Error("Connection lost. Reconnect the host and try again.")); });
+    expect(searchSpinner()).toBeNull();
     expect(screen.getByText("first.ts")).toBeTruthy();
     expect(screen.getByText("pending.ts")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("Search failed · 2 results in 2 files kept");
@@ -280,6 +362,7 @@ describe("FileTree search coverage", () => {
     stream(request, [hit("first.ts")]);
     stream(request, [hit("pending.ts")]);
     fireEvent.click(screen.getByRole("button", { name: "Stop search" }));
+    expect(searchSpinner()).toBeNull();
     expect(screen.getByText("pending.ts")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("Search stopped · 2 results in 2 files kept");
     expect(cancelSearch).toHaveBeenCalledWith(request.args.requestId);
@@ -412,5 +495,56 @@ describe("FileTree search coverage", () => {
     expect(hitListeners.size).toBe(0);
     expect(metaListeners.size).toBe(0);
     await finish(next, { hits: [hit("late-new.ts")] });
+  });
+});
+
+
+describe("FileTree file watcher", () => {
+  it("keeps excluded-tree notifications when ignore filtering is disabled", () => {
+    saveSearchSettings("/repo", { ...DEFAULT_SEARCH_SETTINGS, respectIgnore: false });
+    render(<FileTree />);
+    expect(window.anchor.workspace.watchStart).toHaveBeenLastCalledWith("/repo", { ignoredDirNames: [] });
+  });
+
+  it("only prunes hidden tree directories included in the configured excludes", () => {
+    saveSearchSettings("/repo", { ...DEFAULT_SEARCH_SETTINGS, defaultExcludes: [".git", "dist"] });
+    render(<FileTree />);
+    expect(window.anchor.workspace.watchStart).toHaveBeenLastCalledWith("/repo", { ignoredDirNames: [".git"] });
+  });
+
+  it("ignores content-only writes and stale host/workspace events", () => {
+    const refresh = vi.spyOn(useWorkspaceStore.getState(), "refreshDir").mockResolvedValue(undefined);
+    render(<FileTree />);
+    const changed = (event: Parameters<FileListener>[0]) => act(() => fileListeners.forEach((listener) => listener(event)));
+    changed({ root: "/repo", hostProfileId: "local-default", dir: "/repo", changes: [
+      { path: "/repo/source.ts", rel: "source.ts", eventType: "change" },
+    ] });
+    changed({ root: "/old", hostProfileId: "local-default", dir: "/old", changes: [
+      { path: "/old/new.ts", rel: "new.ts", eventType: "rename", kind: "file" },
+    ] });
+    changed({ root: "/repo", hostProfileId: "old-host", dir: "/repo", changes: [
+      { path: "/repo/new.ts", rel: "new.ts", eventType: "rename", kind: "file" },
+    ] });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(applyFileIndexDelta).not.toHaveBeenCalled();
+    expect(invalidateFileIndexCache).not.toHaveBeenCalled();
+    expect(warmFileIndexCache).not.toHaveBeenCalled();
+    changed({ root: "/repo", hostProfileId: "local-default", dir: "/repo", changes: [
+      { path: "/repo/new.ts", rel: "new.ts", eventType: "rename", kind: "file" },
+    ] });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(applyFileIndexDelta).toHaveBeenCalledWith("/repo", [{ rel: "new.ts", exists: true }]);
+  });
+
+  it("refreshes once for directory/unknown rename metadata without per-file stat calls", () => {
+    vi.spyOn(useWorkspaceStore.getState(), "refreshDir").mockResolvedValue(undefined);
+    render(<FileTree />);
+    act(() => fileListeners.forEach((listener) => listener({ root: "/repo", hostProfileId: "local-default", dir: "/repo", changes: [
+      { path: "/repo/generated", rel: "generated", eventType: "rename", kind: "dir" },
+      { path: "/repo/unreadable", rel: "unreadable", eventType: "rename", kind: "unknown" },
+    ] })));
+    expect(invalidateFileIndexCache).toHaveBeenCalledExactlyOnceWith("/repo");
+    expect(warmFileIndexCache).toHaveBeenCalledExactlyOnceWith("/repo");
+    expect(applyFileIndexDelta).not.toHaveBeenCalled();
   });
 });

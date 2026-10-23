@@ -6,11 +6,13 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  ReadFileOptions,
   RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
+import { fileReadLimit, readFilePrefix } from "./fileRead.js";
 import { hostNormalize } from "./paths.js";
 import { verifySshHostKey } from "./sshKnownHosts.js";
 
@@ -331,9 +333,30 @@ export class SshHostSession implements HostSession {
     });
   }
 
-  async readFile(filePath: string): Promise<string> {
+  async readFile(filePath: string, options?: ReadFileOptions): Promise<string> {
+    const limit = fileReadLimit(options);
     const sftp = await this.ensureSftp();
     const p = hostNormalize("ssh", filePath);
+    if (limit !== undefined) {
+      try {
+        const handle = await new Promise<Buffer>((resolve, reject) => {
+          sftp.open(p, "r", (error, value) => error ? reject(error) : resolve(value));
+        });
+        try {
+          return await readFilePrefix(limit, (buffer, position, length) =>
+            new Promise<number>((resolve, reject) => {
+              sftp.read(handle, buffer, 0, length, position, (error, count) =>
+                error ? reject(error) : resolve(count));
+            }));
+        } finally {
+          await new Promise<void>((resolve, reject) => {
+            sftp.close(handle, (error) => error ? reject(error) : resolve());
+          });
+        }
+      } catch (error) {
+        throw mapSftpError(error instanceof Error ? error : new Error(String(error)), `Cannot read file: ${p}`);
+      }
+    }
     return new Promise((resolve, reject) => {
       sftp.readFile(p, "utf8", (err, data) => {
         if (err) {

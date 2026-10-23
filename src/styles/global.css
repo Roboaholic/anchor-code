@@ -6579,6 +6579,18 @@ select.field__input {
   color: var(--danger);
 }
 
+.quick-open__spinner {
+  margin-right: 6px;
+  vertical-align: text-bottom;
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-open__spinner.codicon-modifier-spin {
+    animation: none;
+  }
+}
+
 .quick-open__list {
   list-style: none;
   margin: 0;
@@ -9855,6 +9867,17 @@ body:has(.comments-pane) .skill-install-toast {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.files-search-summary__spinner {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--accent);
+  animation: topbar-update-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .files-search-summary__spinner {
+    animation: none;
+  }
 }
 .files-search-summary__engine {
   flex: 0 0 auto;

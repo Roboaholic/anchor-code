@@ -75,8 +75,8 @@ export interface FindFilesOptions {
 }
 
 /**
- * Prefer WSL `runSearch` (persistent helper / no login shell) when available;
- * otherwise `host.run`. Keeps Local/SSH behavior unchanged.
+ * Prefer the host's persistent search runner when available. The runner owns
+ * safe fallback; retrying here could replay partial output or a timed-out run.
  */
 async function hostRun(
   host: HostSession,
@@ -94,11 +94,7 @@ async function hostRun(
     ) => Promise<RunResult>;
   };
   if (typeof h.runSearch === "function") {
-    try {
-      return await h.runSearch(cwd, command, args, opts);
-    } catch {
-      // Helper died or unavailable — fall back to login-shell run.
-    }
+    return h.runSearch(cwd, command, args, opts);
   }
   return host.run(cwd, command, args, opts);
 }

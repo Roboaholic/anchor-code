@@ -1,5 +1,8 @@
 import {
   isValidElement,
+  lazy,
+  memo,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -29,12 +32,14 @@ import { markdownFontSize } from "@/core/theme/theme";
 import { useThemeStore } from "@/features/shell/themeStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { relativeToRoot } from "@/core/workspace/paths";
-import { CodeViewer } from "./CodeViewer";
 import type { MdViewMode, SearchHighlight } from "./documentStore";
 import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
 import { elementAnchor, openAsk } from "@/features/ask/askStore";
 import type { AskAnchorRect } from "@/features/ask/askPrompt";
 import { NewCommentPopover } from "@/features/annotations/NewCommentPopover";
+
+// Rendered Markdown does not need Monaco. Load it only for Raw/search views.
+const CodeViewer = lazy(() => import("./CodeViewer").then((m) => ({ default: m.CodeViewer })));
 
 type ComposerState = MarkdownSourceAnchor & {
   forceNewSession: boolean;
@@ -195,6 +200,27 @@ export function MarkdownPre({ children, node, ...rest }: MdPreProps) {
   );
 }
 
+const markdownPlugins = [remarkGfm];
+const markdownComponents = { code: MarkdownCode, pre: MarkdownPre, img: MarkdownImg };
+
+// Comment overlays and selection UI change frequently while the document stays
+// the same. Keep those updates from parsing and rendering the Markdown again.
+const MarkdownBody = memo(function MarkdownBody({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={markdownPlugins} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
+  );
+});
+
+function sameMarks(previous: MdMarkRect[], next: MdMarkRect[]): boolean {
+  return previous.length === next.length && previous.every((mark, index) => {
+    const other = next[index]!;
+    return mark.commentId === other.commentId && mark.left === other.left &&
+      mark.top === other.top && mark.width === other.width && mark.height === other.height;
+  });
+}
+
 export function MarkdownViewer({
   path,
   content,
@@ -300,17 +326,19 @@ export function MarkdownViewer({
       </div>
 
       {effectiveMode === "raw" ? (
-        <CodeViewer
-          path={path}
-          content={content}
-          language="markdown"
-          truncated={truncated}
-          revealLine={revealLine}
-          focusCommentId={focusCommentId}
-          revealNonce={revealNonce}
-          searchHighlight={searchHighlight}
-          kind="markdown"
-        />
+        <Suspense fallback={<div className="empty-center muted" role="status">Loading editor…</div>}>
+          <CodeViewer
+            path={path}
+            content={content}
+            language="markdown"
+            truncated={truncated}
+            revealLine={revealLine}
+            focusCommentId={focusCommentId}
+            revealNonce={revealNonce}
+            searchHighlight={searchHighlight}
+            kind="markdown"
+          />
+        </Suspense>
       ) : (
         <RenderedMarkdownPane
           path={path}
@@ -362,6 +390,7 @@ function RenderedMarkdownPane({
   const [selToolbar, setSelToolbar] = useState<SelToolbar | null>(null);
   const [bubble, setBubble] = useState<BubbleState | null>(null);
   const [marks, setMarks] = useState<MdMarkRect[]>([]);
+  const markFrameRef = useRef<number | null>(null);
   const [locateError, setLocateError] = useState<string | null>(null);
 
   composerOpenRef.current = Boolean(composer);
@@ -402,32 +431,49 @@ function RenderedMarkdownPane({
   }, [content, decorationsFor, path, sessions, expandedSessionId, activeSession]);
 
   const refreshMarks = useCallback(() => {
-    const root = bodyRef.current;
-    const container = scrollRef.current;
-    if (!root || !container) {
-      setMarks([]);
-      return;
-    }
-    setMarks(measureCommentMarks(root, fileComments, container));
+    if (markFrameRef.current !== null) return;
+    markFrameRef.current = window.requestAnimationFrame(() => {
+      markFrameRef.current = null;
+      const root = bodyRef.current;
+      const container = scrollRef.current;
+      const next = root && container && fileComments.length > 0
+        ? measureCommentMarks(root, fileComments, container)
+        : [];
+      setMarks((previous) => sameMarks(previous, next) ? previous : next);
+    });
   }, [fileComments]);
 
   useEffect(() => {
-    // Width changes reflow the article; remeasure mark overlays after layout.
-    const id = window.requestAnimationFrame(() => refreshMarks());
-    return () => window.cancelAnimationFrame(id);
-  }, [refreshMarks, content, revealNonce, widthStep]);
-
-  useEffect(() => {
+    // Coalesce scroll, resize and async image/diagram layout changes in one
+    // frame. The body itself is memoized, so overlay updates cannot reparse it.
+    refreshMarks();
     const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => refreshMarks();
-    el.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+    const body = bodyRef.current;
+    const cancelFrame = () => {
+      if (markFrameRef.current !== null) window.cancelAnimationFrame(markFrameRef.current);
+      markFrameRef.current = null;
     };
-  }, [refreshMarks]);
+    // Documents without annotations need no scroll listeners or measurements.
+    if (!el || !body || fileComments.length === 0) return cancelFrame;
+    el.addEventListener("scroll", refreshMarks, { passive: true });
+    window.addEventListener("resize", refreshMarks);
+    body.addEventListener("load", refreshMarks, true);
+    document.fonts?.addEventListener("loadingdone", refreshMarks);
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refreshMarks);
+    resize?.observe(body);
+    resize?.observe(el);
+    const mutations = new MutationObserver(refreshMarks);
+    mutations.observe(body, { childList: true, characterData: true, subtree: true });
+    return () => {
+      el.removeEventListener("scroll", refreshMarks);
+      window.removeEventListener("resize", refreshMarks);
+      body.removeEventListener("load", refreshMarks, true);
+      document.fonts?.removeEventListener("loadingdone", refreshMarks);
+      resize?.disconnect();
+      mutations.disconnect();
+      cancelFrame();
+    };
+  }, [refreshMarks, fileComments.length, content, revealNonce, widthStep, mdFontSize]);
 
   // Focus once per explicit comments-pane jump. Mark measurement also runs on
   // every scroll; without consuming the reveal, each measurement snaps the
@@ -664,16 +710,7 @@ function RenderedMarkdownPane({
             fontSize: `${mdFontSize}px`,
           }}
         >
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: MarkdownCode,
-              pre: MarkdownPre,
-              img: MarkdownImg,
-            }}
-          >
-            {content}
-          </ReactMarkdown>
+          <MarkdownBody content={content} />
         </article>
 
         {marks.map((m) => (

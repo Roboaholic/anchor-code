@@ -4,6 +4,7 @@ import {
   scoreFuzzyBasename,
   scoreFuzzyPath,
   scoreFuzzyText,
+  FuzzyPathIndex,
 } from "./fuzzy";
 
 describe("scoreFuzzyText", () => {
@@ -50,6 +51,36 @@ describe("scoreFuzzyPath", () => {
 });
 
 describe("rankFuzzyPaths", () => {
+  it("retains exactly the same top results as exhaustive ranking, including ties and path highlights", () => {
+    const paths = Array.from({ length: 2200 }, (_, i) =>
+      `${i % 2 ? "packages" : "src"}/feature-${i % 19}/${i % 3 ? "View" : "view"}${i}.tsx`);
+    paths.push("src\\feature-2\\view.tsx", "src/Feature.tsx", "README.md", "src/café.ts", "view.tsx");
+    for (const query of ["view", "src/fea", "s\\f", "42", "CAFÉ", "not-found"]) {
+      const expected = paths.flatMap((path) => {
+        const hit = scoreFuzzyPath(path, query);
+        return hit ? [hit] : [];
+      }).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+      for (const limit of [0, 1, 8, 80, 3000]) {
+        expect(rankFuzzyPaths(paths, query, limit)).toEqual(expected.slice(0, limit));
+      }
+      expect(new FuzzyPathIndex(paths).rank(query, 80)).toEqual(expected.slice(0, 80));
+    }
+  });
+
+  it("stops an obsolete query between batches and reuses the index for the next query", async () => {
+    const paths = Array.from({ length: 5000 }, (_, i) => `src/View${i}.ts`);
+    const index = new FuzzyPathIndex(paths);
+    let cancelled = false;
+    let yielded = 0;
+    const old = await index.rankAsync("view", 80, () => cancelled, async () => {
+      yielded += 1;
+      cancelled = true;
+    });
+    expect(yielded).toBe(1);
+    expect(old).toEqual([]);
+    expect(await index.rankAsync("4999", 80, () => false)).toEqual(rankFuzzyPaths(paths, "4999", 80));
+  });
+
   it("returns empty-query slice", () => {
     const ranked = rankFuzzyPaths(["b.ts", "a.ts"], "", 10);
     expect(ranked.map((r) => r.path)).toEqual(["b.ts", "a.ts"]);

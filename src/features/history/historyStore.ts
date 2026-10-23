@@ -63,7 +63,7 @@ export interface HistoryState {
   refreshingRepos: Record<string, true>;
 
   /** Uses the main-process repo cache unless `force` (Rescan). */
-  discover: (workspaceRoot: string, opts?: { force?: boolean }) => Promise<void>;
+  discover: (workspaceRoot: string, opts?: { force?: boolean; isCurrent?: () => boolean }) => Promise<void>;
   refreshStatus: (
     repoRoot: string,
     opts?: { quiet?: boolean; badgeOnly?: boolean },
@@ -126,6 +126,11 @@ type HistoryWorkspaceView = {
   toast: string | null;
 };
 const historyWorkspaceViews = new Map<string, HistoryWorkspaceView>();
+let historyViewEpoch = 0;
+
+export function dropWorkspaceHistoryView(root: string, hostProfileId: string | null): void {
+  historyWorkspaceViews.delete(historyWorkspaceKey(root, hostProfileId));
+}
 
 function historyWorkspaceKey(root: string, hostProfileId: string | null): string {
   return `${hostProfileId ?? "local-default"}::${root.replace(/\\/g, "/").replace(/\/+$/, "")}`;
@@ -152,6 +157,7 @@ export function restoreWorkspaceHistoryView(
 ): boolean {
   const view = historyWorkspaceViews.get(historyWorkspaceKey(root, hostProfileId));
   if (!view) return false;
+  historyViewEpoch += 1;
   useHistoryStore.setState(view);
   return true;
 }
@@ -236,7 +242,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   toast: null,
   refreshingRepos: {},
 
-  reset: () =>
+  reset: () => {
+    historyViewEpoch += 1;
     set({
       workspaceRoot: null,
       discoverStatus: "idle",
@@ -245,7 +252,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       recentCompares: [],
       toast: null,
       refreshingRepos: {},
-    }),
+    });
+  },
 
   refreshRepo: async (repoRoot) => {
     if (get().refreshingRepos[repoRoot]) return;
@@ -274,8 +282,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   clearToast: () => set({ toast: null }),
 
   loadRecent: async (workspaceRoot) => {
+    const epoch = historyViewEpoch;
     try {
       const list = await window.anchor.history.getRecentCompares(workspaceRoot);
+      if (epoch !== historyViewEpoch) return;
       set({ recentCompares: list });
     } catch {
       // non-fatal
@@ -283,6 +293,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   discover: async (workspaceRoot, opts) => {
+    const epoch = ++historyViewEpoch;
+    const isCurrent = () => epoch === historyViewEpoch && opts?.isCurrent?.() !== false;
+    if (!isCurrent()) return;
     set({
       workspaceRoot,
       discoverStatus: "loading",
@@ -296,6 +309,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       const found = opts?.force
         ? await window.anchor.history.discover(workspaceRoot, { force: true })
         : await window.anchor.history.discover(workspaceRoot);
+      if (!isCurrent()) return;
       // Keep prior status/branch/UI expand state for roots that still exist.
       // Replacing with emptyCard made every row flash "detached" until status returned.
       const prevByRoot = new Map(get().repos.map((r) => [r.root, r]));
@@ -317,8 +331,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // the first paint of branches / M badges.
       void get()
         .refreshAllStatuses({ quiet: true })
-        .then(() => get().scanUntracked());
+        .then(() => { if (isCurrent()) return get().scanUntracked(); });
     } catch (err) {
+      if (!isCurrent()) return;
       set({
         discoverStatus: "error",
         discoverError: err instanceof Error ? err.message : String(err),
@@ -327,6 +342,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   refreshAllStatuses: async (opts) => {
+    const epoch = historyViewEpoch;
     const quiet = opts?.quiet === true;
     // Badge-only is the default for bulk refresh: branch + M/A/D/↑↓ without
     // walking every untracked path. Full status happens when a repo expands.
@@ -362,6 +378,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         ahead: number | null;
         behind: number | null;
       }) => {
+        if (epoch !== historyViewEpoch) return;
         const prev = findCard(get().repos, st.repoRoot);
         const merged = mergeBadgePorcelain(prev?.status, st);
         set((s) => ({
@@ -396,6 +413,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
             );
           }),
         ]);
+        if (epoch !== historyViewEpoch) return;
         // Apply any that the stream missed (or if no progressive channel).
         for (const st of statuses) applyOne(st);
         // Anything still loading: clear dots, keep prior status.
@@ -410,6 +428,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         await refreshExpandedFull(get, expandedRoots);
         return;
       } catch (err) {
+        if (epoch !== historyViewEpoch) return;
         set((s) => ({
           repos: s.repos.map((r) =>
             r.statusState === "loading"
@@ -434,6 +453,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const roots = repos.map((r) => r.root);
     async function worker() {
       while (i < roots.length) {
+        if (epoch !== historyViewEpoch) return;
         const idx = i++;
         const root = roots[idx];
         if (!root) break;
@@ -447,6 +467,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       ),
     );
     if (badgeOnly) {
+      if (epoch !== historyViewEpoch) return;
       await refreshExpandedFull(get, expandedRoots);
     }
   },

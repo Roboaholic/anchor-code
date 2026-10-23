@@ -43,7 +43,7 @@ export function completeAgentActivity(
 }
 
 const agentCompletionTimers = new Map<string, number>();
-const workspaceResetPromises = new Map<string, Promise<void>>();
+const workspaceResetPromises = new Map<string, { promise: Promise<void>; isCurrent: () => boolean; token: symbol }>();
 
 function normalizedCwd(cwd: string): string {
   return cwd.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -130,6 +130,10 @@ type TerminalWorkspaceView = {
   workspaceHostProfileId: string | null;
 };
 const terminalWorkspaceViews = new Map<string, TerminalWorkspaceView>();
+
+export function dropWorkspaceTerminalView(root: string, hostProfileId: string | null): void {
+  terminalWorkspaceViews.delete(workspaceAgentKey(root, hostProfileId));
+}
 
 function workspaceAgentKey(cwd: string, hostProfileId: string | null): string {
   return `${hostProfileId ?? "local-default"}::${normalizedCwd(cwd)}`;
@@ -644,7 +648,7 @@ export interface TerminalState {
   agentMenuOpen: boolean;
   agentMenuIntent: AgentMenuIntent;
 
-  resetForWorkspace: (cwd: string, hostProfileId?: string | null) => Promise<void>;
+  resetForWorkspace: (cwd: string, hostProfileId?: string | null, isCurrent?: () => boolean) => Promise<void>;
   setMode: (mode: RightTermMode) => void;
   toggleSessionList: (mode: RightTermMode) => void;
   setSessionListOpen: (mode: RightTermMode, open: boolean) => void;
@@ -720,24 +724,29 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   agentMenuOpen: false,
   agentMenuIntent: { kind: "new" },
 
-  resetForWorkspace: (cwd, hostProfileId) => {
-    const key = normalizedCwd(cwd);
+  resetForWorkspace: (cwd, hostProfileId, isCurrent = () => true) => {
+    if (!isCurrent()) return Promise.resolve();
+    const pathKey = normalizedCwd(cwd);
+    const key = workspaceAgentKey(cwd, hostProfileId ?? null);
     const current = get();
     if (
       current.workspaceCwd &&
-      normalizedCwd(current.workspaceCwd) === key &&
-      current.tabs.some((tab) => normalizedCwd(tab.cwd) === key)
+      normalizedCwd(current.workspaceCwd) === pathKey &&
+      current.workspaceHostProfileId === (hostProfileId ?? null) &&
+      current.tabs.some((tab) => normalizedCwd(tab.cwd) === pathKey)
     ) {
       return Promise.resolve();
     }
     const inflight = workspaceResetPromises.get(key);
-    if (inflight) return inflight;
+    if (inflight?.isCurrent()) return inflight.promise;
 
+    const token = Symbol("workspace reset");
     const reset = (async () => {
       try {
         const existing = (await window.anchor.terminal.list()).filter(
-          (tab) => normalizedCwd(tab.cwd) === key,
+          (tab) => normalizedCwd(tab.cwd) === pathKey,
         );
+        if (!isCurrent()) return;
         for (const id of [...agentCompletionTimers.keys()]) {
           clearAgentCompletionTimer(id);
         }
@@ -776,6 +785,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             rows: 24,
             kind: "shell",
           });
+          if (!isCurrent()) return;
           set((s) => ({
             workspaceCwd: cwd,
             workspaceHostProfileId: hostProfileId ?? s.workspaceHostProfileId,
@@ -798,6 +808,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         void get().loadAgentProfiles();
         void get().detectAgents();
       } catch (err) {
+        if (!isCurrent()) return;
         const workgroups = loadWorkgroupsState(cwd, hostProfileId ?? null);
         set((s) => ({
           workspaceCwd: cwd,
@@ -819,10 +830,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           agentMenuIntent: s.agentMenuIntent,
         }));
       } finally {
-        workspaceResetPromises.delete(key);
+        if (workspaceResetPromises.get(key)?.token === token) workspaceResetPromises.delete(key);
       }
     })();
-    workspaceResetPromises.set(key, reset);
+    workspaceResetPromises.set(key, { promise: reset, isCurrent, token });
     return reset;
   },
 

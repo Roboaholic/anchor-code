@@ -37,8 +37,14 @@ export function scoreFuzzyText(
     return { score: 0, indices: [] };
   }
 
-  const textLower = text.toLowerCase();
-  const queryLower = q.toLowerCase();
+  return scorePreparedText(text, text.toLowerCase(), q.toLowerCase());
+}
+
+function scorePreparedText(
+  text: string,
+  textLower: string,
+  queryLower: string,
+): { score: number; indices: number[] } | null {
   const indices: number[] = [];
 
   let ti = 0;
@@ -110,28 +116,49 @@ export function scoreFuzzyPath(
   query: string,
 ): FuzzyMatch | null {
   const q = query.trim().replace(/\\/g, "/");
+  return scorePreparedPath(preparePath(filePath), q, q.toLowerCase());
+}
+
+type PreparedPath = {
+  path: string;
+  normalized: string;
+  lower: string;
+  name: string;
+  nameLower: string;
+  dirLength: number;
+};
+
+function preparePath(path: string): PreparedPath {
+  const normalized = path.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  const name = normalized.slice(slash + 1);
+  return { path, normalized, lower: normalized.toLowerCase(), name,
+    nameLower: name.toLowerCase(), dirLength: Math.max(0, slash) };
+}
+
+function scorePreparedPath(
+  file: PreparedPath,
+  q: string,
+  queryLower: string,
+): FuzzyMatch | null {
+  const { path: filePath, normalized, name, dirLength: dirLen } = file;
   if (!q) {
     return {
       path: filePath,
-      name: basenameOf(filePath),
+      name,
       score: 0,
       indices: [],
     };
   }
 
-  const normalized = filePath.replace(/\\/g, "/");
-  const name = basenameOf(normalized);
-  const dir = dirnameOf(normalized);
-
-  const baseHit = scoreFuzzyText(name, q);
-  const pathHit = scoreFuzzyText(normalized, q);
+  const baseHit = scorePreparedText(name, file.nameLower, queryLower);
+  const pathHit = scorePreparedText(normalized, file.lower, queryLower);
 
   // Query looks path-like (contains /) → require full-path match.
   if (q.includes("/")) {
     if (!pathHit) return null;
     const pathIndices: number[] = [];
     const nameIndices: number[] = [];
-    const dirLen = dir.length;
     for (const i of pathHit.indices) {
       if (dirLen > 0 && i < dirLen) pathIndices.push(i);
       else if (i > dirLen) nameIndices.push(i - dirLen - 1);
@@ -174,7 +201,6 @@ export function scoreFuzzyPath(
   if (!pathHit) return null;
   const pathIndices: number[] = [];
   const nameIndices: number[] = [];
-  const dirLen = dir.length;
   for (const i of pathHit.indices) {
     if (dirLen > 0 && i < dirLen) pathIndices.push(i);
     else if (i > dirLen) nameIndices.push(i - dirLen - 1);
@@ -194,25 +220,112 @@ export function rankFuzzyPaths(
   query: string,
   limit = 50,
 ): FuzzyMatch[] {
-  const q = query.trim();
-  if (!q) {
-    return paths.slice(0, limit).map((path) => ({
-      path,
-      name: basenameOf(path),
-      score: 0,
-      indices: [],
-    }));
+  return new FuzzyPathIndex(paths).rank(query, limit);
+}
+
+function compareMatches(a: FuzzyMatch, b: FuzzyMatch): number {
+  return b.score - a.score || a.name.localeCompare(b.name) || a.path.localeCompare(b.path);
+}
+
+function yieldTask(): Promise<void> {
+  // MessageChannel avoids nested setTimeout's 4 ms clamp for large indexes.
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      channel.port2.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
+/** A max-heap keeps the worst retained match at the root. */
+class TopMatches {
+  private readonly hits: FuzzyMatch[] = [];
+  constructor(private readonly limit: number) {}
+
+  add(hit: FuzzyMatch): void {
+    if (this.limit <= 0) return;
+    const heap = this.hits;
+    if (heap.length < this.limit) {
+      heap.push(hit);
+      let child = heap.length - 1;
+      while (child > 0) {
+        const parent = (child - 1) >> 1;
+        if (compareMatches(heap[child]!, heap[parent]!) <= 0) break;
+        [heap[parent], heap[child]] = [heap[child]!, heap[parent]!];
+        child = parent;
+      }
+      return;
+    }
+    if (compareMatches(hit, heap[0]!) >= 0) return;
+    heap[0] = hit;
+    let parent = 0;
+    for (;;) {
+      const left = parent * 2 + 1;
+      if (left >= heap.length) break;
+      const right = left + 1;
+      const child = right < heap.length && compareMatches(heap[right]!, heap[left]!) > 0 ? right : left;
+      if (compareMatches(heap[child]!, heap[parent]!) <= 0) break;
+      [heap[parent], heap[child]] = [heap[child]!, heap[parent]!];
+      parent = child;
+    }
   }
-  const hits: FuzzyMatch[] = [];
-  for (const path of paths) {
-    const m = scoreFuzzyPath(path, q);
-    if (m) hits.push(m);
+
+  sorted(): FuzzyMatch[] { return this.hits.sort(compareMatches); }
+}
+
+/** Reuse normalization across queries; only the best `limit` hits are retained. */
+export class FuzzyPathIndex {
+  private readonly prepared: Array<PreparedPath | undefined>;
+  constructor(private readonly paths: string[]) {
+    this.prepared = new Array(paths.length);
   }
-  hits.sort(
-    (a, b) =>
-      b.score - a.score ||
-      a.name.localeCompare(b.name) ||
-      a.path.localeCompare(b.path),
-  );
-  return hits.slice(0, limit);
+
+  private score(index: number, query: string, lower: string): FuzzyMatch | null {
+    const file = this.prepared[index] ??= preparePath(this.paths[index]!);
+    return scorePreparedPath(file, query, lower);
+  }
+
+  private empty(limit: number): FuzzyMatch[] {
+    return this.paths.slice(0, limit).map((path) => ({ path, name: basenameOf(path), score: 0, indices: [] }));
+  }
+
+  rank(query: string, limit = 50): FuzzyMatch[] {
+    const count = Math.max(0, Math.floor(limit));
+    const q = query.trim().replace(/\\/g, "/");
+    if (!q || count === 0) return this.empty(count);
+    const hits = new TopMatches(count);
+    const lower = q.toLowerCase();
+    for (let i = 0; i < this.paths.length; i++) {
+      const hit = this.score(i, q, lower);
+      if (hit) hits.add(hit);
+    }
+    return hits.sorted();
+  }
+
+  /** Yield between batches so a newer query can cancel work, including fallback. */
+  async rankAsync(
+    query: string,
+    limit: number,
+    cancelled: () => boolean,
+    yieldControl: () => Promise<void> = yieldTask,
+  ): Promise<FuzzyMatch[]> {
+    const count = Math.max(0, Math.floor(limit));
+    const q = query.trim().replace(/\\/g, "/");
+    if (!q || count === 0) return cancelled() ? [] : this.empty(count);
+    const hits = new TopMatches(count);
+    const lower = q.toLowerCase();
+    for (let start = 0; start < this.paths.length; start += 2048) {
+      if (cancelled()) return [];
+      const end = Math.min(start + 2048, this.paths.length);
+      for (let i = start; i < end; i++) {
+        const hit = this.score(i, q, lower);
+        if (hit) hits.add(hit);
+      }
+      if (end < this.paths.length) await yieldControl();
+    }
+    return cancelled() ? [] : hits.sorted();
+  }
 }

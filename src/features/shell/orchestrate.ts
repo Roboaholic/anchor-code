@@ -4,6 +4,7 @@
 import { resolveAnchor } from "@/core/annotations/anchor";
 import {
   captureWorkspaceAnnotationsView,
+  dropWorkspaceAnnotationsView,
   restoreWorkspaceAnnotationsView,
   useAnnotationsStore,
 } from "@/features/annotations/annotationsStore";
@@ -11,6 +12,7 @@ import { joinPath } from "@/core/workspace/paths";
 
 import {
   restoreCachedWorkspaceDocuments,
+  dropWorkspaceDocumentView,
   restoreWorkspaceDocuments,
   flushDocumentAutosave,
   saveWorkspaceDocuments,
@@ -18,21 +20,24 @@ import {
 } from "@/features/document/documentStore";
 import {
   captureWorkspaceHistoryView,
+  dropWorkspaceHistoryView,
   restoreWorkspaceHistoryView,
   useHistoryStore,
 } from "@/features/history/historyStore";
 import {
   captureWorkspaceTerminalView,
+  dropWorkspaceTerminalView,
   restoreWorkspaceTerminalView,
   restoreParkedWorkspaceAgents,
   saveWorkspaceAgents,
   useTerminalStore,
 } from "@/features/terminal/terminalStore";
-import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { cancelWorkspaceNavigation, useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { CommentRecord, HostKind } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import {
   captureWorkspaceShellView,
+  dropWorkspaceShellView,
   restoreWorkspaceShellView,
   useShellStore,
 } from "./shellStore";
@@ -53,10 +58,21 @@ export async function openWorkspaceWithHost(args: {
 function workspaceViewKey(root: string, hostProfileId: string | null): string {
   return `${hostProfileId ?? "local-default"}::${root.replace(/\\/g, "/").replace(/\/+$/, "")}`;
 }
+
+let workspaceOperation = 0;
+
+function dropWorkspaceViews(root: string, hostProfileId: string | null): void {
+  dropWorkspaceDocumentView(root, hostProfileId);
+  dropWorkspaceHistoryView(root, hostProfileId);
+  dropWorkspaceAnnotationsView(root);
+  dropWorkspaceTerminalView(root, hostProfileId);
+  dropWorkspaceShellView(workspaceViewKey(root, hostProfileId));
+}
 export async function openWorkspacePath(
   path: string,
   hostProfileId?: string,
 ): Promise<void> {
+  const operation = ++workspaceOperation;
   try {
     const previous = useWorkspaceStore.getState();
     if (previous.workspaceRoot) {
@@ -68,11 +84,13 @@ export async function openWorkspacePath(
       captureWorkspaceShellView(workspaceViewKey(previous.workspaceRoot, previous.hostProfileId));
     }
     await useWorkspaceStore.getState().openPath(path, { hostProfileId });
+    if (operation !== workspaceOperation) return;
     const workspace = useWorkspaceStore.getState();
     if (workspace.workspaceRoot) {
       await afterWorkspaceOpened(workspace.workspaceRoot, workspace.hostProfileId);
     }
   } catch (err) {
+    if (operation !== workspaceOperation) return;
     const message = formatError(err);
     console.error("[shell] openWorkspacePath failed:", err);
     useWorkspaceStore.setState({ status: "error", error: message });
@@ -106,6 +124,7 @@ export async function restoreLastWorkspaceOnLaunch(): Promise<void> {
 }
 
 export async function activateWorkspace(id: string): Promise<void> {
+  const operation = ++workspaceOperation;
   try {
     const previous = useWorkspaceStore.getState();
     if (previous.workspaceRoot) {
@@ -118,6 +137,7 @@ export async function activateWorkspace(id: string): Promise<void> {
     }
 
     await useWorkspaceStore.getState().activateWorkspace(id);
+    if (operation !== workspaceOperation) return;
     const workspace = useWorkspaceStore.getState();
     if (!workspace.workspaceRoot) return;
 
@@ -128,6 +148,7 @@ export async function activateWorkspace(id: string): Promise<void> {
     if (!restoredDocuments) {
       await restoreWorkspaceDocuments(workspace.workspaceRoot, workspace.hostProfileId);
     }
+    if (operation !== workspaceOperation) return;
 
     restoreWorkspaceHistoryView(workspace.workspaceRoot, workspace.hostProfileId);
     restoreWorkspaceAnnotationsView(workspace.workspaceRoot);
@@ -140,8 +161,10 @@ export async function activateWorkspace(id: string): Promise<void> {
       await useTerminalStore.getState().resetForWorkspace(
         workspace.workspaceRoot,
         workspace.hostProfileId,
+        () => operation === workspaceOperation,
       );
     }
+    if (operation !== workspaceOperation) return;
     restoreParkedWorkspaceAgents(
       workspace.workspaceRoot,
       workspace.hostProfileId,
@@ -150,6 +173,7 @@ export async function activateWorkspace(id: string): Promise<void> {
     const key = workspaceViewKey(workspace.workspaceRoot, workspace.hostProfileId);
     restoreWorkspaceShellView(key);
   } catch (err) {
+    if (operation !== workspaceOperation) return;
     const message = formatError(err);
     console.error("[shell] activateWorkspace failed:", err);
     useWorkspaceStore.setState({ status: "error", error: message });
@@ -160,7 +184,17 @@ export async function activateWorkspace(id: string): Promise<void> {
  * to the most recently active remaining workspace, or to the empty state.
  */
 export async function closeWorkspace(id: string): Promise<void> {
+  const closing = useWorkspaceStore.getState();
+  const operation = closing.activeWorkspaceId === id ? ++workspaceOperation : workspaceOperation;
+  const target = closing.openWorkspaces.find((workspace) => workspace.id === id);
   try {
+    if (closing.activeWorkspaceId === id && closing.workspaceRoot) {
+      cancelWorkspaceNavigation();
+      // Capture before awaiting IPC: another workspace can be selected meanwhile.
+      flushDocumentAutosave();
+      saveWorkspaceDocuments(closing.workspaceRoot, closing.hostProfileId);
+      saveWorkspaceAgents(closing.workspaceRoot, closing.hostProfileId);
+    }
     const res = await window.anchor.workspace.close(id);
     useWorkspaceStore.setState((s) => {
       const views = { ...s.workspaceViews };
@@ -170,17 +204,11 @@ export async function closeWorkspace(id: string): Promise<void> {
         openWorkspaces: s.openWorkspaces.filter((w) => w.id !== id),
       };
     });
+    if (target) dropWorkspaceViews(target.root, target.hostProfileId);
+    if (operation !== workspaceOperation) return;
     if (!res.wasActive) {
       await useWorkspaceStore.getState().loadOpenWorkspaces();
       return;
-    }
-    // Persist the closing workspace's tabs (e.g. "close all") before dropping
-    // its root, so reopening it later does not resurrect stale tabs.
-    const closing = useWorkspaceStore.getState();
-    if (closing.workspaceRoot) {
-      flushDocumentAutosave();
-      saveWorkspaceDocuments(closing.workspaceRoot, closing.hostProfileId);
-      saveWorkspaceAgents(closing.workspaceRoot, closing.hostProfileId);
     }
     // Drop the closed root first so activateWorkspace does not re-save its views.
     useWorkspaceStore.setState({
@@ -215,6 +243,10 @@ async function afterWorkspaceOpened(
   root: string,
   hostProfileId: string | null,
 ): Promise<void> {
+  const operation = workspaceOperation;
+  const isCurrent = () => operation === workspaceOperation &&
+    useWorkspaceStore.getState().workspaceRoot === root &&
+    useWorkspaceStore.getState().hostProfileId === hostProfileId;
   useHistoryStore.getState().reset();
   useAnnotationsStore.getState().reset();
   useShellStore.getState().setLeftMode("files");
@@ -222,27 +254,25 @@ async function afterWorkspaceOpened(
   useShellStore.getState().setTerminalVisible(false);
   useShellStore.getState().setSkillInstallPromptRoot(null);
   await restoreWorkspaceDocuments(root, hostProfileId);
-  // History / terminal must not block a successful workspace open.
-  try {
-    await useHistoryStore.getState().discover(root);
-  } catch (err) {
+  if (!isCurrent()) return;
+  // The active document is ready. Independent auxiliary work can run together,
+  // and each asynchronous path discards results after a workspace transition.
+  void useHistoryStore.getState().discover(root, { isCurrent }).catch((err: unknown) => {
     console.warn("[shell] history.discover failed:", err);
-  }
-  try {
-    await useTerminalStore.getState().resetForWorkspace(root, hostProfileId);
-    restoreParkedWorkspaceAgents(root, hostProfileId);
-  } catch (err) {
+  });
+  void useTerminalStore.getState().resetForWorkspace(root, hostProfileId, isCurrent).then(() => {
+    if (isCurrent()) restoreParkedWorkspaceAgents(root, hostProfileId);
+  }).catch((err: unknown) => {
     console.warn("[shell] terminal workspace restore failed:", err);
-  }
-  try {
-    const installed =
-      (await window.anchor?.skill?.isWorkspaceInstalled?.(root)) ?? false;
-    if (!installed) {
-      useShellStore.getState().setSkillInstallPromptRoot(root);
+  });
+  void (async () => {
+    try {
+      const installed = (await window.anchor?.skill?.isWorkspaceInstalled?.(root)) ?? false;
+      if (isCurrent() && !installed) useShellStore.getState().setSkillInstallPromptRoot(root);
+    } catch (err) {
+      console.warn("[shell] skill install check failed:", err);
     }
-  } catch (err) {
-    console.warn("[shell] skill install check failed:", err);
-  }
+  })();
 }
 
 export async function openFileFromTree(

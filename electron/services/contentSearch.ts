@@ -1,4 +1,4 @@
-import type { HostSession, RunResult } from "../host/types.js";
+import type { HostSession, RunOptions, RunResult } from "../host/types.js";
 import { HostError } from "../host/types.js";
 import { LocalHostSession } from "../host/localHost.js";
 import { WslHostSession } from "../host/wslHost.js";
@@ -14,6 +14,21 @@ let windowsRunner: LocalHostSession | null = null;
 function getWindowsRunner(): LocalHostSession {
   if (!windowsRunner) windowsRunner = new LocalHostSession("content-search-win");
   return windowsRunner;
+}
+
+function runSearchCommand(
+  host: HostSession,
+  cwd: string,
+  command: string,
+  args: string[],
+  opts?: RunOptions,
+): Promise<RunResult> {
+  const searchHost = host as HostSession & {
+    runSearch?: (cwd: string, command: string, args: string[], opts?: RunOptions) => Promise<RunResult>;
+  };
+  return searchHost.runSearch
+    ? searchHost.runSearch(cwd, command, args, opts)
+    : host.run(cwd, command, args, opts);
 }
 
 export interface ContentSearchHit {
@@ -718,7 +733,7 @@ async function tryGitGrep(
     }
 
     onSource?.("git-grep");
-    const r = await host.run(root, "git", args, runOpts);
+    const r = await runSearchCommand(host, root, "git", args, runOpts);
     if (r.aborted) {
       return abortedResult(root, query, streamer.hits(), "git-grep");
     }
@@ -1043,7 +1058,7 @@ async function runRipgrepOnce(
   const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
   try {
     onSource?.("rg");
-    const r = await host.run(root, rgCmd, buildRgArgs(query, o, false, searchPaths), runOpts);
+    const r = await runSearchCommand(host, root, rgCmd, buildRgArgs(query, o, false, searchPaths), runOpts);
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
     if (r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
       return tryRipgrepMinimal(host, root, query, o, rgCmd, onHits, onSource, searchPaths, shouldStop);
@@ -1082,7 +1097,7 @@ async function tryRipgrepMinimal(
   const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
   try {
     onSource?.("rg");
-    const r = await host.run(root, rgCmd, buildRgArgs(query, o, true, searchPaths), runOpts);
+    const r = await runSearchCommand(host, root, rgCmd, buildRgArgs(query, o, true, searchPaths), runOpts);
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
     if (grepFailed(r)) {
       streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);

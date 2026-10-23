@@ -327,6 +327,7 @@ const anchor = {
       hostKind: HostKind;
       hostProfileId: string;
       workspaceInstance: WorkspaceInstance;
+      workspaceInstances: WorkspaceInstancesState;
     }> => ipcRenderer.invoke("workspace:activate", id),
     close: (id: string): Promise<{
       closedId: string;
@@ -437,15 +438,17 @@ const anchor = {
     listDirs: (paths: string[]): Promise<Array<{ path: string; entries: DirEntry[] | null }>> =>
       ipcRenderer.invoke("workspace:listDirs", paths),
     /** Start watching the workspace root for file changes (local hosts only). */
-    watchStart: (root?: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke("fileWatcher:start", root),
+    watchStart: (root?: string, options?: { ignoredDirNames?: string[] }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke("fileWatcher:start", root, options),
     watchStop: (): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke("fileWatcher:stop"),
     /** A directory's contents changed (debounced by the main process). */
     onFileChange: (
       cb: (payload: {
+        root?: string;
+        hostProfileId?: string;
         dir: string;
-        changes?: { path: string; rel: string; eventType: string }[];
+        changes?: { path: string; rel: string; eventType: string; kind?: "file" | "dir" | "missing" | "unknown" }[];
       }) => void,
     ): (() => void) => {
       const listener = (_e: IpcRendererEvent, payload: { dir: string }) =>

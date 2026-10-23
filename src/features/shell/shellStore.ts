@@ -13,6 +13,10 @@ type WorkspaceShellView = {
 };
 const workspaceShellViews = new Map<string, WorkspaceShellView>();
 
+export function dropWorkspaceShellView(key: string): void {
+  workspaceShellViews.delete(key);
+}
+
 export function captureWorkspaceShellView(key: string): void {
   const state = useShellStore.getState();
   workspaceShellViews.set(key, {

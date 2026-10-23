@@ -77,6 +77,11 @@ export interface StatResult {
   mtimeMs: number;
 }
 
+export interface ReadFileOptions {
+  /** Byte limit for a UTF-8 preview. An incomplete final character is omitted. */
+  maxBytes?: number;
+}
+
 export interface PtyHandle {
   readonly id: string;
   write(data: string): void;
@@ -111,7 +116,7 @@ export interface HostSession {
     args: string[],
     opts?: RunOptions,
   ): Promise<RunResult>;
-  readFile(path: string): Promise<string>;
+  readFile(path: string, options?: ReadFileOptions): Promise<string>;
   writeFile(path: string, data: string): Promise<void>;
   listDir(path: string): Promise<DirEntry[]>;
   stat(path: string): Promise<StatResult>;

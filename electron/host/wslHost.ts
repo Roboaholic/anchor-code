@@ -8,11 +8,13 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  ReadFileOptions,
   RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
+import { boundedReadCommand, decodeFilePrefix, fileReadLimit, readLocalFile } from "./fileRead.js";
 import { hostNormalize } from "./paths.js";
 import { spawnLocalPty } from "./localPty.js";
 import {
@@ -351,18 +353,22 @@ export class WslHostSession implements HostSession {
     this.helper = null;
   }
 
-  async readFile(filePath: string): Promise<string> {
+  async readFile(filePath: string, options?: ReadFileOptions): Promise<string> {
     const p = hostNormalize("wsl", filePath);
+    const limit = fileReadLimit(options);
     try {
       const unc = await this.toUnc(p);
-      return await fsp.readFile(unc, "utf8");
+      return await readLocalFile(unc, options);
     } catch (err) {
       if (!this.isUncGap(err)) {
         throw this.mapFsError(err, `Cannot read file: ${p}`);
       }
       // Absolute Linux symlinks are invisible/broken through \\wsl$\ — use cat.
+      const command = limit === undefined
+        ? `cat -- ${this.escapeSingle(p)}`
+        : boundedReadCommand(this.escapeSingle(p), limit);
       const r = await this.runBash(
-        `if [ ! -e ${this.escapeSingle(p)} ] && [ ! -L ${this.escapeSingle(p)} ]; then echo '__AC_ENOENT__' >&2; exit 44; fi; cat ${this.escapeSingle(p)}`,
+        `if [ ! -e ${this.escapeSingle(p)} ] && [ ! -L ${this.escapeSingle(p)} ]; then echo '__AC_ENOENT__' >&2; exit 44; fi; ${command}`,
       );
       if (r.code === 44 || /__AC_ENOENT__/.test(r.stderr)) {
         throw new HostError("not_found", `Cannot read file: ${p}`, r.stderr);
@@ -374,7 +380,7 @@ export class WslHostSession implements HostSession {
           r.stderr || r.stdout,
         );
       }
-      return r.stdout;
+      return limit === undefined ? r.stdout : decodeFilePrefix(Buffer.from(r.stdout, "base64"), limit);
     }
   }
 

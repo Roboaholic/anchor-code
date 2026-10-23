@@ -29,6 +29,17 @@ async function seed() {
 }
 
 describe("workspace close", () => {
+  it("returns the complete active snapshot before persistence is flushed", async () => {
+    await seed();
+    const { facade } = makeFacade();
+    const bId = state.workspaceInstanceId("wsl-1", "/b", "wsl");
+    const activated = await facade.activate(bId);
+    expect(activated.workspaceInstances.activeWorkspaceId).toBe(bId);
+    expect(activated.workspaceInstances.openWorkspaces.map((item) => item.root)).toEqual(["/b", "/a"]);
+    expect(activated.workspaceInstances.openWorkspaces.filter((item) => item.foreground).map((item) => item.id)).toEqual([bId]);
+    await state.flushWorkspaceInstances();
+    expect((await state.loadWorkspaceInstances()).activeWorkspaceId).toBe(bId);
+  });
   it("closing a background workspace keeps the active one and persists", async () => {
     await seed();
     const disposeUnder = vi.fn();

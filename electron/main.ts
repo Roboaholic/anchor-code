@@ -13,6 +13,7 @@ import { RemoteRequestHandler } from "./application/remoteRequestHandler.js";
 import { RelayConnector } from "./remote/relayConnector.js";
 import { RemoteAccessController } from "./remote/remoteAccessController.js";
 import { registerRuntimeLifecycle } from "./application/runtimeLifecycle.js";
+import { flushWorkspaceInstances } from "./services/workspaceState.js";
 import {
   shellBackground,
   titleBarOverlayFor,
@@ -387,6 +388,7 @@ registerRuntimeLifecycle({
   app,
   platform: process.platform,
   quit: () => app.quit(),
+  flush: flushWorkspaceInstances,
   dispose: () => {
     terminal.disposeAll();
     fileWatcher.disposeAll();

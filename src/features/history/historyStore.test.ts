@@ -140,6 +140,20 @@ describe("historyStore multi-repo", () => {
     mockAnchor();
   });
 
+  it("ignores discovery from a workspace left while the request was pending", async () => {
+    let finish!: (repos: Array<{ root: string; name: string }>) => void;
+    window.anchor.history.discover = vi.fn(() => new Promise<Array<{ root: string; name: string }>>((resolve) => { finish = resolve; }));
+    let current = true;
+    const pending = useHistoryStore.getState().discover("/ws", { isCurrent: () => current });
+    current = false;
+    useHistoryStore.getState().reset();
+    finish([{ root: "/ws/stale", name: "stale" }]);
+    await pending;
+    expect(useHistoryStore.getState().repos).toEqual([]);
+    expect(useHistoryStore.getState().workspaceRoot).toBeNull();
+    expect(window.anchor.history.getRecentCompares).not.toHaveBeenCalled();
+  });
+
   it("discovers repos without auto-loading commit logs", async () => {
     await useHistoryStore.getState().discover("/ws");
     const s = useHistoryStore.getState();

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LocalHostSession } from "../host/localHost.js";
+import { HostError } from "../host/types.js";
 import { findWorkspaceFiles } from "./fileIndex.js";
 
 describe("findWorkspaceFiles", () => {
@@ -183,5 +184,20 @@ describe("findWorkspaceFiles", () => {
     expect(result.files).toContain("tracked.ts");
     expect(runSearchCalls).toBeGreaterThan(0);
     expect(runCalls).toBe(0);
+  });
+
+  it("does not replay a failed search runner command through host.run", async () => {
+    await fs.writeFile(path.join(tmp, "visible.ts"), "export {};\n");
+    let directRuns = 0;
+    const wrapped = new Proxy(host, {
+      get(target, prop, receiver) {
+        if (prop === "runSearch") return async () => { throw new HostError("timeout", "Search timed out"); };
+        if (prop === "run") return async () => { directRuns++; return { stdout: "", stderr: "", code: 1 }; };
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const result = await findWorkspaceFiles(wrapped, tmp);
+    expect(result.files).toContain("visible.ts");
+    expect(directRuns).toBe(0);
   });
 });

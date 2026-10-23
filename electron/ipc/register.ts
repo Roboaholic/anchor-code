@@ -583,7 +583,6 @@ export function registerIpc(opts: {
           // wedge the live session; dispose without awaiting.
           const host = createHostForProfile(profile);
           try {
-            if (!(await host.exists(root))) return false;
             return (await host.stat(root)).isDir;
           } finally {
             void host.dispose().catch(() => undefined);
@@ -775,12 +774,16 @@ export function registerIpc(opts: {
   });
 
   // ── file watcher (auto-refresh) ───────────────────
-  ipcMain.handle("fileWatcher:start", async (_evt, root?: string) => {
+  ipcMain.handle("fileWatcher:start", async (_evt, root?: string, options?: { ignoredDirNames?: string[] }) => {
     try {
       const h = host();
       const target = root ?? h.workspaceRoot;
       if (!target) throw new HostError("failed", "No workspace open");
-      fileWatcher.start(target);
+      fileWatcher.start(target, {
+        ignoredDirNames: Array.isArray(options?.ignoredDirNames)
+          ? options.ignoredDirNames.filter((name): name is string => typeof name === "string")
+          : [],
+      });
       return { ok: true };
     } catch (err) {
       rethrowIpc(err);

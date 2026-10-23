@@ -26,6 +26,37 @@ describe("terminal workspace initialization", () => {
     });
   });
 
+  it("does not launch a shell after leaving a workspace during terminal discovery", async () => {
+    const listed = deferred<TerminalTabInfo[]>();
+    const create = vi.fn();
+    vi.stubGlobal("window", { anchor: { terminal: { list: vi.fn(() => listed.promise), create } } });
+    let current = true;
+    const pending = useTerminalStore.getState().resetForWorkspace("/workspace", "host-a", () => current);
+    current = false;
+    listed.resolve([]);
+    await pending;
+    expect(create).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().tabs).toEqual([]);
+    expect(useTerminalStore.getState().workspaceCwd).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not publish a shell created for a workspace that is no longer active", async () => {
+    const created = deferred<TerminalTabInfo>();
+    const create = vi.fn(() => created.promise);
+    vi.stubGlobal("window", { anchor: { terminal: { list: vi.fn(async () => []), create } } });
+    let current = true;
+    const pending = useTerminalStore.getState().resetForWorkspace("/workspace", "host-a", () => current);
+    await Promise.resolve();
+    expect(create).toHaveBeenCalledTimes(1);
+    current = false;
+    created.resolve({ id: "old-shell", title: "old", cwd: "/workspace", status: "running", kind: "shell" });
+    await pending;
+    expect(useTerminalStore.getState().tabs).toEqual([]);
+    expect(useTerminalStore.getState().workspaceCwd).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("shares concurrent resets for the same workspace", async () => {
     const listed = deferred<TerminalTabInfo[]>();
     const tab: TerminalTabInfo = {

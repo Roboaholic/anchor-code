@@ -80,6 +80,34 @@ describe("OpenSshHostSession native transport", () => {
     expect(await result).toEqual({ stdout: "hello", stderr: "", code: 0 });
   });
 
+  it("reuses a strictly authenticated search connection and sends query arguments as JSON", async () => {
+    const process = child();
+    const sent: Array<{ id: string; cwd: string; cmd: string; args: string[] }> = [];
+    process.stdin.on("data", (chunk) => { sent.push(JSON.parse(chunk.toString())); });
+    const query = "查询 ' $(echo unsafe)";
+    const first = host.runSearch("/workspace/目录", "rg", ["--", query, "."]);
+    const [executable, args, options] = spawnMock.mock.calls[0]!;
+    expect(executable).toBe("ssh");
+    expect(options).toMatchObject({ shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    expect(args).toEqual(expect.arrayContaining([
+      "BatchMode=yes", "StrictHostKeyChecking=yes", "ControlMaster=no", "ControlPath=none", "ControlPersist=no", "-T",
+    ]));
+    expect(args?.slice(-3, -1)).toEqual(["--", "work-alias"]);
+    expect(args?.at(-1)).not.toContain(query);
+    process.stdout.write(`${JSON.stringify({ ev: "ready" })}\n`);
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ cwd: "/workspace/目录", cmd: "rg", args: ["--", query, "."] });
+    process.stdout.write(`${JSON.stringify({ id: sent[0]!.id, ev: "exit", code: 1 })}\n`);
+    await expect(first).resolves.toMatchObject({ code: 1 });
+    const second = host.runSearch("/workspace", "git", ["ls-files"]);
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    process.stdout.write(`${JSON.stringify({ id: sent[1]!.id, ev: "exit", code: 0 })}\n`);
+    await expect(second).resolves.toMatchObject({ code: 0 });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    host.disposeSearchHelper();
+    expect(process.kill).toHaveBeenCalledOnce();
+  });
+
   it.each(["", "-oProxyCommand=bad", "bad alias", "alias\nother", "alias\0other"])("rejects unsafe alias %j before spawning", (alias) => {
     expect(() => new OpenSshHostSession({ profileId: "test", configHost: alias })).toThrow();
     expect(spawnMock).not.toHaveBeenCalled();
@@ -554,6 +582,17 @@ describe.skipIf(process.platform === "win32").each([
     expect((await host.stat("-dash")).size).toBe(4);
     expect((await host.run("~", "pwd", [])).stdout).toBe(`${root}\n`);
     expect((await host.run("~/nested", "pwd", [])).stdout).toBe(`${root}/nested\n`);
+  });
+
+  it("bounds remote reads by bytes without corrupting UTF-8 or masking file errors", async () => {
+    const file = `${root}/-preview '中文.txt`;
+    const text = "abc中文🦊" + "x".repeat(1024 * 1024);
+    await fs.writeFile(file, text);
+    expect(await host.readFile(file, { maxBytes: 8 })).toBe("abc中");
+    expect(await host.readFile(file, { maxBytes: 0 })).toBe("");
+    expect(await host.readFile(file)).toBe(text);
+    await expect(host.readFile(`${root}/missing`, { maxBytes: 8 })).rejects.toMatchObject({ code: "not_found" });
+    expect(await host.readFile(file, { maxBytes: 13 })).toBe("abc中文🦊");
   });
 
   it("returns an empty directory listing without phantom glob entries", async () => {

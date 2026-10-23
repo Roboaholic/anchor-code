@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Icon } from "@/shared/Icon";
+import { ErrorBoundary } from "@/shared/ErrorBoundary";
 import type { CodiconName } from "@/shared/Icon";
 
 // Viewers pull in Monaco / react-markdown; load them on first document open so
@@ -24,7 +25,7 @@ const MarkdownViewer = lazy(() =>
 );
 
 function ViewerFallback() {
-  return <div className="empty-center muted">Loading…</div>;
+  return <div className="empty-center muted" role="status" aria-label="Loading document">Loading…</div>;
 }
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
@@ -417,12 +418,14 @@ export function DocumentArea() {
                 hidden={!isActive}
                 aria-hidden={!isActive}
               >
-                <ActiveView
-                  item={item}
-                  onMdMode={(mode) => {
-                    if (item.kind === "file") setMdViewMode(item.id, mode);
-                  }}
-                />
+                <ErrorBoundary label="This document could not be displayed">
+                  <ActiveView
+                    item={item}
+                    onMdMode={(mode) => {
+                      if (item.kind === "file") setMdViewMode(item.id, mode);
+                    }}
+                  />
+                </ErrorBoundary>
               </div>
             );
           })}
@@ -457,6 +460,10 @@ function ActiveView({
         <p className="muted">{item.error}</p>
       </div>
     );
+  }
+
+  if (item.loadState === "deferred" || item.loadState === "loading") {
+    return <ViewerFallback />;
   }
 
   if (item.isMarkdown) {

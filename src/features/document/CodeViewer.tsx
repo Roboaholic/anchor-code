@@ -11,7 +11,6 @@ import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
   overlapRegionsForModel,
   useAnnotationsStore,
-  visualDecorationSpec,
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
 import { addCommentFromSelection } from "@/features/shell/orchestrate";
@@ -24,6 +23,7 @@ import {
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import type { SearchHighlight } from "./documentStore";
 import { fitBlameText, formatBlameTime } from "./blameDisplay";
+import { decorationSpecsForModel } from "./modelAnnotations";
 import "./monacoSetup";
 import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
@@ -223,9 +223,11 @@ export function CodeViewer({
   const specsRef = useRef<DecorationSpec[]>([]);
   const bubbleRef = useRef<BubbleState | null>(null);
   const disposablesRef = useRef<Array<{ dispose: () => void }>>([]);
+  const repaintRef = useRef<() => void>(() => {});
   const hoverOpenTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const pointerOverBubbleRef = useRef(false);
+  const bubblePinnedRef = useRef(false);
   const pointerOverAnnoRef = useRef(false);
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
@@ -271,13 +273,17 @@ export function CodeViewer({
     (activeCommentId?: string | null) => {
       const ed = editorRef.current;
       if (!ed) return;
-      const specs = decorationsFor(path, content);
       const model = ed.getModel();
-      const visualSpecs = model
-        ? specs.map((spec) =>
-            visualDecorationSpec(spec, (line) => model.getLineMaxColumn(line)),
-          )
-        : specs;
+      if (!model || model.isDisposed()) {
+        specsRef.current = [];
+        decorationsRef.current?.clear();
+        return;
+      }
+      // React props and Monaco's model can update on different turns. Resolve
+      // against the text actually being painted, then reject obsolete ranges.
+      const visualSpecs = decorationSpecsForModel(
+        decorationsFor(path, model.getValue()), model,
+      );
       specsRef.current = visualSpecs;
       const activeId =
         activeCommentId !== undefined
@@ -356,7 +362,7 @@ export function CodeViewer({
         if (changed) setBubble(next);
       }
     },
-    [content, decorationsFor, path, theme],
+    [decorationsFor, path, theme],
   );
 
   useEffect(() => {
@@ -570,6 +576,14 @@ export function CodeViewer({
     paintSearchHighlight();
   }, [paintSearchHighlight, content, searchHighlight?.nonce]);
 
+  // Monaco's React wrapper retains its initial onMount callback. Event handlers
+  // must use current document/annotation state after lazy reads and reloads.
+  repaintRef.current = () => {
+    applyDecorations(focusCommentId ?? bubbleRef.current?.commentId ?? null);
+    paintSearchHighlight();
+    paintBlame();
+  };
+
   useEffect(() => {
     return () => {
       clearHoverOpenTimer();
@@ -603,6 +617,7 @@ export function CodeViewer({
     clearHoverCloseTimer();
     pointerOverAnnoRef.current = false;
     pointerOverBubbleRef.current = false;
+    bubblePinnedRef.current = false;
     bubbleRef.current = null;
     setBubble(null);
     // Re-paint without active modifier after state is cleared.
@@ -611,6 +626,7 @@ export function CodeViewer({
 
   const openBubbleForSpecs = useCallback(
     (hits: DecorationSpec[]) => {
+      if (bubblePinnedRef.current) return;
       const ed = editorRef.current;
       const overlay = overlayRef.current;
       if (!ed || !overlay || hits.length === 0) return;
@@ -635,7 +651,7 @@ export function CodeViewer({
   const scheduleHoverClose = useCallback(() => {
     clearHoverCloseTimer();
     hoverCloseTimerRef.current = window.setTimeout(() => {
-      if (pointerOverBubbleRef.current || pointerOverAnnoRef.current) return;
+      if (bubblePinnedRef.current || pointerOverBubbleRef.current || pointerOverAnnoRef.current) return;
       closeBubble();
     }, HOVER_CLOSE_MS);
   }, [closeBubble]);
@@ -727,12 +743,13 @@ export function CodeViewer({
     for (const d of disposablesRef.current) d.dispose();
     disposablesRef.current = [];
 
+    const repaint = () => {
+      if (editorRef.current === ed) repaintRef.current();
+    };
+    disposablesRef.current.push(ed.onDidChangeModel(repaint));
+    disposablesRef.current.push(ed.onDidChangeModelContent(repaint));
     // Re-apply after model is ready (open-from-search before mount).
-    requestAnimationFrame(() => {
-      applyDecorations(focusCommentId ?? null);
-      paintSearchHighlight();
-      paintBlame();
-    });
+    requestAnimationFrame(repaint);
 
 
     // Hover dwell on annotation highlight → open bubble (not click).
@@ -777,7 +794,7 @@ export function CodeViewer({
     );
     disposablesRef.current.push(
       ed.onMouseMove((e) => {
-        if (mouseDownRef.current || composerOpenRef.current) return;
+        if (mouseDownRef.current || composerOpenRef.current || bubblePinnedRef.current) return;
         if (!e.target.position) {
           if (pointerOverAnnoRef.current) {
             pointerOverAnnoRef.current = false;
@@ -855,7 +872,7 @@ export function CodeViewer({
       }),
     );
 
-    applyDecorations();
+    repaint();
   };
 
   const submit = async (
@@ -1008,6 +1025,15 @@ export function CodeViewer({
             left={bubble.left}
             top={bubble.top}
             onClose={closeBubble}
+            onPinnedChange={(pinned) => {
+              bubblePinnedRef.current = pinned;
+              if (pinned) {
+                clearHoverOpenTimer();
+                clearHoverCloseTimer();
+              } else if (bubbleRef.current && !pointerOverBubbleRef.current && !pointerOverAnnoRef.current) {
+                scheduleHoverClose();
+              }
+            }}
             onPointerEnter={() => {
               pointerOverBubbleRef.current = true;
               clearHoverCloseTimer();

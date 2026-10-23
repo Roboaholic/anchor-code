@@ -20,9 +20,11 @@ import {
 import { discoverRepos } from "../services/historyService.js";
 import type { WorkspaceFacade } from "./workspaceFacade.js";
 import { hostNormalize } from "../host/paths.js";
-import { HostError } from "../host/types.js";
+import { HostError, type HostSession } from "../host/types.js";
 
 export class CommentFacade {
+  private readonly mutations = new WeakMap<HostSession, Map<string, Promise<void>>>();
+
   constructor(
     private readonly hosts: HostManager,
     private readonly workspace: WorkspaceFacade,
@@ -39,59 +41,77 @@ export class CommentFacade {
     }
   }
   async list(repoRoot: string) {
-    return loadSessions(this.hosts.session, await this.commentRoot(repoRoot));
+    const { host, root } = await this.commentContext(repoRoot);
+    return loadSessions(host, root);
   }
   async summaries(repoRoot: string) {
-    return listSessionSummaries(this.hosts.session, await this.commentRoot(repoRoot));
+    const { host, root } = await this.commentContext(repoRoot);
+    return listSessionSummaries(host, root);
   }
   async ensureSession(repoRoot: string, title?: string, author = "local-user") {
-    return ensureActiveSession(this.hosts.session, await this.commentRoot(repoRoot), author, title);
+    return this.mutate(repoRoot, (host, root) => ensureActiveSession(host, root, author, title));
   }
   async add(input: AddCommentInput, options: { author?: string } = {}) {
-    const repoRoot = await this.commentRoot(input.repoRoot);
-    return addComment(this.hosts.session, {
+    // Validate while this workspace/host is still current; queued saves retain
+    // that context even if the user switches workspace before the write starts.
+    const filePath = this.workspace.safeRepoPath(this.workspace.root(), input.filePath);
+    return this.mutate(input.repoRoot, (host, repoRoot) => addComment(host, {
       ...input,
       repoRoot,
-      filePath: this.workspace.safeRepoPath(repoRoot, input.filePath),
+      filePath,
       author: options.author ?? input.author ?? "local-user",
-    });
+    }));
   }
   async setStatus(repoRoot: string, commentId: string, status: CommentStatus) {
-    return setCommentStatus(this.hosts.session, await this.commentRoot(repoRoot), commentId, status);
+    return this.mutate(repoRoot, (host, root) => setCommentStatus(host, root, commentId, status));
   }
   async reply(repoRoot: string, commentId: string, body: string, author = "local-user") {
-    return replyComment(this.hosts.session, await this.commentRoot(repoRoot), commentId, body, author);
+    return this.mutate(repoRoot, (host, root) => replyComment(host, root, commentId, body, author));
   }
   async edit(repoRoot: string, commentId: string, body: string, messageId?: string) {
-    return editComment(this.hosts.session, await this.commentRoot(repoRoot), commentId, body, messageId);
+    return this.mutate(repoRoot, (host, root) => editComment(host, root, commentId, body, messageId));
   }
   async remove(repoRoot: string, commentId: string) {
-    return deleteComment(this.hosts.session, await this.commentRoot(repoRoot), commentId);
+    return this.mutate(repoRoot, (host, root) => deleteComment(host, root, commentId));
   }
   async end(repoRoot: string, options: { export: boolean; sessionId?: string }) {
-    return endSession(this.hosts.session, await this.commentRoot(repoRoot), options);
+    return this.mutate(repoRoot, (host, root) => endSession(host, root, options));
   }
   async create(repoRoot: string, title?: string, author = "local-user") {
-    return newSession(this.hosts.session, await this.commentRoot(repoRoot), author, title);
+    return this.mutate(repoRoot, (host, root) => newSession(host, root, author, title));
   }
   async restore(repoRoot: string, sessionId: string) {
-    return restoreSession(this.hosts.session, await this.commentRoot(repoRoot), sessionId);
+    return this.mutate(repoRoot, (host, root) => restoreSession(host, root, sessionId));
   }
   async export(repoRoot: string, sessionId?: string) {
-    return exportSession(this.hosts.session, await this.commentRoot(repoRoot), sessionId);
+    return this.mutate(repoRoot, (host, root) => exportSession(host, root, sessionId));
   }
   async yamlPath(repoRoot: string, sessionId?: string) {
-    return copyYamlPath(this.hosts.session, await this.commentRoot(repoRoot), sessionId);
+    return this.mutate(repoRoot, (host, root) => copyYamlPath(host, root, sessionId));
   }
 
-  private async commentRoot(input: string): Promise<string> {
+  /** Serialize read-modify-write saves, while lists and other workspaces stay independent. */
+  private async mutate<T>(input: string, action: (host: HostSession, root: string) => Promise<T>): Promise<T> {
+    const { host, root } = await this.commentContext(input);
+    const queue = this.mutations.get(host) ?? new Map<string, Promise<void>>();
+    this.mutations.set(host, queue);
+    const key = this.pathKey(host, root);
+    const result = (queue.get(key) ?? Promise.resolve()).then(() => action(host, root));
+    const settled = result.then(() => undefined, () => undefined);
+    queue.set(key, settled);
+    void settled.then(() => { if (queue.get(key) === settled) queue.delete(key); });
+    return result;
+  }
+
+  private async commentContext(input: string): Promise<{ host: HostSession; root: string }> {
+    const host = this.hosts.session;
     const candidate = this.workspace.safePath(input);
-    const root = hostNormalize(this.hosts.session.kind, this.workspace.root());
-    const normalizedCandidate = hostNormalize(this.hosts.session.kind, candidate);
-    if (this.pathKey(normalizedCandidate) === this.pathKey(root)) return root;
-    const repos = await discoverRepos(this.hosts.session, root);
+    const root = hostNormalize(host.kind, this.workspace.root());
+    const normalizedCandidate = hostNormalize(host.kind, candidate);
+    if (this.pathKey(host, normalizedCandidate) === this.pathKey(host, root)) return { host, root };
+    const repos = await discoverRepos(host, root);
     const approvedRepo = repos.some(
-      (repo) => this.pathKey(repo.root) === this.pathKey(normalizedCandidate),
+      (repo) => this.pathKey(host, repo.root) === this.pathKey(host, normalizedCandidate),
     );
     if (!approvedRepo) {
       throw new HostError(
@@ -99,12 +119,12 @@ export class CommentFacade {
         "Comment repository is not approved in the active workspace",
       );
     }
-    return root;
+    return { host, root };
   }
 
-  private pathKey(input: string): string {
-    const normalized = hostNormalize(this.hosts.session.kind, input).replace(/\\/g, "/");
-    return this.hosts.session.kind === "local" && process.platform === "win32"
+  private pathKey(host: HostSession, input: string): string {
+    const normalized = hostNormalize(host.kind, input).replace(/\\/g, "/");
+    return host.kind === "local" && process.platform === "win32"
       ? normalized.toLowerCase()
       : normalized;
   }

@@ -418,7 +418,8 @@ export function Shell() {
   }, [palette, closePalette]);
 
   const showAgent = Boolean(agentVisible && workspaceRoot && !agentWorkbench);
-  const showTerminal = Boolean(terminalVisible && workspaceRoot && !agentWorkbench);
+  // Shell terminals are available alongside either documents or the Agent stage.
+  const showTerminal = Boolean(terminalVisible && workspaceRoot);
 
   useEffect(() => {
     if (!showTerminal && terminalMaximized) setTerminalMaximized(false);
@@ -436,7 +437,7 @@ export function Shell() {
   }, [terminalMaximized]);
 
   useEffect(() => {
-    if (agentWorkbench || !showTerminal || agentMenuOpen || !terminalActiveId) return;
+    if (!showTerminal || agentMenuOpen || !terminalActiveId) return;
     let frame = 0;
     let attempts = 0;
     const refit = () => {
@@ -646,7 +647,7 @@ export function Shell() {
                       }
                     />
                   ) : null}
-                  {workspaceRoot && !agentWorkbench ? (
+                  {workspaceRoot ? (
                     <TerminalPanel
                       mode="terminal"
                       maximized={terminalMaximized}

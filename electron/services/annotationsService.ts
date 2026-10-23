@@ -168,8 +168,13 @@ async function listSessionFiles(
   repoRoot: string,
 ): Promise<string[]> {
   const dir = sessionDir(host, repoRoot);
-  if (!(await host.exists(dir))) return [];
-  const entries = await host.listDir(dir);
+  let entries;
+  try {
+    entries = await host.listDir(dir);
+  } catch (error) {
+    if (error instanceof HostError && error.code === "not_found") return [];
+    throw error;
+  }
   return entries
     .filter((e) => e.type === "file" && e.name.endsWith(".yaml"))
     .map((e) => hostJoin(host.kind, dir, e.name));
@@ -181,22 +186,32 @@ export async function loadSessions(
 ): Promise<{ sessions: SessionRecord[]; error?: string }> {
   try {
     const files = await listSessionFiles(host, repoRoot);
-    const sessions: SessionRecord[] = [];
-    for (const file of files) {
-      try {
-        const text = await host.readFile(file);
-        const parsed = validateSession(parseYaml(text));
-        parsed.filePath = file;
-        sessions.push(parsed);
-      } catch (err) {
-        return {
-          sessions: [],
-          error:
-            err instanceof Error
-              ? `Failed to parse ${hostBasename(host.kind, file)}: ${err.message}`
-              : String(err),
-        };
+    const sessions = new Array<SessionRecord>(files.length);
+    const failures = new Map<number, string>();
+    let next = 0;
+    // Remote reads each incur a round trip. Keep a small number in flight,
+    // without caching YAML that coding agents may edit outside this app.
+    const readNext = async () => {
+      while (failures.size === 0) {
+        const index = next++;
+        const file = files[index];
+        if (!file) return;
+        try {
+          const parsed = validateSession(parseYaml(await host.readFile(file)));
+          parsed.filePath = file;
+          sessions[index] = parsed;
+        } catch (err) {
+          // Reads may finish in any order; report the same first file that a
+          // sequential load would have reported, after earlier reads settle.
+          failures.set(index, err instanceof Error
+            ? `Failed to parse ${hostBasename(host.kind, file)}: ${err.message}`
+            : String(err));
+        }
       }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, files.length) }, readNext));
+    if (failures.size > 0) {
+      return { sessions: [], error: failures.get(Math.min(...failures.keys()))! };
     }
     sessions.sort((a, b) => b.created_at.localeCompare(a.created_at));
     return { sessions };
@@ -296,7 +311,9 @@ async function writeSession(
   session: SessionRecord,
 ): Promise<string> {
   const dir = sessionDir(host, repoRoot);
-  await host.mkdirp(dir);
+  // Loaded sessions already have a parent directory. Avoid an extra remote
+  // mkdir round trip for every reply/edit; new sessions still create it.
+  if (!session.filePath) await host.mkdirp(dir);
   const filePath = sessionFilePath(host, repoRoot, session.id);
   const toWrite = {
     version: session.version,

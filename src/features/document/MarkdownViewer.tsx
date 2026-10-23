@@ -372,6 +372,7 @@ function RenderedMarkdownPane({
   const bodyRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
   const bubbleRef = useRef<BubbleState | null>(null);
+  const bubblePinnedRef = useRef(false);
   const pendingSelectionTextRef = useRef<string | null>(null);
   const pendingSelectionRectRef = useRef<DOMRect | null>(null);
   const pendingSelectionScopeRef = useRef<MarkdownLineScope | null>(null);
@@ -674,6 +675,7 @@ function RenderedMarkdownPane({
   };
 
   const openBubbleFromMark = (commentId: string, mark: MdMarkRect) => {
+    if (bubblePinnedRef.current) return;
     setSelToolbar(null);
     setBubble({
       commentId,
@@ -822,7 +824,8 @@ function RenderedMarkdownPane({
             comment={bubbleComment}
             left={bubble.left}
             top={bubble.top}
-            onClose={() => setBubble(null)}
+            onClose={() => { bubblePinnedRef.current = false; setBubble(null); }}
+            onPinnedChange={(pinned) => { bubblePinnedRef.current = pinned; }}
             onMutated={() => {
               if (bubble && !liveComment(bubble.commentId)) setBubble(null);
               refreshMarks();

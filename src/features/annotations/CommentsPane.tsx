@@ -477,7 +477,8 @@ export function CommentsPane() {
                                   type="button"
                                   className="comment-card__jump"
                                   title={`${c.target.file_path}:${c.target.start_line}`}
-                                  onClick={() => {
+                                  onClick={(event) => {
+                                    event.stopPropagation();
                                     setExpandedSession(session.id);
                                     void jumpToComment(c, session.id);
                                   }}

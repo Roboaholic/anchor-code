@@ -407,6 +407,8 @@ export async function addCommentFromSelection(input: {
  * Open a sidebar comment's file and focus its session decorations.
  * The session id is supplied by the sidebar to avoid ambiguous/racy lookup.
  */
+let commentJump = 0;
+
 export async function jumpToComment(
   comment: CommentRecord,
   sessionId?: string,
@@ -414,6 +416,9 @@ export async function jumpToComment(
   const ann = useAnnotationsStore.getState();
   const repoRoot = ann.repoRoot;
   if (!repoRoot) return;
+  const jump = ++commentJump;
+  const operation = workspaceOperation;
+  const workspace = useWorkspaceStore.getState();
 
   const ownerId =
     sessionId ??
@@ -424,32 +429,48 @@ export async function jumpToComment(
   }
 
   const abs = joinPath(repoRoot, comment.target.file_path).replace(/\\/g, "/");
-  const workspaceRoot = useWorkspaceStore.getState().workspaceRoot;
-  let revealLine = comment.target.start_line;
-  try {
-    const text = await window.anchor.workspace.readText(abs);
-    const resolved = resolveAnchor(text.text, comment.target);
-    if (resolved.status !== "unresolved") {
-      revealLine = resolved.startLine;
-    }
-  } catch {
-    // keep stored line
-  }
-  await useDocumentStore.getState().openFile({
+  // Open once, then resolve against the same content that the editor displays.
+  // Reading separately could resolve against a newer file than an existing tab.
+  const opening = useDocumentStore.getState().openFile({
     path: abs,
-    workspaceRoot,
-    revealLine,
+    workspaceRoot: workspace.workspaceRoot,
     focusCommentId: comment.id,
+    searchHighlight: null,
   });
-  // For markdown, switch to raw for line reveal + annotation visibility
-  const item = useDocumentStore
-    .getState()
-    .openItems.find(
-      (i) =>
-        i.kind === "file" &&
-        i.path.replace(/\\/g, "/") === abs.replace(/\\/g, "/"),
-    );
-  if (item && item.kind === "file" && item.isMarkdown) {
-    useDocumentStore.getState().setMdViewMode(item.id, "raw");
+  const selected = useDocumentStore.getState().openItems.find(
+    (item) => item.kind === "file" && item.path.replace(/\\/g, "/") === abs,
+  );
+  if (!selected || selected.kind !== "file") { await opening; return; }
+  const nonce = selected.revealNonce;
+  let superseded = false;
+  const unsubscribe = useDocumentStore.subscribe((state) => {
+    const item = state.openItems.find((item) => item.id === selected.id);
+    if (state.activeId !== selected.id || item?.kind !== "file" ||
+      item.revealNonce !== nonce || item.focusCommentId !== comment.id) superseded = true;
+  });
+  try {
+    await opening;
+  } finally {
+    unsubscribe();
   }
+  const currentWorkspace = useWorkspaceStore.getState();
+  if (superseded || jump !== commentJump || operation !== workspaceOperation ||
+    currentWorkspace.workspaceRoot !== workspace.workspaceRoot ||
+    currentWorkspace.hostProfileId !== workspace.hostProfileId ||
+    currentWorkspace.hostKind !== workspace.hostKind) return;
+  const state = useDocumentStore.getState();
+  const item = state.openItems.find((item) => item.id === selected.id);
+  if (state.activeId !== selected.id || item?.kind !== "file" || item.error ||
+    item.focusCommentId !== comment.id || item.revealNonce !== nonce ||
+    item.loadState === "deferred" || item.loadState === "loading") return;
+
+  const resolved = resolveAnchor(item.content, comment.target);
+  const requestedLine = resolved.status === "unresolved" ? comment.target.start_line : resolved.startLine;
+  const lineCount = item.content.split(/\r\n|\r|\n/).length;
+  const revealLine = Number.isFinite(requestedLine)
+    ? Math.min(lineCount, Math.max(1, Math.floor(requestedLine)))
+    : 1;
+  // For Markdown, reveal the source line with the annotation still selected.
+  if (item.isMarkdown) state.setMdViewMode(item.id, "raw");
+  state.revealInFile(item.path, revealLine);
 }

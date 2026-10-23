@@ -15,7 +15,6 @@ import { CommentBubble } from "@/features/annotations/CommentBubble";
 import {
   overlapRegionsForModel,
   useAnnotationsStore,
-  visualDecorationSpec,
   type DecorationSpec,
 } from "@/features/annotations/annotationsStore";
 import type { OpenItem } from "./documentStore";
@@ -37,6 +36,7 @@ import { formatError } from "@/shared/formatError";
 import { isBinaryFile } from "@/shared/binaryFile";
 import { Icon } from "@/shared/Icon";
 import { fitBlameText, formatBlameTime } from "./blameDisplay";
+import { decorationSpecsForModel } from "./modelAnnotations";
 import "./monacoSetup";
 import { useSmoothScrollStore } from "@/features/shell/smoothScrollStore";
 import { monacoLineAnchor, openAsk } from "@/features/ask/askStore";
@@ -281,6 +281,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const hoverOpenTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const pointerOverBubbleRef = useRef(false);
+  const bubblePinnedRef = useRef(false);
   const pointerOverAnnoRef = useRef(false);
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
@@ -615,17 +616,15 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       const ed = modifiedEditorRef.current;
       if (!ed || !absActivePath || !sideBySide) return;
       const model = ed.getModel();
-      // DiffEditor often mounts before the modified model is filled (or swaps
-      // models after onDidUpdateDiff). Resolving against `newText` but painting
-      // an empty/stale model drops ranges — wait until model matches.
-      if (!model) return;
-      // Empty model while we already have newer-side text → wait for DiffEditor
-      // to push content (onDidUpdateDiff / model listeners will repaint).
-      if (newText.length > 0 && model.getValueLength() === 0) return;
-
-      const specs = decorationsFor(absActivePath, newText);
-      const visualSpecs = specs.map((spec) =>
-        visualDecorationSpec(spec, (line) => model.getLineMaxColumn(line)),
+      if (!model || model.isDisposed()) {
+        specsRef.current = [];
+        decorationsRef.current?.clear();
+        return;
+      }
+      // The modified model may still contain the previous diff when props
+      // change. Resolve against its current snapshot and bound every range.
+      const visualSpecs = decorationSpecsForModel(
+        decorationsFor(absActivePath, model.getValue()), model,
       );
       specsRef.current = visualSpecs;
       const activeId =
@@ -710,7 +709,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
         setBubble(next);
       }
     },
-    [absActivePath, decorationsFor, newText, sideBySide, theme],
+    [absActivePath, decorationsFor, sideBySide, theme],
   );
   applyDecorationsRef.current = applyDecorations;
 
@@ -733,6 +732,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
 
   const openBubbleForSpecs = useCallback(
     (hits: DecorationSpec[]) => {
+      if (bubblePinnedRef.current) return;
       const ed = modifiedEditorRef.current;
       const overlay = overlayRef.current;
       if (!ed || !overlay || hits.length === 0) return;
@@ -758,6 +758,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     clearHoverCloseTimer();
     pointerOverAnnoRef.current = false;
     pointerOverBubbleRef.current = false;
+    bubblePinnedRef.current = false;
     bubbleRef.current = null;
     setBubble(null);
     requestAnimationFrame(() => applyDecorations(null));
@@ -766,7 +767,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const scheduleHoverClose = useCallback(() => {
     clearHoverCloseTimer();
     hoverCloseTimerRef.current = window.setTimeout(() => {
-      if (pointerOverBubbleRef.current || pointerOverAnnoRef.current) return;
+      if (bubblePinnedRef.current || pointerOverBubbleRef.current || pointerOverAnnoRef.current) return;
       closeBubble();
     }, HOVER_CLOSE_MS);
   }, [closeBubble]);
@@ -922,7 +923,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     );
     disposablesRef.current.push(
       modified.onMouseMove((e) => {
-        if (mouseDownRef.current || composerOpenRef.current) return;
+        if (mouseDownRef.current || composerOpenRef.current || bubblePinnedRef.current) return;
         if (!e.target.position) {
           if (pointerOverAnnoRef.current) {
             pointerOverAnnoRef.current = false;
@@ -1370,6 +1371,15 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                   left={bubble.left}
                   top={bubble.top}
                   onClose={closeBubble}
+                  onPinnedChange={(pinned) => {
+                    bubblePinnedRef.current = pinned;
+                    if (pinned) {
+                      clearHoverOpenTimer();
+                      clearHoverCloseTimer();
+                    } else if (bubbleRef.current && !pointerOverBubbleRef.current && !pointerOverAnnoRef.current) {
+                      scheduleHoverClose();
+                    }
+                  }}
                   onPointerEnter={() => {
                     pointerOverBubbleRef.current = true;
                     clearHoverCloseTimer();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   commentBodyForDisplay,
   rejoinDiffCommentBody,
@@ -6,6 +6,7 @@ import {
 import { Dropdown, isInsideDropdownMenu } from "@/shared/Dropdown";
 import { confirmDialog } from "@/shared/ConfirmDialog";
 import { Icon } from "@/shared/Icon";
+import { formatError } from "@/shared/formatError";
 import type { CommentMessage, CommentRecord } from "@/shared/anchor-api";
 import { useAnnotationsStore } from "./annotationsStore";
 import { CommentMarkdown } from "./CommentMarkdown";
@@ -21,6 +22,8 @@ export interface CommentBubbleProps {
   top: number;
   onClose: () => void;
   onMutated?: () => void;
+  /** Keep hover-owned bubbles open while any thread is being edited or saved. */
+  onPinnedChange?: (pinned: boolean) => void;
   /** Hover keep-alive: parent opens bubble on highlight dwell. */
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
@@ -49,10 +52,23 @@ export function CommentBubble({
   top,
   onClose,
   onMutated,
+  onPinnedChange,
   onPointerEnter,
   onPointerLeave,
 }: CommentBubbleProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const interactingThreads = useRef(new Set<string>());
+  const pinnedRef = useRef(false);
+  const onPinnedChangeRef = useRef(onPinnedChange);
+  onPinnedChangeRef.current = onPinnedChange;
+  const onInteractionChange = useCallback((threadId: string, interacting: boolean) => {
+    if (interacting) interactingThreads.current.add(threadId);
+    else interactingThreads.current.delete(threadId);
+    const pinned = interactingThreads.current.size > 0;
+    if (pinnedRef.current === pinned) return;
+    pinnedRef.current = pinned;
+    onPinnedChangeRef.current?.(pinned);
+  }, []);
   const threads = [comment, ...relatedComments];
   const multi = threads.length > 1;
 
@@ -63,6 +79,7 @@ export function CommentBubble({
       const el = rootRef.current;
       if (!el) return;
       if (isInsideBubbleOrMenu(el, e.target)) return;
+      if (pinnedRef.current) return;
       onClose();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -115,6 +132,7 @@ export function CommentBubble({
             showClose={!multi && threadIndex === 0}
             onClose={onClose}
             onMutated={onMutated}
+            onInteractionChange={onInteractionChange}
           />
         ))}
       </div>
@@ -127,11 +145,13 @@ function BubbleThread({
   showClose,
   onClose,
   onMutated,
+  onInteractionChange,
 }: {
   thread: CommentRecord;
   showClose: boolean;
   onClose: () => void;
   onMutated?: () => void;
+  onInteractionChange: (threadId: string, interacting: boolean) => void;
 }) {
   const setStatus = useAnnotationsStore((s) => s.setStatus);
   const reply = useAnnotationsStore((s) => s.reply);
@@ -146,6 +166,13 @@ function BubbleThread({
   const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const interacting = replying || editingMessageId !== null || busy;
+
+  useLayoutEffect(() => {
+    onInteractionChange(thread.id, interacting);
+    return () => onInteractionChange(thread.id, false);
+  }, [interacting, onInteractionChange, thread.id]);
 
   // Keep selection / edit targets valid after mutations.
   useEffect(() => {
@@ -160,10 +187,14 @@ function BubbleThread({
   }, [thread.messages, selectedMessageId, editingMessageId]);
 
   const run = async (fn: () => Promise<void>) => {
+    if (busy) return;
+    setError(null);
     setBusy(true);
     try {
       await fn();
       onMutated?.();
+    } catch (err) {
+      setError(formatError(err));
     } finally {
       setBusy(false);
     }
@@ -300,6 +331,8 @@ function BubbleThread({
         </div>
       </div>
 
+      {error ? <p className="error-text" role="alert">{error}</p> : null}
+
       {replying ? (
         <BubbleEditor
           value={draft}
@@ -430,6 +463,7 @@ function BubbleEditor({
         className="anno-bubble__textarea"
         rows={rows}
         value={value}
+        disabled={busy}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         autoFocus
@@ -438,6 +472,7 @@ function BubbleEditor({
         <button
           type="button"
           className="btn btn--ghost btn--small"
+          disabled={busy}
           onClick={onCancel}
         >
           Cancel
@@ -448,7 +483,7 @@ function BubbleEditor({
           disabled={!value.trim() || busy}
           onClick={onSubmit}
         >
-          {submitLabel}
+          {busy ? (submitLabel === "Reply" ? "Replying…" : "Saving…") : submitLabel}
         </button>
       </div>
     </div>

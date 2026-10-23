@@ -193,6 +193,7 @@ export function captureWorkspaceAnnotationsView(root: string): void {
 export function restoreWorkspaceAnnotationsView(root: string): boolean {
   const view = annotationWorkspaceViews.get(annotationWorkspaceKey(root));
   if (!view) return false;
+  ++annotationViewRevision;
   useAnnotationsStore.setState(view);
   startDiskWatch(root);
   return true;
@@ -255,6 +256,25 @@ async function reloadSessions(repoRoot: string): Promise<SessionRecord[]> {
   const { sessions, error } = await window.anchor.annotations.load(repoRoot);
   if (error) throw new Error(error);
   return sortSessionsNewestFirst(sessions);
+}
+
+let annotationViewRevision = 0;
+let annotationSaveRevision = 0;
+let annotationLoadRevision = 0;
+
+function currentAnnotationContext(repoRoot: string): () => boolean {
+  const revision = annotationViewRevision;
+  const { hostProfileId, hostKind } = useWorkspaceStore.getState();
+  return () => {
+    const workspace = useWorkspaceStore.getState();
+    return revision === annotationViewRevision &&
+      useAnnotationsStore.getState().repoRoot === repoRoot &&
+      workspace.hostProfileId === hostProfileId && workspace.hostKind === hostKind;
+  };
+}
+
+function withSavedSession(sessions: SessionRecord[], saved: SessionRecord): SessionRecord[] {
+  return [...sessions.filter((session) => session.id !== saved.id), saved];
 }
 
 /** Cheap fingerprint so we can skip no-op store updates. */
@@ -363,6 +383,7 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   loading: false,
 
   reset: () => {
+    ++annotationViewRevision;
     stopDiskWatch();
     set({
       repoRoot: null,
@@ -384,9 +405,20 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   },
 
   loadForRepo: async (repoRoot) => {
+    if (repoRoot !== get().repoRoot) ++annotationViewRevision;
+    const request = ++annotationLoadRevision;
     set({ loading: true, error: null, repoRoot });
+    const contextIsCurrent = currentAnnotationContext(repoRoot);
+    const isCurrent = () => request === annotationLoadRevision && contextIsCurrent();
+    const saveRevision = annotationSaveRevision;
     try {
       const sessions = await reloadSessions(repoRoot);
+      if (!isCurrent()) return;
+      if (saveRevision !== annotationSaveRevision) {
+        set({ loading: false });
+        startDiskWatch(repoRoot);
+        return;
+      }
       set({
         ...applySessions(sessions, get().expandedSessionId),
         loading: false,
@@ -395,6 +427,8 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
       });
       startDiskWatch(repoRoot);
     } catch (err) {
+      if (!isCurrent()) return;
+      if (saveRevision !== annotationSaveRevision) { set({ loading: false }); return; }
       stopDiskWatch();
       set({
         loading: false,
@@ -408,9 +442,12 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
 
   refreshFromDisk: async (repoRootArg) => {
     const repoRoot = repoRootArg ?? get().repoRoot;
-    if (!repoRoot || !window.anchor?.annotations?.load) return false;
+    if (!repoRoot || repoRoot !== get().repoRoot || !window.anchor?.annotations?.load) return false;
+    const isCurrent = currentAnnotationContext(repoRoot);
+    const saveRevision = annotationSaveRevision;
     try {
       const sessions = await reloadSessions(repoRoot);
+      if (!isCurrent() || saveRevision !== annotationSaveRevision) return false;
       const prev = get().sessions;
       if (sessionsFingerprint(prev) === sessionsFingerprint(sessions)) {
         return false;
@@ -429,18 +466,33 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
 
 
   ensureActive: async (repoRoot, title) => {
+    if (repoRoot !== get().repoRoot) {
+      ++annotationViewRevision;
+      set({ sessions: [], activeSession: null, expandedSessionId: null });
+    }
     set({ loading: true, error: null, repoRoot });
+    const isCurrent = currentAnnotationContext(repoRoot);
+    ++annotationSaveRevision;
     try {
       const session = await window.anchor.annotations.ensureActive(
         title ? { repoRoot, title } : repoRoot,
       );
+      if (!isCurrent()) return;
+      ++annotationSaveRevision;
+      const saveRevision = annotationSaveRevision;
+      // This entry point can initialize a repository without a prior list load.
+      // Keep its historical sessions; normal comment saves use the returned
+      // session directly and avoid this extra round trip.
       const sessions = await reloadSessions(repoRoot);
+      if (!isCurrent()) return;
+      if (saveRevision !== annotationSaveRevision) { set({ loading: false }); return; }
       set({
         ...applySessions(sessions, session.id),
         loading: false,
         repoRoot,
       });
     } catch (err) {
+      if (!isCurrent()) return;
       set({
         loading: false,
         error: formatError(err),
@@ -449,19 +501,21 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   },
 
   addComment: async (input) => {
+    const isCurrent = currentAnnotationContext(input.repoRoot);
+    ++annotationSaveRevision;
     try {
       const session = await window.anchor.annotations.addComment(input);
-      const sessions = await reloadSessions(input.repoRoot);
+      if (!isCurrent()) return;
+      ++annotationSaveRevision;
       set({
-        ...applySessions(sessions, session.id),
+        ...applySessions(withSavedSession(get().sessions, session), session.id),
         repoRoot: input.repoRoot,
+        loading: false,
         toast: "Comment saved",
         error: null,
       });
     } catch (err) {
-      set({
-        toast: formatError(err),
-      });
+      if (isCurrent()) set({ loading: false, toast: formatError(err) });
       throw err;
     }
   },
@@ -469,14 +523,16 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   setStatus: async (commentId, status) => {
     const repoRoot = get().repoRoot;
     if (!repoRoot) return;
+    const isCurrent = currentAnnotationContext(repoRoot);
+    ++annotationSaveRevision;
     const session = await window.anchor.annotations.setStatus({
       repoRoot,
       commentId,
       status,
     });
-    const sessions = get().sessions.map((s) =>
-      s.id === session.id ? session : s,
-    );
+    if (!isCurrent()) return;
+    ++annotationSaveRevision;
+    const sessions = withSavedSession(get().sessions, session);
     set({
       ...applySessions(sessions, get().expandedSessionId),
     });
@@ -485,16 +541,19 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   reply: async (commentId, body) => {
     const repoRoot = get().repoRoot;
     if (!repoRoot) return;
+    const isCurrent = currentAnnotationContext(repoRoot);
+    ++annotationSaveRevision;
     const session = await window.anchor.annotations.reply({
       repoRoot,
       commentId,
       body,
     });
-    const sessions = get().sessions.map((s) =>
-      s.id === session.id ? session : s,
-    );
+    if (!isCurrent()) return;
+    ++annotationSaveRevision;
+    const sessions = withSavedSession(get().sessions, session);
     set({
       ...applySessions(sessions, get().expandedSessionId),
+      loading: false,
       toast: "Reply added",
     });
   },
@@ -502,15 +561,17 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   editComment: async (commentId, body, messageId) => {
     const repoRoot = get().repoRoot;
     if (!repoRoot) return;
+    const isCurrent = currentAnnotationContext(repoRoot);
+    ++annotationSaveRevision;
     const session = await window.anchor.annotations.editComment({
       repoRoot,
       commentId,
       body,
       messageId,
     });
-    const sessions = get().sessions.map((s) =>
-      s.id === session.id ? session : s,
-    );
+    if (!isCurrent()) return;
+    ++annotationSaveRevision;
+    const sessions = withSavedSession(get().sessions, session);
     set({
       ...applySessions(sessions, get().expandedSessionId),
       toast: "Comment updated",
@@ -520,13 +581,15 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
   deleteComment: async (commentId) => {
     const repoRoot = get().repoRoot;
     if (!repoRoot) return;
+    const isCurrent = currentAnnotationContext(repoRoot);
+    ++annotationSaveRevision;
     const session = await window.anchor.annotations.deleteComment({
       repoRoot,
       commentId,
     });
-    const sessions = get().sessions.map((s) =>
-      s.id === session.id ? session : s,
-    );
+    if (!isCurrent()) return;
+    ++annotationSaveRevision;
+    const sessions = withSavedSession(get().sessions, session);
     set({
       ...applySessions(sessions, get().expandedSessionId),
       toast: "Comment deleted",

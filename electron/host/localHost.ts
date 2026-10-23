@@ -7,11 +7,13 @@ import type {
   DirEntry,
   HostSession,
   PtyHandle,
+  ReadFileOptions,
   RunOptions,
   RunResult,
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
+import { readLocalFile } from "./fileRead.js";
 import { shellDisplayName, spawnLocalPty } from "./localPty.js";
 
 function mapFsError(err: unknown, fallback: string): HostError {
@@ -174,9 +176,9 @@ export class LocalHostSession implements HostSession {
     });
   }
 
-  async readFile(filePath: string): Promise<string> {
+  async readFile(filePath: string, options?: ReadFileOptions): Promise<string> {
     try {
-      return await fs.readFile(filePath, "utf8");
+      return await readLocalFile(filePath, options);
     } catch (err) {
       throw mapFsError(err, `Cannot read file: ${filePath}`);
     }

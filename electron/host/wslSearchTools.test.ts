@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   WSL_SEARCH_HELPER_PY,
   WslSearchHelperClient,
@@ -160,6 +160,39 @@ describe("WslSearchHelperClient (mock protocol)", () => {
     expect(c.alive).toBe(false);
     await expect(c.run("/", "rg", [])).rejects.toThrow();
   });
+
+  it("rejects readiness promptly if the helper exits before its greeting", async () => {
+    const p = new FakeProc();
+    const c = new WslSearchHelperClient(p);
+    p.emit("exit", 127);
+    await expect(c.ready).rejects.toThrow(/before readiness/);
+  });
+
+  it("cancels a throwing early-exit callback and leaves other requests usable", async () => {
+    const p = new FakeProc();
+    const c = new WslSearchHelperClient(p);
+    const run = c.run("/", "rg", [], { earlyExit: () => { throw new Error("predicate failed"); } });
+    p.reply({ id: "r1", ev: "out", data: "partial" });
+    await expect(run).rejects.toThrow("predicate failed");
+    expect(p.sent().at(-1)).toEqual({ op: "cancel", id: "r1" });
+    const next = c.run("/", "rg", []);
+    p.reply({ id: "r2", ev: "exit", code: 1 });
+    await expect(next).resolves.toMatchObject({ code: 1 });
+    c.dispose();
+  });
+
+  it("does not evaluate early-exit after an observer cancels the request", async () => {
+    const p = new FakeProc();
+    const c = new WslSearchHelperClient(p);
+    const controller = new AbortController();
+    const earlyExit = vi.fn();
+    const run = c.run("/", "rg", [], { signal: controller.signal, onStdoutChunk: () => controller.abort(), earlyExit });
+    p.reply({ id: "r1", ev: "out", data: "partial" });
+    await expect(run).resolves.toMatchObject({ stdout: "partial", aborted: true });
+    expect(earlyExit).not.toHaveBeenCalled();
+    expect(p.sent().filter((msg) => msg.op === "cancel")).toHaveLength(1);
+    c.dispose();
+  });
 });
 
 const hasPy = (() => {
@@ -172,6 +205,24 @@ const hasPy = (() => {
 })();
 
 describe.skipIf(!hasPy)("search helper script (real python3, Linux)", () => {
+  it("preserves UTF-8 paths, arguments, stdin and output under an ASCII remote locale", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anchor-查询-"));
+    const child = spawn("python3", ["-u", "-c", WSL_SEARCH_HELPER_PY], {
+      stdio: ["pipe", "pipe", "ignore"],
+      env: { ...process.env, LC_ALL: "C", PYTHONIOENCODING: "ascii", PYTHONUTF8: "0", PYTHONCOERCECLOCALE: "0" },
+    });
+    const c = new WslSearchHelperClient(child);
+    try {
+      await c.ready;
+      await expect(c.run(dir, "printf", ["%s", "查询🦊"])).resolves.toMatchObject({ stdout: "查询🦊", code: 0 });
+      await expect(c.run(dir, "cat", [], { stdin: "中文\n" })).resolves.toMatchObject({ stdout: "中文\n", code: 0 });
+      await expect(c.run(dir, "pwd", [])).resolves.toMatchObject({ stdout: `${dir}\n`, code: 0 });
+    } finally {
+      c.dispose();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("streams output and kills the whole process group on cancel", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anchor-helper-"));
     const script = path.join(dir, "h.py");

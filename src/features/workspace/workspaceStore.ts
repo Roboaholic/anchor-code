@@ -1,4 +1,5 @@
 import { create } from "zustand";
+
 import type { DirEntry, RecentWorkspace, WorkspaceInstance } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import {
@@ -7,6 +8,11 @@ import {
   shouldSkipExpand,
   workspaceDisplayName,
 } from "@/core/workspace/paths";
+
+let workspaceNavigation = 0;
+
+/** Closing an active workspace also invalidates unfinished directory loads. */
+export function cancelWorkspaceNavigation(): void { workspaceNavigation += 1; }
 
 export interface TreeNode {
   name: string;
@@ -231,6 +237,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   openPath: async (dirPath, opts) => {
+    const navigation = ++workspaceNavigation;
     if (!window.anchor?.workspace?.open) {
       const message =
         "IPC bridge missing (window.anchor.workspace). Restart the Electron app, not a browser tab.";
@@ -246,6 +253,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const { root, name, hostKind, hostProfileId, workspaceInstance } = opened;
       const workspaceInstances = await loadWorkspaceInstancesSafe();
+      if (navigation !== workspaceNavigation) return;
       const profileId = hostProfileId ?? opts?.hostProfileId ?? null;
       const activeWorkspaceId =
         workspaceInstances?.activeWorkspaceId ?? workspaceInstance?.id ?? null;
@@ -295,6 +303,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         // non-fatal
       }
 
+      if (navigation !== workspaceNavigation) return;
       set({
         workspaceRoot: root,
         workspaceName: name || workspaceDisplayName(root),
@@ -330,6 +339,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         console.warn("[workspace] listDir failed:", treeError);
       }
     } catch (err) {
+      if (navigation !== workspaceNavigation) return;
       const message = formatError(err);
       set({ status: "error", error: message });
       throw err;
@@ -337,6 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   activateWorkspace: async (id) => {
+    const navigation = ++workspaceNavigation;
     if (!window.anchor?.workspace?.activate) {
       const message =
         "IPC bridge missing (window.anchor.workspace.activate). Restart the Electron app.";
@@ -345,7 +356,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     try {
       const activated = await window.anchor.workspace.activate(id);
-      const workspaceInstances = await loadWorkspaceInstancesSafe();
+      if (navigation !== workspaceNavigation) return;
+      const workspaceInstances = activated.workspaceInstances;
       const activeWorkspaceId =
         workspaceInstances?.activeWorkspaceId ?? activated.workspaceInstance.id;
       const cachedView = get().workspaceViews[activeWorkspaceId];
@@ -378,6 +390,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           : get().workspaceViews,
       });
     } catch (err) {
+      if (navigation !== workspaceNavigation) return;
       const message = formatError(err);
       set({ status: "error", error: message });
       throw err;
@@ -450,6 +463,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   refreshDir: async (dirPath) => {
     const workspaceRoot = get().workspaceRoot;
+    const hostProfileId = get().hostProfileId;
+    const navigation = workspaceNavigation;
     if (!workspaceRoot) return;
 
     let children: TreeNode[];
@@ -480,6 +495,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     };
 
     set((state) => {
+      if (navigation !== workspaceNavigation || state.workspaceRoot !== workspaceRoot || state.hostProfileId !== hostProfileId) return state;
       // Apply against the latest tree so concurrent watcher refreshes compose.
       if (dirPath === workspaceRoot) {
         const rootEntries = preserveLoadedState(children, state.rootEntries);

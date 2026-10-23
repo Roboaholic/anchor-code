@@ -9,6 +9,7 @@ import {
   readWorkspaceDefinition,
   recordActiveWorkspaceInstance,
   type WorkspaceInstance,
+  type WorkspaceInstancesState,
 } from "../services/workspaceState.js";
 import {
   getHostProfile,
@@ -31,6 +32,13 @@ export interface WorkspaceRegistry {
 }
 
 export class WorkspaceFacade {
+  private transition: Promise<void> = Promise.resolve();
+
+  private runTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.transition.then(operation);
+    this.transition = next.then(() => undefined, () => undefined);
+    return next;
+  }
   constructor(
     private readonly hosts: HostManager,
     private readonly terminal: TerminalService,
@@ -154,7 +162,13 @@ export class WorkspaceFacade {
 
   async activate(
     id: string,
-  ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance: WorkspaceInstance }> {
+  ) {
+    return this.runTransition(() => this.activateNow(id));
+  }
+
+  private async activateNow(
+    id: string,
+  ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance: WorkspaceInstance; workspaceInstances: WorkspaceInstancesState }> {
     const target = getLiveWorkspaceInstances().openWorkspaces.find((item) => item.id === id);
     if (!target) throw new HostError("not_found", `Workspace instance not found: ${id}`);
 
@@ -166,7 +180,7 @@ export class WorkspaceFacade {
 
     const host = this.hosts.session;
     host.workspaceRoot = target.root;
-    const workspaceInstance = await activateWorkspaceInstance(id);
+    const workspaceInstance = activateWorkspaceInstance(id);
     const current = {
       path: target.root,
       name: target.name,
@@ -180,6 +194,7 @@ export class WorkspaceFacade {
       hostKind: target.hostKind,
       hostProfileId: target.hostProfileId,
       workspaceInstance,
+      workspaceInstances: getLiveWorkspaceInstances(),
     };
   }
 
@@ -190,6 +205,14 @@ export class WorkspaceFacade {
    * workspace is left to the caller (renderer calls `activate`).
    */
   async close(id: string): Promise<{
+    closedId: string;
+    wasActive: boolean;
+    nextActiveId: string | null;
+  }> {
+    return this.runTransition(() => this.closeNow(id));
+  }
+
+  private async closeNow(id: string): Promise<{
     closedId: string;
     wasActive: boolean;
     nextActiveId: string | null;
@@ -217,6 +240,13 @@ export class WorkspaceFacade {
   async open(
     input: RemoteWorkspaceRef,
     options: { requireApproved?: boolean; source?: WorkspaceChangeSource } = {},
+  ) {
+    return this.runTransition(() => this.openNow(input, options));
+  }
+
+  private async openNow(
+    input: RemoteWorkspaceRef,
+    options: { requireApproved?: boolean; source?: WorkspaceChangeSource },
   ): Promise<{ root: string; name: string; hostKind: string; hostProfileId: string; workspaceInstance?: WorkspaceInstance }> {
     if (!input.path || !input.hostProfileId) throw new HostError("failed", "Invalid workspace");
     if (options.requireApproved) {
@@ -237,7 +267,6 @@ export class WorkspaceFacade {
     }
     const host = this.hosts.session;
     const resolved = hostNormalize(host.kind, input.path);
-    if (!(await host.exists(resolved))) throw new HostError("not_found", `Directory not found: ${resolved}`);
     const stat = await host.stat(resolved);
     if (!stat.isDir) throw new HostError("failed", `Not a directory: ${resolved}`);
     host.workspaceRoot = resolved;

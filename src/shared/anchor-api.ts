@@ -499,6 +499,7 @@ export interface AnchorApi {
       hostKind: HostKind;
       hostProfileId: string;
       workspaceInstance: WorkspaceInstance;
+      workspaceInstances: WorkspaceInstancesState;
     }>;
     getRecent: () => Promise<RecentWorkspace[]>;
     /** Last active workspace if restore-on-launch is on and it is reachable. */
@@ -578,12 +579,14 @@ export interface AnchorApi {
     /** Start watching the workspace root for file changes (local hosts only). */
     /** Batched listDir (one IPC); entries is null for dirs that failed. */
     listDirs: (paths: string[]) => Promise<Array<{ path: string; entries: DirEntry[] | null }>>;
-    watchStart: (root?: string) => Promise<{ ok: boolean }>;
+    watchStart: (root?: string, options?: { ignoredDirNames?: string[] }) => Promise<{ ok: boolean }>;
     watchStop: () => Promise<{ ok: boolean }>;
     /** A directory's contents changed (debounced by the main process). */
     onFileChange: (cb: (payload: {
+      root?: string;
+      hostProfileId?: string;
       dir: string;
-      changes?: { path: string; rel: string; eventType: string }[];
+      changes?: { path: string; rel: string; eventType: string; kind?: "file" | "dir" | "missing" | "unknown" }[];
     }) => void) => () => void;
     deletePath: (path: string) => Promise<{ ok: boolean }>;
     renamePath: (oldPath: string, newPath: string) => Promise<{ ok: boolean }>;

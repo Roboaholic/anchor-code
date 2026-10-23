@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn<(...args: unknown[]) => Promise<void>>(),
   configs: [] as ConnectConfig[],
   readyCount: 0,
+  sftpOpen: vi.fn(),
+  sftpRead: vi.fn(),
+  sftpClose: vi.fn(),
+  sftpReadFile: vi.fn(),
 }));
 
 vi.mock("./sshKnownHosts.js", () => ({ verifySshHostKey: mocks.verify }));
@@ -33,8 +37,12 @@ vi.mock("ssh2", async () => {
       sftp(callback: (error: null, sftp: unknown) => void) {
         callback(null, {
           readFile(_file: string, _encoding: string, done: (error: null, text: string) => void) {
+            mocks.sftpReadFile();
             done(null, "fixture contents");
           },
+          open: mocks.sftpOpen,
+          read: mocks.sftpRead,
+          close: mocks.sftpClose,
         });
       }
       end() {
@@ -53,6 +61,10 @@ describe("manual SSH host verification wiring (no live SSH)", () => {
     mocks.verify.mockReset().mockResolvedValue(undefined);
     mocks.configs.length = 0;
     mocks.readyCount = 0;
+    mocks.sftpReadFile.mockClear();
+    mocks.sftpOpen.mockReset().mockImplementation((_path, _flags, done) => done(null, Buffer.from("handle")));
+    mocks.sftpRead.mockReset();
+    mocks.sftpClose.mockReset().mockImplementation((_handle, done) => done(null));
   });
 
   afterEach(async () => {
@@ -69,6 +81,30 @@ describe("manual SSH host verification wiring (no live SSH)", () => {
     expect(mocks.verify).toHaveBeenCalledWith(Buffer.from("fixture-host-key"), expect.objectContaining({
       host: "server.example", port: 2222, knownHostsPolicy: undefined, knownHostsFile: "/fixture/known_hosts",
     }));
+  });
+
+  it("uses bounded SFTP reads, handles short reads and closes the handle", async () => {
+    const bytes = Buffer.from("abc中文🦊" + "x".repeat(1024));
+    let totalRead = 0;
+    mocks.sftpRead.mockImplementation((_handle, buffer, offset, length, position, done) => {
+      const count = Math.min(2, length, bytes.length - position);
+      bytes.copy(buffer, offset, position, position + count);
+      totalRead += count;
+      done(null, count);
+    });
+    session = new SshHostSession(base);
+    expect(await session.readFile("/file", { maxBytes: 8 })).toBe("abc中");
+    expect(totalRead).toBe(9);
+    expect(mocks.sftpReadFile).not.toHaveBeenCalled();
+    expect(mocks.sftpClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes bounded SFTP handles after read failures and preserves permission errors", async () => {
+    mocks.sftpRead.mockImplementation((_handle, _buffer, _offset, _length, _position, done) =>
+      done(Object.assign(new Error("Permission denied"), { code: 3 })));
+    session = new SshHostSession(base);
+    await expect(session.readFile("/file", { maxBytes: 100 })).rejects.toMatchObject({ code: "permission" });
+    expect(mocks.sftpClose).toHaveBeenCalledOnce();
   });
 
   it.each([undefined, "strict", "accept-new", "ignore"] as const)("does not proceed on trust failure with policy %s", async (knownHostsPolicy) => {

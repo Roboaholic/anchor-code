@@ -44,6 +44,16 @@ export interface PersistedDocumentState {
 const WORKSPACE_DOCUMENTS_KEY = "anchor.workspace.documents.v1";
 type DocumentWorkspaceView = { openItems: OpenItem[]; activeId: string | null };
 const documentWorkspaceViews = new Map<string, DocumentWorkspaceView>();
+// Requests belong to a particular document view, not merely to a path. A host
+// switch or close/reopen can produce the same path while an old read is pending.
+const fileLoads = new Map<string, { promise: Promise<void> }>();
+
+export function dropWorkspaceDocumentView(
+  workspaceRoot: string,
+  hostProfileId: string | null,
+): void {
+  documentWorkspaceViews.delete(workspaceKey(workspaceRoot, hostProfileId));
+}
 
 function workspaceKey(workspaceRoot: string, hostProfileId: string | null): string {
   const root = normalizePathKey(workspaceRoot).replace(/\/+$/, "") || "/";
@@ -123,10 +133,23 @@ export function restoreCachedWorkspaceDocuments(
 ): boolean {
   const cached = documentWorkspaceViews.get(workspaceKey(workspaceRoot, hostProfileId));
   if (!cached) return false;
-  useDocumentStore.setState({
-    openItems: cached.openItems,
-    activeId: cached.activeId,
-  });
+  restoringDocuments += 1;
+  cancelDocumentAutosave();
+  try {
+    fileLoads.clear();
+    useDocumentStore.setState({
+      // Reads from a parked view cannot complete into this view. Restart only
+      // the selected one; its other unloaded tabs remain lazy.
+      openItems: cached.openItems.map((item) =>
+        item.kind === "file" && item.loadState === "loading"
+          ? { ...item, loadState: "deferred" as const }
+          : item,
+      ),
+      activeId: cached.activeId,
+    });
+  } finally {
+    restoringDocuments -= 1;
+  }
   return true;
 }
 
@@ -157,59 +180,65 @@ export async function restoreWorkspaceDocuments(
   workspaceRoot: string,
   hostProfileId: string | null,
 ): Promise<void> {
-  if (restoreCachedWorkspaceDocuments(workspaceRoot, hostProfileId)) return;
+  if (restoreCachedWorkspaceDocuments(workspaceRoot, hostProfileId)) {
+    const activeId = useDocumentStore.getState().activeId;
+    if (activeId) await ensureFileLoaded(activeId);
+    return;
+  }
   restoringDocuments += 1;
   cancelDocumentAutosave();
+  let activeLoad: Promise<void>;
   try {
-    await restoreSavedDocuments(workspaceRoot, hostProfileId);
+    activeLoad = restoreSavedDocuments(workspaceRoot, hostProfileId);
   } finally {
+    // Metadata is restored synchronously. A slow host read must not suppress
+    // autosaves of user actions in this or a subsequently selected workspace.
     restoringDocuments -= 1;
   }
+  await activeLoad;
 }
 
-async function restoreSavedDocuments(
+function restoreSavedDocuments(
   workspaceRoot: string,
   hostProfileId: string | null,
 ): Promise<void> {
   const saved = readSavedDocuments(workspaceRoot, hostProfileId);
-  useDocumentStore.setState({ openItems: [], activeId: null });
+  fileLoads.clear();
   if (!saved || !Array.isArray(saved.openItems) || saved.openItems.length === 0) {
-    useDocumentStore.getState().openWelcome();
-    return;
+    useDocumentStore.setState({ openItems: [welcomeItem()], activeId: "welcome" });
+    return Promise.resolve();
   }
 
-  const restoredIds: string[] = [];
+  const openItems: OpenItem[] = [];
+  const restoredIds: Array<string | undefined> = [];
   for (const item of saved.openItems) {
+    let restored: OpenItem | undefined;
     if (item?.kind === "welcome") {
-      useDocumentStore.getState().openWelcome({ activate: false });
-      restoredIds.push("welcome");
+      restored = welcomeItem();
     } else if (item?.kind === "file" && typeof item.path === "string") {
-      await useDocumentStore.getState().openFile({
-        path: item.path,
-        workspaceRoot,
-        activate: false,
-      });
-      const restored = findOpenFile(useDocumentStore.getState().openItems, item.path);
-      if (restored) {
-        if (item.mdViewMode === "raw") {
-          useDocumentStore.getState().setMdViewMode(restored.id, "raw");
-        }
-        restoredIds.push(restored.id);
-      }
+      restored = fileItem(item.path, workspaceRoot);
+      restored.mdViewMode = item.mdViewMode === "raw" ? "raw" : "rendered";
     } else if (
       item?.kind === "diff" &&
       typeof item.repoRoot === "string" &&
       typeof item.base === "string" &&
-      (typeof item.head === "string") &&
+      typeof item.head === "string" &&
       Array.isArray(item.files)
     ) {
-      useDocumentStore.getState().openDiff(item, { activate: false });
-      restoredIds.push(diffItemId(item));
+      if (item.head === "worktree") invalidateWorktreeDiffCache(item.repoRoot, item.base);
+      restored = diffItem(item);
+    }
+    restoredIds.push(restored?.id);
+    if (restored && !openItems.some((existing) => existing.id === restored.id)) {
+      openItems.push(restored);
     }
   }
-
-  const activeId = restoredIds[saved.activeIndex] ?? restoredIds.at(-1);
-  if (activeId) useDocumentStore.getState().setActive(activeId);
+  if (openItems.length === 0) openItems.push(welcomeItem());
+  const activeId = restoredIds[saved.activeIndex] ?? openItems.at(-1)!.id;
+  // Restore the tab strip and selection in one update. Only the selected file
+  // is read; selecting another deferred tab starts its read on demand.
+  useDocumentStore.setState({ openItems, activeId });
+  return ensureFileLoaded(activeId);
 }
 
 export type OpenItem =
@@ -227,6 +256,8 @@ export type OpenItem =
       language: string;
       isMarkdown: boolean;
       content: string;
+      /** Restored inactive tabs carry metadata until selected. */
+      loadState?: "deferred" | "loading" | "loaded";
       truncated: boolean;
       size: number;
       mdViewMode: MdViewMode;
@@ -316,6 +347,87 @@ function diffItemId(payload: DiffOpenPayload): string {
   return base;
 }
 
+function fileItem(path: string, workspaceRoot: string | null): Extract<OpenItem, { kind: "file" }> {
+  const normalizedPath = normalizePathKey(path);
+  const title = basename(normalizedPath);
+  return {
+    id: fileItemId(normalizedPath),
+    kind: "file",
+    path: normalizedPath,
+    title,
+    relativePath: workspaceRoot ? relativeToRoot(workspaceRoot, normalizedPath) || title : normalizedPath,
+    language: languageFromPath(normalizedPath),
+    isMarkdown: isMarkdownPath(normalizedPath),
+    content: "",
+    loadState: "deferred",
+    truncated: false,
+    size: 0,
+    mdViewMode: "rendered",
+  };
+}
+
+function diffItem(payload: DiffOpenPayload): Extract<OpenItem, { kind: "diff" }> {
+  const preferred = payload.activeFilePath && payload.files.some((f) => f.path === payload.activeFilePath)
+    ? payload.activeFilePath
+    : (payload.files[0]?.path ?? null);
+  return {
+    id: diffItemId(payload),
+    kind: "diff",
+    title: payload.title,
+    repoRoot: payload.repoRoot,
+    base: payload.base,
+    head: payload.head,
+    files: payload.files,
+    activeFilePath: preferred,
+    branch: payload.branch ?? null,
+    hideFileList: payload.hideFileList === true,
+  };
+}
+
+function ensureFileLoaded(id: string): Promise<void> {
+  const file = useDocumentStore.getState().openItems.find((item) => item.id === id);
+  if (file?.kind !== "file") return Promise.resolve();
+  const existing = fileLoads.get(id);
+  if (existing) return existing.promise;
+  if (file.loadState !== "deferred") return Promise.resolve();
+
+  const request = { promise: Promise.resolve() };
+  request.promise = Promise.resolve().then(async () => {
+    // The user may have switched views before this queued read even started.
+    if (fileLoads.get(id) !== request) return;
+    try {
+      const result = await window.anchor.workspace.readText(file.path);
+      if (fileLoads.get(id) !== request) return;
+      useDocumentStore.setState((state) => ({
+        openItems: state.openItems.map((item) =>
+          item.id === id && item.kind === "file"
+            ? { ...item, content: result.text, size: result.size, truncated: result.truncated, loadState: "loaded", error: undefined }
+            : item,
+        ),
+      }));
+    } catch (err) {
+      if (fileLoads.get(id) !== request) return;
+      const error = formatError(err);
+      useDocumentStore.setState((state) => ({
+        openItems: state.openItems.map((item) =>
+          item.id === id && item.kind === "file"
+            ? { ...item, content: "", loadState: "loaded", error }
+            : item,
+        ),
+      }));
+    } finally {
+      if (fileLoads.get(id) === request) fileLoads.delete(id);
+    }
+  });
+  fileLoads.set(id, request);
+  useDocumentStore.setState((state) => ({
+    openItems: state.openItems.map((item) => item.id === id && item.kind === "file"
+      ? { ...item, loadState: "loading" }
+      : item),
+  }));
+  return request.promise;
+}
+
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   openItems: [welcomeItem()],
   activeId: "welcome",
@@ -376,93 +488,34 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             : item,
         ),
       }));
+      await ensureFileLoaded(existing.id);
       return;
     }
 
-    const title = basename(normalizedPath);
-    const relativePath = workspaceRoot
-      ? relativeToRoot(workspaceRoot, normalizedPath) || title
-      : normalizedPath;
-    const language = languageFromPath(normalizedPath);
-    const isMarkdown = isMarkdownPath(normalizedPath);
-
     const loading: OpenItem = {
-      id,
-      kind: "file",
-      path: normalizedPath,
-      title,
-      relativePath,
-      language,
-      isMarkdown,
-      content: "",
-      truncated: false,
-      size: 0,
-      mdViewMode: isMarkdown && nextHighlight ? "raw" : "rendered",
+      ...fileItem(normalizedPath, workspaceRoot),
+      mdViewMode: nextHighlight && isMarkdownPath(normalizedPath) ? "raw" : existing?.mdViewMode ?? "rendered",
       revealLine,
       focusCommentId: focusCommentId ?? null,
-      revealNonce: 1,
+      revealNonce: (existing?.revealNonce ?? 0) + 1,
       searchHighlight: nextHighlight ?? null,
     };
-
-    set((s) => {
-      const without = s.openItems.filter((i) => i.id !== id);
-      return {
-        openItems: [...without, loading],
-        activeId: activate ? id : s.activeId,
-      };
-    });
-
-    try {
-      const result = await window.anchor.workspace.readText(normalizedPath);
-      set((s) => ({
-        openItems: s.openItems.map((item) =>
-          item.id === id && item.kind === "file"
-            ? {
-                ...item,
-                content: result.text,
-                size: result.size,
-                truncated: result.truncated,
-                error: undefined,
-                // MD annotations: prefer raw when opening for comment workflow later
-                mdViewMode: item.isMarkdown ? "rendered" : item.mdViewMode,
-              }
-            : item,
-        ),
-      }));
-    } catch (err) {
-      const message = formatError(err);
-      set((s) => ({
-        openItems: s.openItems.map((item) =>
-          item.id === id && item.kind === "file"
-            ? { ...item, content: "", error: message }
-            : item,
-        ),
-      }));
-    }
+    fileLoads.delete(id);
+    set((s) => ({
+      openItems: existing
+        ? s.openItems.map((item) => item.id === id ? loading : item)
+        : [...s.openItems, loading],
+      activeId: activate ? id : s.activeId,
+    }));
+    await ensureFileLoaded(id);
   },
 
   openDiff: (payload, opts) => {
     if (payload.head === "worktree") {
       invalidateWorktreeDiffCache(payload.repoRoot, payload.base);
     }
-    const id = diffItemId(payload);
-    const preferred =
-      payload.activeFilePath &&
-      payload.files.some((f) => f.path === payload.activeFilePath)
-        ? payload.activeFilePath
-        : (payload.files[0]?.path ?? null);
-    const item: OpenItem = {
-      id,
-      kind: "diff",
-      title: payload.title,
-      repoRoot: payload.repoRoot,
-      base: payload.base,
-      head: payload.head,
-      files: payload.files,
-      activeFilePath: preferred,
-      branch: payload.branch ?? null,
-      hideFileList: payload.hideFileList === true,
-    };
+    const item = diffItem(payload);
+    const id = item.id;
     set((s) => {
       const without = s.openItems.filter((i) => i.id !== id);
       return {
@@ -582,15 +635,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   updateFileContent: (path, content) => {
     const existing = findOpenFile(get().openItems, path);
     if (!existing) return;
+    fileLoads.delete(existing.id);
     set((s) => ({
       openItems: s.openItems.map((item) =>
         item.id === existing.id && item.kind === "file"
-          ? { ...item, content }
+          ? { ...item, content, loadState: "loaded" }
           : item,
       ),
     }));
   },
 }));
+
+// Selection can change through tab clicks, close/reorder, or comment jumps.
+// Handle every path here instead of requiring each caller to remember lazy I/O.
+useDocumentStore.subscribe((state) => {
+  for (const id of fileLoads.keys()) {
+    if (!state.openItems.some((item) => item.id === id && item.kind === "file")) fileLoads.delete(id);
+  }
+  const selected = state.openItems.find((item) => item.id === state.activeId);
+  if (selected?.kind === "file" && selected.loadState === "deferred") {
+    void ensureFileLoaded(selected.id);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Auto-save: persist tab changes (close all, close tab, reorder, open) shortly

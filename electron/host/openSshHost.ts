@@ -5,12 +5,16 @@ import { StringDecoder } from "node:string_decoder";
 import { spawnLocalPty } from "./localPty.js";
 import { HELPER_SCRIPT, OpenSshHelperClient } from "./openSshHelper.js";
 import { scheduleSshCommand } from "./openSshScheduler.js";
+import { OpenSshSearchRunner } from "./sshSearchRunner.js";
+import { WSL_SEARCH_HELPER_PY } from "./wslSearchTools.js";
 import { HostError } from "./types.js";
+import { boundedReadCommand, decodeFilePrefix, fileReadLimit } from "./fileRead.js";
 import type {
   DirEntry,
   HostSession,
   PtyHandle,
   PtySpawnOptions,
+  ReadFileOptions,
   RunOptions,
   RunResult,
   StatResult,
@@ -63,6 +67,7 @@ export class OpenSshHostSession implements HostSession {
   private helperStarting: Promise<OpenSshHelperClient | null> | null = null;
   private helperStartFailures = 0;
   private helperDisabled = false;
+  private searchRunner: OpenSshSearchRunner | null = null;
 
   constructor(opts: OpenSshHostOptions) {
     if (!opts.configHost || opts.configHost.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(opts.configHost)) {
@@ -257,6 +262,27 @@ export class OpenSshHostSession implements HostSession {
     });
   }
 
+  /** Reuse a strictly authenticated session for cancellable read-only searches. */
+  runSearch(cwd: string, command: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
+    this.assertActive();
+    this.searchRunner ??= new OpenSshSearchRunner({
+      alias: this.configHost,
+      spawn: () => {
+        const script = `command -v python3 >/dev/null 2>&1 || exit 98; exec python3 -u -c ${shellQuote(WSL_SEARCH_HELPER_PY)}`;
+        return spawn("ssh", this.sshArgs(false, `bash -c ${shellQuote(script)}`, [
+          "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+        ]), { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      },
+      fallback: (root, cmd, argv, options) => this.run(root, cmd, argv, options),
+      connectionError: (stderr) => connectionError(this.configHost, stderr),
+    });
+    return this.searchRunner.run(cwd, command, args, opts);
+  }
+
+  disposeSearchHelper(): void {
+    this.searchRunner?.disposeHelper();
+  }
+
   private async waitForReadRetry(attempt: number): Promise<void> {
     this.assertActive();
     await new Promise<void>((resolve, reject) => {
@@ -380,8 +406,13 @@ export class OpenSshHostSession implements HostSession {
     return result.stdout;
   }
 
-  async readFile(filePath: string): Promise<string> {
-    return this.fileCommand(`exec cat -- ${remotePath(filePath)}`, `Cannot read file: ${filePath}`, { retryRead: true });
+  async readFile(filePath: string, options?: ReadFileOptions): Promise<string> {
+    const limit = fileReadLimit(options);
+    const command = limit === undefined
+      ? `exec cat -- ${remotePath(filePath)}`
+      : boundedReadCommand(remotePath(filePath), limit);
+    const output = await this.fileCommand(command, `Cannot read file: ${filePath}`, { retryRead: true });
+    return limit === undefined ? output : decodeFilePrefix(Buffer.from(output, "base64"), limit);
   }
 
   async writeFile(filePath: string, data: string): Promise<void> {
@@ -523,6 +554,8 @@ export class OpenSshHostSession implements HostSession {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.shutdown.abort();
+    this.searchRunner?.dispose();
+    this.searchRunner = null;
     this.workspaceRoot = null;
     const runs = [...this.runs];
     for (const run of runs) run.stop();

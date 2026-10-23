@@ -48,12 +48,13 @@ export class ReviewFacade {
 
   async readFile(path: string) {
     const safePath = this.workspace.safePath(path);
-    const stat = await this.hosts.session.stat(safePath);
+    const host = this.hosts.session;
+    const stat = await host.stat(safePath);
     if (!stat.isFile) throw new HostError("failed", `Not a file: ${safePath}`);
-    const text = await this.hosts.session.readFile(safePath);
+    const text = await host.readFile(safePath, { maxBytes: MAX_READ_BYTES });
     return {
       path: safePath,
-      text: text.slice(0, MAX_READ_BYTES),
+      text,
       size: stat.size,
       truncated: stat.size > MAX_READ_BYTES,
     };

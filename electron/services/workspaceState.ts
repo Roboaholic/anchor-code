@@ -4,6 +4,7 @@ import path from "node:path";
 import { parse, stringify } from "yaml";
 import { hostJoin } from "../host/paths.js";
 import type { HostKind, HostSession } from "../host/types.js";
+import { createCoalescedWriter } from "./coalescedWriter.js";
 
 export const WORKSPACE_DEFINITION_SEGMENTS = [".anchor-code", "workspace.yaml"] as const;
 export const WORKSPACE_INSTANCES_FILE = "workspace-instances.yaml";
@@ -140,6 +141,19 @@ let liveWorkspaceState: WorkspaceInstancesState = {
   activeWorkspaceId: null,
   openWorkspaces: [],
 };
+
+const workspaceWriter = createCoalescedWriter(async (snapshot: {
+  file: string;
+  state: WorkspaceInstancesState;
+}) => {
+  await fs.mkdir(path.dirname(snapshot.file), { recursive: true });
+  // A serialized atomic replacement cannot leave half a YAML document after quit.
+  const temporary = `${snapshot.file}.tmp`;
+  await fs.writeFile(temporary, stringify(snapshot.state), "utf8");
+  await fs.rename(temporary, snapshot.file);
+});
+
+export const flushWorkspaceInstances = (): Promise<void> => workspaceWriter.flush();
 
 export function getLiveWorkspaceInstances(): WorkspaceInstancesState {
   return {
@@ -408,6 +422,20 @@ export async function loadWorkspaceInstances(): Promise<WorkspaceInstancesState>
 export async function saveWorkspaceInstances(
   state: WorkspaceInstancesState,
 ): Promise<WorkspaceInstancesState> {
+  const previous = liveWorkspaceState;
+  const { normalized, persisted } = stageWorkspaceInstances(state);
+  try {
+    await persisted;
+  } catch (error) {
+    // Explicit open/close writes still report failure without discarding a
+    // newer in-memory transition that may already have superseded this one.
+    if (liveWorkspaceState === normalized) liveWorkspaceState = previous;
+    throw error;
+  }
+  return normalized;
+}
+
+function stageWorkspaceInstances(state: WorkspaceInstancesState) {
   const normalized: WorkspaceInstancesState = {
     version: 1,
     activeWorkspaceId: state.activeWorkspaceId,
@@ -416,16 +444,13 @@ export async function saveWorkspaceInstances(
       foreground: item.id === state.activeWorkspaceId,
     })),
   };
-  const file = runtimePath();
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, stringify(normalized), "utf8");
   liveWorkspaceState = normalized;
-  return normalized;
+  return { normalized, persisted: workspaceWriter.enqueue({ file: runtimePath(), state: normalized }) };
 }
 
-export async function activateWorkspaceInstance(
+export function activateWorkspaceInstance(
   id: WorkspaceId,
-): Promise<WorkspaceInstance> {
+): WorkspaceInstance {
   const current = liveWorkspaceState.openWorkspaces.find((item) => item.id === id);
   if (!current) throw new Error(`Workspace instance not found: ${id}`);
   const updated = {
@@ -433,12 +458,15 @@ export async function activateWorkspaceInstance(
     lastActiveAt: new Date().toISOString(),
     foreground: true,
   };
-  await saveWorkspaceInstances({
+  const { persisted } = stageWorkspaceInstances({
     version: 1,
     activeWorkspaceId: id,
     openWorkspaces: liveWorkspaceState.openWorkspaces.map((item) =>
       item.id === id ? updated : item,
     ),
+  });
+  void persisted.catch((error: unknown) => {
+    console.error("[workspace] failed to persist active workspace:", error);
   });
   return updated;
 }

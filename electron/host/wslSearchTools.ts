@@ -36,18 +36,49 @@ exec "$@"
  *        {"id":"r1","ev":"exit","code":0}
  * Each run gets its own session/process group; cancel kills the group.
  */
-export const WSL_SEARCH_HELPER_PY = `import codecs, json, os, signal, subprocess, sys, threading
+export const WSL_SEARCH_HELPER_PY = `import codecs, json, os, signal, subprocess, sys, threading, time
 lock = threading.Lock()
+state_lock = threading.Lock()
 procs = {}
+workers = set()
+cancelled = set()
+kill_timers = {}
+shutting_down = False
 def emit(obj):
     line = json.dumps(obj, ensure_ascii=False) + "\\n"
     with lock:
-        sys.stdout.write(line)
-        sys.stdout.flush()
+        try:
+            sys.stdout.buffer.write(line.encode("utf-8"))
+            sys.stdout.buffer.flush()
+        except (BrokenPipeError, OSError):
+            pass
+def kill_group(rid, sig):
+    with state_lock:
+        p = procs.get(rid)
+        if p is None:
+            return
+        try:
+            os.killpg(p.pid, sig)
+        except OSError:
+            pass
+def cancel(rid):
+    with state_lock:
+        if rid not in procs:
+            return
+        cancelled.add(rid)
+        if rid not in kill_timers:
+            timer = threading.Timer(0.25, kill_group, args=(rid, signal.SIGKILL))
+            timer.daemon = True
+            kill_timers[rid] = timer
+            timer.start()
+    kill_group(rid, signal.SIGTERM)
 def pump(rid, stream, ev):
     dec = codecs.getincrementaldecoder("utf-8")("replace")
     while True:
-        chunk = os.read(stream.fileno(), 65536)
+        try:
+            chunk = os.read(stream.fileno(), 65536)
+        except OSError:
+            break
         if not chunk:
             break
         text = dec.decode(chunk)
@@ -58,57 +89,82 @@ def pump(rid, stream, ev):
         emit({"id": rid, "ev": ev, "data": tail})
 def run(msg):
     rid = msg["id"]
-    raw_in = msg.get("stdin")
     try:
-        p = subprocess.Popen([msg["cmd"]] + list(msg.get("args") or []), cwd=msg.get("cwd") or "/",
-            stdin=subprocess.PIPE if raw_in is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-    except OSError as e:
-        emit({"id": rid, "ev": "err", "data": str(e)})
-        emit({"id": rid, "ev": "exit", "code": 127})
-        return
-    if raw_in is not None and p.stdin is not None:
+        with state_lock:
+            stopped = shutting_down or rid in cancelled
+        if stopped:
+            emit({"id": rid, "ev": "exit", "code": 143})
+            return
+        raw_in = msg.get("stdin")
         try:
-            p.stdin.write(raw_in.encode("utf-8") if isinstance(raw_in, str) else raw_in)
-        except OSError:
-            pass
-        try:
-            p.stdin.close()
-        except OSError:
-            pass
-    procs[rid] = p
-    t1 = threading.Thread(target=pump, args=(rid, p.stdout, "out"), daemon=True)
-    t2 = threading.Thread(target=pump, args=(rid, p.stderr, "err"), daemon=True)
-    t1.start(); t2.start()
-    code = p.wait(); t1.join(); t2.join()
-    procs.pop(rid, None)
-    emit({"id": rid, "ev": "exit", "code": code if code >= 0 else 128 - code})
-def cancel(rid):
-    p = procs.get(rid)
-    if p is None:
-        return
-    try:
-        os.killpg(p.pid, signal.SIGTERM)
-    except OSError:
-        pass
+            cwd = msg.get("cwd") or "/"
+            if cwd == "~" or cwd.startswith("~/"):
+                cwd = os.path.expanduser(cwd)
+            argv = [value.encode("utf-8", "surrogateescape") for value in [msg["cmd"]] + list(msg.get("args") or [])]
+            p = subprocess.Popen(argv, cwd=cwd.encode("utf-8", "surrogateescape"),
+                stdin=subprocess.PIPE if raw_in is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        except OSError as e:
+            emit({"id": rid, "ev": "err", "data": str(e)})
+            emit({"id": rid, "ev": "exit", "code": 127})
+            return
+        with state_lock:
+            procs[rid] = p
+            stopped = shutting_down or rid in cancelled
+        if stopped:
+            kill_group(rid, signal.SIGKILL)
+        t1 = threading.Thread(target=pump, args=(rid, p.stdout, "out"), daemon=True)
+        t2 = threading.Thread(target=pump, args=(rid, p.stderr, "err"), daemon=True)
+        t1.start(); t2.start()
+        if raw_in is not None and p.stdin is not None:
+            try:
+                p.stdin.write(raw_in.encode("utf-8") if isinstance(raw_in, str) else raw_in)
+                p.stdin.close()
+            except OSError:
+                pass
+        code = p.wait(); t1.join(); t2.join()
+        emit({"id": rid, "ev": "exit", "code": code if code >= 0 else 128 - code})
+    finally:
+        with state_lock:
+            procs.pop(rid, None)
+            cancelled.discard(rid)
+            timer = kill_timers.pop(rid, None)
+            if timer is not None:
+                timer.cancel()
+            workers.discard(threading.current_thread())
+def quit_helper(*_):
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, quit_helper)
+signal.signal(signal.SIGHUP, quit_helper)
 emit({"ev": "ready"})
-for raw in sys.stdin:
-    raw = raw.strip()
-    if not raw:
-        continue
-    try:
-        msg = json.loads(raw)
-    except ValueError:
-        continue
-    if msg.get("op") == "run":
-        threading.Thread(target=run, args=(msg,), daemon=True).start()
-    elif msg.get("op") == "cancel":
-        cancel(msg.get("id"))
-for p in list(procs.values()):
-    try:
-        os.killpg(p.pid, signal.SIGTERM)
-    except OSError:
-        pass
+try:
+    for raw in sys.stdin.buffer:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            continue
+        if msg.get("op") == "run":
+            rid = msg["id"]
+            worker = threading.Thread(target=run, args=(msg,), daemon=True)
+            with state_lock:
+                procs[rid] = None
+                workers.add(worker)
+            worker.start()
+        elif msg.get("op") == "cancel":
+            cancel(msg.get("id"))
+finally:
+    with state_lock:
+        shutting_down = True
+        active_ids = list(procs)
+        active_workers = list(workers)
+    for rid in active_ids:
+        cancel(rid)
+    deadline = time.monotonic() + 1
+    for worker in active_workers:
+        worker.join(max(0, deadline - time.monotonic()))
 `;
 
 export interface WslSearchTools {
@@ -227,13 +283,18 @@ export class WslSearchHelperClient {
   private readonly dec = new StringDecoder("utf8");
   private readonly pending = new Map<string, PendingRun>();
   private readyResolve!: () => void;
+  private readyReject!: (error: Error) => void;
   readonly ready: Promise<void>;
   alive = true;
 
   constructor(private readonly proc: HelperProcess) {
-    this.ready = new Promise((res) => {
-      this.readyResolve = res;
+    this.ready = new Promise((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
     });
+    // Some users start requests directly; readiness failure still belongs to
+    // awaiters without becoming an unhandled rejection for those callers.
+    void this.ready.catch(() => undefined);
     proc.stdout?.on("data", (chunk) => this.onData(chunk));
     const die = () => this.die();
     proc.on("exit", die);
@@ -243,6 +304,7 @@ export class WslSearchHelperClient {
   private die(): void {
     if (!this.alive) return;
     this.alive = false;
+    this.readyReject(new HostError("disconnected", "Search helper exited before readiness"));
     for (const p of this.pending.values()) {
       p.settle(new HostError("failed", "WSL search helper exited"));
     }
@@ -259,7 +321,8 @@ export class WslSearchHelperClient {
   }
 
   private send(obj: unknown): void {
-    this.proc.stdin?.write(`${JSON.stringify(obj)}\n`);
+    if (!this.proc.stdin) throw new HostError("disconnected", "Search helper stdin is closed");
+    this.proc.stdin.write(`${JSON.stringify(obj)}\n`);
   }
 
   private onData(chunk: Buffer): void {
@@ -288,10 +351,18 @@ export class WslSearchHelperClient {
         } catch {
           // ignore
         }
-        if (p.opts?.earlyExit?.(p.stdout, p.stderr)) {
+        // An output observer can synchronously abort its own request.
+        if (this.pending.get(msg.id) !== p) continue;
+        try {
+          if (p.opts?.earlyExit?.(p.stdout, p.stderr)) {
+            this.cancel(msg.id);
+            this.pending.delete(msg.id);
+            p.settle({ stdout: p.stdout, stderr: p.stderr, code: 0, earlyExit: true });
+          }
+        } catch (error) {
           this.cancel(msg.id);
           this.pending.delete(msg.id);
-          p.settle({ stdout: p.stdout, stderr: p.stderr, code: 0, earlyExit: true });
+          p.settle(error instanceof Error ? error : new Error(String(error)));
         }
       } else if (msg.ev === "err" && typeof msg.data === "string") {
         p.stderr += msg.data;
@@ -348,6 +419,7 @@ export class WslSearchHelperClient {
       };
       this.pending.set(id, entry);
       signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
       const timeoutMs = opts?.timeoutMs ?? 45_000;
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
@@ -367,7 +439,12 @@ export class WslSearchHelperClient {
         stdin?: string;
       } = { op: "run", id, cwd, cmd: command, args };
       if (opts?.stdin != null) payload.stdin = opts.stdin;
-      this.send(payload);
+      try {
+        this.send(payload);
+      } catch (error) {
+        this.pending.delete(id);
+        entry.settle(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 }

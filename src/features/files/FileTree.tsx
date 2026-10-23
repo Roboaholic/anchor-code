@@ -47,6 +47,7 @@ import {
   type SearchHit,
   type SearchStatus,
 } from "./searchResults";
+import { planFileChanges } from "./fileChangeActions";
 import "./FileTree.css";
 
 /** Results page size; "Show more" fetches the next page via skipHits. */
@@ -98,6 +99,7 @@ export function FileTree() {
   const copyNode = useWorkspaceStore((s) => s.copyNode);
   const createEntry = useWorkspaceStore((s) => s.createEntry);
   const hostKind = useWorkspaceStore((s) => s.hostKind);
+  const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
 
   const [query, setQuery] = useState("");
   const [include, setInclude] = useState("");
@@ -164,50 +166,44 @@ export function FileTree() {
     };
   }, [treeMenu]);
 
-  // ── auto-refresh: start/stop the main-process watcher on workspace open ──
+  const watchIgnoredDirs = useMemo(
+    () => respectIgnore
+      ? (defaultExcludes ?? [".git", "node_modules"]).filter((name) => name === ".git" || name === "node_modules")
+      : [],
+    [respectIgnore, defaultExcludes],
+  );
+
+  // Only prune trees that are hidden in the explorer AND excluded from the
+  // filename index. Visible generated directories must still update normally.
   useEffect(() => {
     if (!workspaceRoot) return;
-    void window.anchor?.workspace?.watchStart?.(workspaceRoot).catch(() => {});
+    void window.anchor?.workspace?.watchStart?.(workspaceRoot, { ignoredDirNames: watchIgnoredDirs }).catch(() => {});
     return () => {
       void window.anchor?.workspace?.watchStop?.().catch(() => {});
     };
-  }, [workspaceRoot]);
+  }, [workspaceRoot, hostProfileId, watchIgnoredDirs]);
 
-  // ── auto-refresh: react to fs.watch change events (local hosts) ──
+  // The main process attaches rename metadata in a bounded batch. Content
+  // events remain available to annotation subscribers without refreshing the
+  // tree or filename index, and without an IPC stat request per changed file.
   useEffect(() => {
     if (!workspaceRoot) return;
-    const off =
-      window.anchor?.workspace?.onFileChange?.(({ dir, changes }) => {
-        void refreshDir(dir);
-        if (changes && changes.length > 0) {
-          void (async () => {
-            const deltas: { rel: string; exists: boolean }[] = [];
-            for (const c of changes) {
-              let exists = false;
-              try {
-                const st = await window.anchor.workspace.stat(c.path);
-                exists = st.isFile;
-              } catch {
-                exists = false;
-              }
-              // Directories: ignore for the file index (listing is files only).
-              if (exists || c.eventType === "rename") {
-                deltas.push({ rel: c.rel, exists });
-              }
-            }
-            if (deltas.length) applyFileIndexDelta(workspaceRoot, deltas);
-            else {
-              invalidateFileIndexCache(workspaceRoot);
-              warmFileIndexCache(workspaceRoot);
-            }
-          })();
-        } else {
-          invalidateFileIndexCache(workspaceRoot);
-          warmFileIndexCache(workspaceRoot);
-        }
-      }) ?? (() => undefined);
+    const off = window.anchor?.workspace?.onFileChange?.((event) => {
+      const current = useWorkspaceStore.getState();
+      if (current.workspaceRoot !== workspaceRoot || current.hostProfileId !== hostProfileId) return;
+      if (event.root && event.root !== workspaceRoot) return;
+      if (event.hostProfileId && event.hostProfileId !== hostProfileId) return;
+      const actions = planFileChanges(event);
+      if (actions.refreshTree) void refreshDir(event.dir);
+      if (actions.rebuildIndex) {
+        invalidateFileIndexCache(workspaceRoot);
+        warmFileIndexCache(workspaceRoot);
+      } else if (actions.deltas.length) {
+        applyFileIndexDelta(workspaceRoot, actions.deltas);
+      }
+    }) ?? (() => undefined);
     return off;
-  }, [workspaceRoot, refreshDir]);
+  }, [workspaceRoot, hostProfileId, refreshDir]);
 
   // ── auto-refresh: poll expanded dirs for WSL/SSH (fs.watch unusable there) ──
   useEffect(() => {
@@ -682,6 +678,8 @@ export function FileTree() {
     excludeRegex,
     defaultExcludes,
     workspaceRoot,
+    hostProfileId,
+    hostKind,
     runSearch,
     resetResults,
     stopActiveSearch,
@@ -896,6 +894,8 @@ export function FileTree() {
   const qTrim = query.trim();
   const hasSearchQuery =
     qTrim.length >= 1 && (useRegex || qTrim.length >= 2);
+  // Include the debounce window so typing a valid query never looks finished.
+  const searchPending = hasSearchQuery && (searching || searchStatus === null);
 
   const resultsMeta = searchResultsSummary({
     searching,
@@ -1292,6 +1292,9 @@ export function FileTree() {
                 />
                 <span className="files-section__label">RESULTS</span>
                 <span className="files-section__meta files-search-summary" role="status">
+                  {searchPending ? (
+                    <Icon name="loading" className="files-search-summary__spinner" />
+                  ) : null}
                   <span className="files-search-summary__text">{resultsMeta}</span>
                   {searchSource ? (
                     <span className="files-search-summary__engine" aria-label={`Search engine: ${searchSource}`}>
@@ -1361,6 +1364,8 @@ export function FileTree() {
                   className="files-search-results__virtual"
                   style={{ height: searchRows.length * SEARCH_ROW_HEIGHT }}
                   role="list"
+                  aria-label="Search results"
+                  aria-busy={searchPending}
                 >
                   {searchRows
                     .slice(virtualWindow.start, virtualWindow.end)

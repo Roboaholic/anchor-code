@@ -1,14 +1,15 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { joinPath } from "@/core/workspace/paths";
-import { rankFuzzyPaths, type FuzzyMatch } from "@/core/workspace/fuzzy";
+import type { FuzzyMatch } from "@/core/workspace/fuzzy";
+import { FuzzySearchClient } from "./fuzzySearchClient";
+import { FileIndexCache, type FileIndexRequest, type CachedFileIndex } from "./fileIndexCache";
 import { Icon } from "@/shared/Icon";
 import { formatError } from "@/shared/formatError";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
@@ -20,134 +21,72 @@ import { useShellStore, type PaletteMode } from "./shellStore";
 
 /** Keep in sync with electron/services/fileIndex.ts DEFAULT_MAX_FILES. */
 const FILE_INDEX_MAX_FILES = 200_000;
-const FILE_INDEX_CACHE_TTL_MS = 5 * 60_000;
+const EMPTY_FILES: string[] = [];
+const fileIndexCache = new FileIndexCache();
+const deltaWarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-type IndexCache = {
-  root: string;
-  files: string[];
-  truncated: boolean;
-  source?: "git" | "walk" | "multi-git";
-  at: number;
-};
-
-const fileIndexCache = new Map<string, IndexCache>();
-/** In-flight warm so open-workspace + first Ctrl+P share one findFiles. */
-const fileIndexInflight = new Map<string, Promise<IndexCache>>();
-
-function findFilesArgs(root: string, extra?: { query?: string }) {
-  const st = loadSearchSettings(root);
-  return {
-    root,
-    maxFiles: FILE_INDEX_MAX_FILES,
-    query: extra?.query,
-    respectIgnore: st.respectIgnore,
-    defaultExcludes: st.defaultExcludes ?? undefined,
-  };
+function indexRequest(root: string): FileIndexRequest {
+  const { hostKind, hostProfileId } = useWorkspaceStore.getState();
+  const settings = loadSearchSettings(root);
+  return { root, hostKind, hostProfileId, respectIgnore: settings.respectIgnore,
+    defaultExcludes: settings.defaultExcludes ?? undefined };
 }
 
+function findFilesArgs(request: FileIndexRequest, extra?: { query?: string }) {
+  return { root: request.root, maxFiles: FILE_INDEX_MAX_FILES, query: extra?.query,
+    respectIgnore: request.respectIgnore, defaultExcludes: request.defaultExcludes };
+}
 
-async function loadFileIndex(root: string, force = false): Promise<IndexCache> {
-  const hostKind = useWorkspaceStore.getState().hostKind;
-  // Local can trust the in-memory index (watch deltas keep it fresh).
-  // WSL/SSH always revalidate via IPC so disk-cache fingerprints can run.
-  const trustMemory = hostKind === "local" || hostKind == null;
-  const cached = fileIndexCache.get(root);
-  if (
-    !force &&
-    trustMemory &&
-    cached &&
-    cached.files.length > 0 &&
-    Date.now() - cached.at < FILE_INDEX_CACHE_TTL_MS
-  ) {
-    return cached;
-  }
-
-  // Share one in-flight findFiles between workspace warm and first Ctrl+P.
-  const pending = !force ? fileIndexInflight.get(root) : undefined;
-  if (pending) {
-    try {
-      return await pending;
-    } catch {
-      // fall through to a fresh load
+function loadFileIndex(request: FileIndexRequest): Promise<CachedFileIndex> {
+  return fileIndexCache.load(request, () => {
+    const current = useWorkspaceStore.getState();
+    if (current.hostKind !== request.hostKind || current.hostProfileId !== request.hostProfileId) {
+      throw new Error("Workspace host changed while preparing the file index");
     }
-  }
-
-  const run = (async (): Promise<IndexCache> => {
-    const result = await window.anchor.workspace.findFiles(findFilesArgs(root));
-    const next: IndexCache = {
-      root: result.root,
-      files: result.files,
-      truncated: result.truncated,
-      source: result.source,
-      at: Date.now(),
-    };
-    fileIndexCache.set(root, next);
-    return next;
-  })();
-
-  fileIndexInflight.set(root, run);
-  try {
-    return await run;
-  } finally {
-    if (fileIndexInflight.get(root) === run) fileIndexInflight.delete(root);
-  }
-}
-
-export function invalidateFileIndexCache(root?: string): void {
-  if (root) {
-    fileIndexCache.delete(root);
-    fileIndexInflight.delete(root);
-    return;
-  }
-  fileIndexCache.clear();
-  fileIndexInflight.clear();
-}
-
-/** Path-level add/remove for Local file-watch deltas (avoids full rebuild). */
-export function applyFileIndexDelta(
-  root: string,
-  changes: { rel: string; exists: boolean }[],
-): void {
-  const cached = fileIndexCache.get(root);
-  if (!cached || changes.length === 0) return;
-  const set = new Set(cached.files);
-  let dirty = false;
-  for (const c of changes) {
-    const rel = c.rel.replace(/\\/g, "/").replace(/^\/+/, "");
-    if (!rel || rel.endsWith("/")) continue;
-    // Ignore noise / VCS internals.
-    if (rel.split("/").some((p) => p === "node_modules" || p === ".git")) continue;
-    if (c.exists) {
-      if (!set.has(rel)) {
-        set.add(rel);
-        dirty = true;
-      }
-    } else if (set.delete(rel)) {
-      dirty = true;
-    }
-  }
-  if (!dirty) return;
-  fileIndexCache.set(root, {
-    ...cached,
-    files: [...set].sort((a, b) => a.localeCompare(b)),
-    at: Date.now(),
+    return window.anchor.workspace.findFiles(findFilesArgs(request));
   });
 }
 
-/** Background warm so the first Ctrl+P is not a cold multi-repo scan. */
-export function warmFileIndexCache(root: string | null | undefined): void {
-  if (!root) return;
-  const cached = fileIndexCache.get(root);
-  if (
-    cached &&
-    cached.files.length > 0 &&
-    Date.now() - cached.at < FILE_INDEX_CACHE_TTL_MS
-  ) {
-    return;
+export function invalidateFileIndexCache(root?: string): void {
+  fileIndexCache.invalidate(root);
+  for (const [key, timer] of deltaWarmTimers) {
+    if (!root || key === root) { clearTimeout(timer); deltaWarmTimers.delete(key); }
   }
-  if (fileIndexInflight.has(root)) return;
-  void loadFileIndex(root).catch(() => {
-    // quiet warm — Quick Open will surface errors on demand
+}
+
+/** Removes paths immediately; additions revalidate against authoritative ignore rules. */
+export function applyFileIndexDelta(root: string, changes: { rel: string; exists: boolean }[]): void {
+  const request = indexRequest(root);
+  const cached = fileIndexCache.peek(request);
+  if (!changes.length) return;
+  const indexed = new Set(cached?.files ?? []);
+  const deleted: string[] = [];
+  let added = false;
+  for (const change of changes) {
+    const rel = change.rel.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!rel) continue;
+    if (!change.exists) deleted.push(rel);
+    else if (!indexed.has(rel)) added = true;
+  }
+  fileIndexCache.remove(request, deleted);
+  if (added) {
+    // The renderer does not have the complete .anchorignore/Git ignore rules.
+    fileIndexCache.invalidate(root);
+    const timer = deltaWarmTimers.get(root);
+    if (timer) clearTimeout(timer);
+    deltaWarmTimers.set(root, setTimeout(() => {
+      deltaWarmTimers.delete(root);
+      const current = indexRequest(root);
+      if (current.hostKind === request.hostKind && current.hostProfileId === request.hostProfileId &&
+          useWorkspaceStore.getState().workspaceRoot === root) warmFileIndexCache(root);
+    }, 100));
+  }
+}
+
+/** Background warm and first Ctrl+P share the same host/filter-scoped request. */
+export function warmFileIndexCache(root: string | null | undefined): void {
+  if (root) void loadFileIndex(indexRequest(root)).catch(() => {
+    // Quick Open can still surface errors when the user requests the index.
   });
 }
 
@@ -219,20 +158,35 @@ export function QuickOpenPalette() {
 
 function QuickOpenDialog({ onClose }: { onClose: () => void }) {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
+  const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
+  const hostKind = useWorkspaceStore((s) => s.hostKind);
+  const scope = JSON.stringify([workspaceRoot, hostProfileId, hostKind]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const [query, setQuery] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
+  const [fileState, setFileState] = useState<{ scope: string; files: string[] } | null>(null);
+  const files = fileState?.scope === scope ? fileState.files : EMPTY_FILES;
   const [truncated, setTruncated] = useState(false);
   const [source, setSource] = useState<"git" | "walk" | "multi-git" | null>(
     null,
   );
   const [loading, setLoading] = useState(false);
+  const [indexing, setIndexing] = useState(false);
   const [indexMs, setIndexMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [queryFiles, setQueryFiles] = useState<string[] | null>(null);
+  const [queryResult, setQueryResult] = useState<{ scope: string; query: string; files: string[] } | null>(null);
+  const queryFiles = queryResult?.scope === scope && queryResult.query === query.trim() ? queryResult.files : null;
   const [queryLoading, setQueryLoading] = useState(false);
   const [active, setActive] = useState(0);
+  const [ranked, setRanked] = useState<{ files: string[]; query: string; matches: FuzzyMatch[] } | null>(null);
+  const [ranking, setRanking] = useState(false);
+  const rankerRef = useRef<FuzzySearchClient | null>(null);
+  const rankFiles = queryFiles ?? files;
+  const matches = ranked?.files === rankFiles && ranked.query === query ? ranked.matches : [];
+  const searchBusy = Boolean(workspaceRoot && !error && (
+    indexing || loading || queryLoading || ranking ||
+    ranked?.files !== rankFiles || ranked.query !== query
+  ));
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -240,55 +194,59 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
+    const setFiles = (files: string[]) => setFileState({ scope, files });
     if (!workspaceRoot) {
       setFiles([]);
       setError("Open a workspace first");
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    const request = indexRequest(workspaceRoot);
+    const cached = fileIndexCache.peek(request);
+    const applyIndex = (idx: CachedFileIndex) => {
+      setFiles(idx.files);
+      setTruncated(idx.truncated);
+      setSource(idx.source ?? null);
+    };
+    // Remote caches are immediately usable while the backend revalidates them.
+    if (cached) applyIndex(cached);
+    else { setFiles([]); setTruncated(false); setSource(null); }
+    setLoading(!cached);
+    setIndexing(true);
     setError(null);
     setIndexMs(null);
     const t0 = performance.now();
-    // Always re-fetch when dialog opens if last cache was empty (bad prior index).
-    const force = !fileIndexCache.get(workspaceRoot)?.files.length;
-    void loadFileIndex(workspaceRoot, force)
+    void loadFileIndex(request)
       .then((idx) => {
         if (cancelled) return;
-        setFiles(idx.files);
-        setTruncated(idx.truncated);
-        setSource(idx.source ?? null);
+        applyIndex(idx);
         setIndexMs(Math.round(performance.now() - t0));
       })
       .catch((err) => {
         if (cancelled) return;
         setError(formatError(err));
-        setFiles([]);
+        if (!cached) setFiles([]);
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceRoot]);
+      .finally(() => { if (!cancelled) { setLoading(false); setIndexing(false); } });
+    return () => { cancelled = true; };
+  }, [workspaceRoot, hostProfileId, hostKind, scope]);
 
   useEffect(() => {
     const normalizedQuery = query.trim();
     if (!workspaceRoot || !truncated || !normalizedQuery) {
-      setQueryFiles(null);
+      setQueryResult(null);
       setQueryLoading(false);
       return;
     }
 
-    setQueryFiles(null);
+    setQueryResult(null);
+    setQueryLoading(true);
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      setQueryLoading(true);
       void window.anchor.workspace
-        .findFiles(findFilesArgs(workspaceRoot, { query: normalizedQuery }))
+        .findFiles(findFilesArgs(indexRequest(workspaceRoot), { query: normalizedQuery }))
         .then((result) => {
-          if (!cancelled) setQueryFiles(result.files);
+          if (!cancelled) setQueryResult({ scope, query: normalizedQuery, files: result.files });
         })
         .catch((err) => {
           if (!cancelled) setError(formatError(err));
@@ -302,12 +260,24 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, truncated, workspaceRoot]);
+  }, [query, truncated, workspaceRoot, hostProfileId, hostKind, scope]);
 
-  const matches: FuzzyMatch[] = useMemo(
-    () => rankFuzzyPaths(queryFiles ?? files, query, 80),
-    [files, query, queryFiles],
-  );
+  useEffect(() => {
+    const ranker = new FuzzySearchClient();
+    rankerRef.current = ranker;
+    return () => { ranker.dispose(); rankerRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRanking(true);
+    void rankerRef.current?.search(rankFiles, query, 80).then((next) => {
+      if (cancelled) return;
+      setRanked({ files: rankFiles, query, matches: next });
+      setRanking(false);
+    });
+    return () => { cancelled = true; };
+  }, [rankFiles, query]);
 
   useEffect(() => {
     setActive(0);
@@ -382,25 +352,23 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
       </div>
 
       {error ? <p className="quick-open__status quick-open__status--error">{error}</p> : null}
-      {loading ? (
-        <p className="quick-open__status">Indexing multi-repo workspace…</p>
-      ) : null}
-      {!loading && !error && workspaceRoot ? (
-        <p className="quick-open__status">
-          {query.trim()
+      {!error && workspaceRoot ? (
+        <p className="quick-open__status" role="status">
+          {searchBusy ? <Icon name="loading" className="quick-open__spinner codicon-modifier-spin" /> : null}
+          {loading ? "Indexing workspace…" : query.trim()
             ? `${matches.length} match${matches.length === 1 ? "" : "es"}`
             : `Showing ${matches.length.toLocaleString()} of ${files.length.toLocaleString()} files`}
           {source ? ` · via ${source}` : ""}
           {indexMs != null ? ` · ${indexMs}ms` : ""}
           {truncated && !query.trim() ? " · index truncated" : ""}
-          {queryLoading ? " · searching full index" : ""}
+          {!loading && searchBusy ? " · Searching…" : ""}
           {loadSearchSettings(workspaceRoot).respectIgnore
             ? " · excludes via .anchorignore / workspace defaults"
             : ""}
         </p>
       ) : null}
 
-      <ul className="quick-open__list" role="listbox" ref={listRef}>
+      <ul className="quick-open__list" role="listbox" aria-label="Matching files" aria-busy={searchBusy} ref={listRef}>
         {matches.map((m, i) => {
           const dir =
             m.path.includes("/") || m.path.includes("\\")
@@ -432,7 +400,7 @@ function QuickOpenDialog({ onClose }: { onClose: () => void }) {
             </li>
           );
         })}
-        {!loading && !error && matches.length === 0 && workspaceRoot ? (
+        {!searchBusy && !error && matches.length === 0 && workspaceRoot ? (
           <li className="quick-open__empty">No matching files</li>
         ) : null}
       </ul>

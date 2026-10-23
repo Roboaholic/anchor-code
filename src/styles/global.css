@@ -405,6 +405,9 @@ button:disabled {
 /* ── App chrome (menubar + tool strip, same surface) ── */
 
 .chrome {
+  /* Keep nested menus above workbench resize handles and maximized panels. */
+  position: relative;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;

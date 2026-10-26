@@ -815,6 +815,46 @@ function spawnCapture(
   });
 }
 
+/** WSL only accepts these characters in distro names. */
+const WSL_DISTRO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Decode `wsl.exe -l -q` stdout into distro names.
+ *
+ * wsl.exe normally writes UTF-16LE (often with a BOM), but emits UTF-8 when
+ * `WSL_UTF8=1` is set. Decoding UTF-8 as UTF-16LE turns ASCII pairs into CJK
+ * garbage instead of U+FFFD, so pick the encoding from the bytes (BOM, then
+ * NUL-byte pattern) rather than by trial. Lines that are not valid distro
+ * names (localized "no distributions"/"not installed" messages) are dropped.
+ */
+export function decodeWslDistroList(buf: Buffer): string[] {
+  let text: string;
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    text = buf.subarray(2, buf.length - ((buf.length - 2) % 2)).toString("utf16le");
+  } else if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    text = buf.subarray(3).toString("utf8");
+  } else {
+    let oddNuls = 0;
+    let evenNuls = 0;
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] !== 0) continue;
+      if (i % 2 === 1) oddNuls++;
+      else evenNuls++;
+    }
+    const pairs = Math.floor(buf.length / 2);
+    const utf16 = pairs > 0 && oddNuls >= pairs / 2 && oddNuls > evenNuls;
+    text = utf16
+      ? buf.subarray(0, pairs * 2).toString("utf16le")
+      : buf.toString("utf8");
+  }
+  return text
+    .replace(/^\uFEFF/, "")
+    .replace(/\u0000/g, "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => WSL_DISTRO_NAME.test(s));
+}
+
 /** List installed WSL distros (Windows only). */
 export async function listWslDistros(): Promise<string[]> {
   if (process.platform !== "win32") return [];
@@ -822,7 +862,7 @@ export async function listWslDistros(): Promise<string[]> {
     ? `${process.env.SystemRoot}\\System32\\wsl.exe`
     : "wsl.exe";
   try {
-    const text = await new Promise<string>((resolve, reject) => {
+    return await new Promise<string[]>((resolve, reject) => {
       const child = spawn(wsl, ["-l", "-q"], {
         shell: false,
         windowsHide: true,
@@ -834,23 +874,10 @@ export async function listWslDistros(): Promise<string[]> {
       });
       child.on("error", (err) => reject(err));
       child.on("close", (code) => {
-        if (code !== 0) {
-          resolve("");
-          return;
-        }
-        const buf = Buffer.concat(chunks);
-        // wsl.exe -l emits UTF-16LE on Windows.
-        let decoded = buf.toString("utf16le").replace(/^\uFEFF/, "");
-        if (!decoded.trim() || decoded.includes("\uFFFD")) {
-          decoded = buf.toString("utf8");
-        }
-        resolve(decoded.replace(/\u0000/g, ""));
+        // Non-zero: WSL missing/disabled or no distros installed.
+        resolve(code === 0 ? decodeWslDistroList(Buffer.concat(chunks)) : []);
       });
     });
-    return text
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !/^windows subsystem/i.test(s));
   } catch {
     return [];
   }

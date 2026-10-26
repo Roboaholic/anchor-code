@@ -29,6 +29,9 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const win = isWindowsClient();
   const [profiles, setProfiles] = useState<HostProfile[]>([]);
   const [distros, setDistros] = useState<string[]>([]);
+  // "unavailable" = wsl.exe missing, failed, or reported no installed distros.
+  const [wslStatus, setWslStatus] = useState<"idle" | "checking" | "ready" | "unavailable">("idle");
+  const [wslCheck, setWslCheck] = useState(0);
   const [kind, setKind] = useState<HostKind>(win ? "wsl" : "local");
   const [selectedDistro, setSelectedDistro] = useState<string>("");
   const [browsePath, setBrowsePath] = useState<string>("/");
@@ -165,12 +168,6 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           if (interaction === interactionVersion.current) setSshMode("manual");
           setConfigWarning(`SSH config discovery unavailable: ${formatError(err)}`);
         }
-        if (win) {
-          const d = (await window.anchor?.host?.listWslDistros?.()) ?? [];
-          if (cancelled) return;
-          setDistros(d);
-          if (d[0] && interaction === interactionVersion.current) setSelectedDistro(d[0]);
-        }
       } catch (err) {
         if (!cancelled && interaction === interactionVersion.current) {
           setError(formatError(err));
@@ -183,8 +180,30 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     };
   }, [open, win, loadBrowse]);
 
+  // Detect WSL on its own so a slow SSH config scan never delays the WSL tab.
   useEffect(() => {
-    if (!open || kind !== "wsl" || !win) return;
+    if (!open || !win) return;
+    let cancelled = false;
+    setWslStatus("checking");
+    void (async () => {
+      let list: string[] = [];
+      try {
+        list = (await window.anchor?.host?.listWslDistros?.()) ?? [];
+      } catch {
+        list = [];
+      }
+      if (cancelled) return;
+      setDistros(list);
+      setSelectedDistro((prev) => (prev && list.includes(prev) ? prev : list[0] ?? ""));
+      setWslStatus(list.length > 0 ? "ready" : "unavailable");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, win, wslCheck]);
+
+  useEffect(() => {
+    if (!open || kind !== "wsl" || !win || wslStatus !== "ready") return;
     let cancelled = false;
     void (async () => {
       try {
@@ -202,7 +221,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [selectedDistro, open, kind, win, loadBrowse]);
+  }, [selectedDistro, open, kind, win, wslStatus, loadBrowse]);
 
   // Keep keyboard navigation inside the dialog and restore the launcher's focus.
   useEffect(() => {
@@ -405,7 +424,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const parent = parentPosix(browsePath);
   const connectedProfile = profiles.find((profile) => profile.id === connectedSshProfileId);
   const connectedLabel = connectedProfile?.label ?? (sshMode === "config" ? configAlias : `${sshUsername}@${sshHost}`);
-  const selectingFolder = kind === "wsl" || (kind === "ssh" && !!connectedSshProfileId);
+  const wslReady = kind === "wsl" && win && wslStatus === "ready";
+  const selectingFolder = wslReady || (kind === "ssh" && !!connectedSshProfileId);
   const connectionReady = sshMode === "config"
     ? !!configAlias.trim()
     : !!sshHost.trim() && !!sshUsername.trim();
@@ -594,8 +614,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
 
           {selectingFolder ? (
             <section className="workspace-dialog__folder" aria-labelledby="workspace-folder-title">
-              {kind === "wsl" && win ? (
-                distros.length > 0 ? <div className="field"><span className="field__label" id="workspace-distro-label">Distro</span><Dropdown aria-labelledby="workspace-distro-label" value={selectedDistro} disabled={busy} onChange={setSelectedDistro} options={distros.map((distro) => ({ value: distro, label: distro }))} /></div> : <p className="modal__hint">No distros listed. The default WSL distro will be used.</p>
+              {wslReady ? (
+                <div className="field"><span className="field__label" id="workspace-distro-label">Distro</span><Dropdown aria-labelledby="workspace-distro-label" value={selectedDistro} disabled={busy} onChange={setSelectedDistro} options={distros.map((distro) => ({ value: distro, label: distro }))} /></div>
               ) : null}
               <div>
                 <h3 ref={folderHeadingRef} tabIndex={-1} id="workspace-folder-title" className="workspace-dialog__section-title">Choose a folder</h3>
@@ -621,6 +641,20 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
               </div>
               {pathChanged ? <p className="modal__hint">Press Enter or Go to load this path before opening it.</p> : null}
             </section>
+          ) : kind === "wsl" ? (
+            wslStatus === "unavailable" ? (
+              <section className="workspace-dialog__notice" aria-labelledby="workspace-wsl-missing-title">
+                <Icon name="terminal-linux" />
+                <strong id="workspace-wsl-missing-title">WSL isn't installed or has no distros</strong>
+                <p className="modal__hint">Install WSL and a Linux distro, for example by running <code>wsl --install</code> in PowerShell, then check again.</p>
+                <button type="button" className="btn btn--ghost btn--small" onClick={() => setWslCheck((n) => n + 1)}>Check again</button>
+              </section>
+            ) : (
+              <div className="workspace-dialog__notice" role="status">
+                <Icon name="terminal-linux" />
+                <p className="modal__hint">Looking for WSL distros…</p>
+              </div>
+            )
           ) : kind === "local" ? (
             <div className="workspace-dialog__local">
               <Icon name="folder-opened" />
@@ -633,7 +667,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
 
         <footer className="modal__footer workspace-dialog__footer">
           <div className="workspace-dialog__footer-context" aria-live="polite">
-            {selectingFolder ? <><span>Selected folder</span><strong title={browsePath}>{browsePath}</strong></> : <span>{kind === "ssh" ? (busy ? "Connecting to your host…" : "Next: choose a project folder") : "Select a folder to get started"}</span>}
+            {selectingFolder ? <><span>Selected folder</span><strong title={browsePath}>{browsePath}</strong></> : <span>{kind === "ssh" ? (busy ? "Connecting to your host…" : "Next: choose a project folder") : kind === "wsl" ? (wslStatus === "unavailable" ? "WSL is not available" : "Checking WSL…") : "Select a folder to get started"}</span>}
           </div>
           <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
           {kind === "ssh" && !connectedSshProfileId ? (
@@ -643,7 +677,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           ) : kind === "local" ? (
             <button type="button" className="btn btn--accent" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
           ) : (
-            <button type="button" className="btn btn--accent" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
+            <button type="button" className="btn btn--accent" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged || (kind === "wsl" && !wslReady)} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
           )}
         </footer>
       </div>

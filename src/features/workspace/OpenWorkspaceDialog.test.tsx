@@ -222,6 +222,58 @@ describe("OpenWorkspaceDialog", () => {
       expect(onClose).toHaveBeenCalled();
     });
 
+    it("shows a friendly notice instead of browsing when WSL has no distros", async () => {
+      anchor.host.listWslDistros = vi.fn(async () => []);
+      render(
+        <OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("WSL isn't installed or has no distros")).toBeTruthy();
+      });
+      expect(screen.queryByText(/No distros listed/i)).toBeNull();
+      expect(screen.queryByLabelText("Folder path")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(anchor.host.wslHome).not.toHaveBeenCalled();
+      expect(anchor.host.browseListDir).not.toHaveBeenCalled();
+      expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByText("WSL is not available")).toBeTruthy();
+    });
+
+    it("treats a failing WSL probe as unavailable and can check again", async () => {
+      anchor.host.listWslDistros = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("wsl.exe not found"))
+        .mockResolvedValue(["Debian"]);
+      const user = userEvent.setup();
+      render(
+        <OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+      });
+      expect(screen.queryByText(/wsl\.exe not found/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Check again" }));
+      await waitFor(() => {
+        expect(screen.getByText("repo-a")).toBeTruthy();
+      });
+      expect(anchor.host.wslHome).toHaveBeenCalledWith({ distro: "Debian" });
+      expect(screen.getByText("Distro")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("keeps Open Workspace disabled until WSL detection finishes", async () => {
+      let resolveDistros!: (list: string[]) => void;
+      anchor.host.listWslDistros = vi.fn(() => new Promise<string[]>((resolve) => { resolveDistros = resolve; }));
+      render(
+        <OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />,
+      );
+      expect(screen.getByText("Looking for WSL distros…")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Open Workspace" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(anchor.host.browseListDir).not.toHaveBeenCalled();
+      await act(async () => { resolveDistros(["Ubuntu-24.04"]); });
+      await waitFor(() => expect(screen.getByText("repo-a")).toBeTruthy());
+    });
+
     it("shows browse error from host", async () => {
       anchor.host.browseListDir = vi.fn(async () => {
         throw new Error("UNC path unavailable");
@@ -651,6 +703,39 @@ describe("workspace dialog layout contracts", () => {
       return [declaration.slice(0, colon).trim(), declaration.slice(colon + 1).trim()];
     }));
   }
+
+  it("lets the host cards size the segmented control instead of the 18px toolbar pill", () => {
+    const seg = dialogCss.slice(dialogCss.indexOf("/* Host kind segmented control"));
+    const hostChoice = styleFor(".workspace-dialog .host-choice.anchor-seg", seg);
+    expect(hostChoice.height).toBe("auto");
+    expect(hostChoice["margin-left"]).toBe("0");
+    expect(hostChoice.display).toBe("grid");
+    const card = styleFor(".workspace-dialog .host-choice.anchor-seg .repo-seg__btn", seg);
+    expect(card["min-height"]).toBe("52px");
+    expect(card.height).toBe("auto");
+    // Content after the cards must flow in normal layout, never overlay them.
+    expect(styleFor(".workspace-dialog__content > *")["flex-shrink"]).toBe("0");
+    expect(dialogCss).not.toMatch(/margin-top:\s*-/);
+    expect(dialogCss).not.toMatch(/position:\s*absolute;[^}]*\.workspace-dialog__(folder|connected)/);
+  });
+
+  it("renders the connected SSH summary and folder section as siblings after the host cards", async () => {
+    setWindowsUa(false);
+    const anchor = installAnchor();
+    anchor.host.listSshConfigHosts.mockResolvedValue({ hosts: [{ alias: "devsrv", source: "~/.ssh/config" }], warnings: [] });
+    anchor.host.browseListDir.mockResolvedValue([{ name: "home", type: "dir" }]);
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onOpen={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(anchor.host.listSshConfigHosts).toHaveBeenCalled());
+    await user.click(screen.getByRole("radio", { name: "SSH" }));
+    await waitFor(() => expect((screen.getByLabelText("SSH config host") as HTMLInputElement).value).toBe("devsrv"));
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(screen.getByText("home")).toBeTruthy());
+    const content = document.querySelector(".workspace-dialog__content")!;
+    const children = Array.from(content.children).map((el) => el.className.split(" ").find((c) => c.startsWith("host-choice") || c.startsWith("workspace-dialog__")) ?? el.className);
+    expect(children.slice(0, 3)).toEqual(["host-choice", "workspace-dialog__connected", "workspace-dialog__folder"]);
+    cleanup();
+  });
 
   it("reserves a viewport-bounded outer height instead of resizing to loaded content", () => {
     const modal = styleFor(".modal.workspace-dialog");

@@ -25,6 +25,10 @@ export function actionableSearchDiagnostics(
 }
 
 
+export function searchTimedOut(diagnostics: SearchDiagnostic[]): boolean {
+  return diagnostics.some((d) => d.code === "timeout");
+}
+
 /** Older hosts may only report aborted; pagination never means incomplete coverage. */
 export function searchCompletionStatus(result: {
   status?: SearchStatus;
@@ -40,16 +44,22 @@ export function searchResultsSummary({
   hitCount,
   fileCount,
   truncated,
+  timedOut = false,
 }: {
   searching: boolean;
   status: SearchStatus | null;
   hitCount: number;
   fileCount: number;
   truncated: boolean;
+  /** The engine hit its time limit (a `timeout` diagnostic), not a real error. */
+  timedOut?: boolean;
 }): string {
   const count = `${hitCount} result${hitCount === 1 ? "" : "s"} in ${fileCount} file${fileCount === 1 ? "" : "s"}${truncated ? "+" : ""}`;
   if (searching) return hitCount ? `Searching… · ${count}` : "Searching…";
   if (!status) return "Waiting to search…";
+  if (timedOut && (status === "failed" || status === "partial")) {
+    return hitCount ? `Timed out · ${count}` : "Timed out · No matches so far";
+  }
   if (status === "failed") return hitCount ? `Search failed · ${count} kept` : "Search failed";
   if (status === "cancelled") {
     return hitCount ? `Search stopped · ${count} kept` : "Search stopped · No matches found so far";

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildWslAgentShellArgs,
+  decodeWslDistroList,
   listWslDistros,
   WslHostSession,
 } from "./wslHost.js";
@@ -28,6 +29,41 @@ describe("listWslDistros", () => {
     },
     20_000,
   );
+});
+
+describe("decodeWslDistroList", () => {
+  const utf16 = (text: string, bom = false) =>
+    Buffer.concat([bom ? Buffer.from([0xff, 0xfe]) : Buffer.alloc(0), Buffer.from(text, "utf16le")]);
+
+  it("decodes UTF-16LE output with a BOM", () => {
+    expect(decodeWslDistroList(utf16("Ubuntu-24.04\r\ndocker-desktop\r\n", true))).toEqual([
+      "Ubuntu-24.04",
+      "docker-desktop",
+    ]);
+  });
+
+  it("decodes UTF-16LE output without a BOM", () => {
+    expect(decodeWslDistroList(utf16("Debian\r\nkali-linux\r\n"))).toEqual(["Debian", "kali-linux"]);
+  });
+
+  it("decodes UTF-8 output (WSL_UTF8=1) instead of turning it into CJK garbage", () => {
+    expect(decodeWslDistroList(Buffer.from("Ubuntu\r\nopenSUSE-Tumbleweed\n", "utf8"))).toEqual([
+      "Ubuntu",
+      "openSUSE-Tumbleweed",
+    ]);
+    expect(decodeWslDistroList(Buffer.from("\uFEFFUbuntu\r\n", "utf8"))).toEqual(["Ubuntu"]);
+  });
+
+  it("ignores a trailing odd byte and stray NULs", () => {
+    expect(decodeWslDistroList(Buffer.concat([utf16("Ubuntu\r\n", true), Buffer.from([0x00])]))).toEqual(["Ubuntu"]);
+  });
+
+  it("drops localized 'no distributions' / 'not installed' messages", () => {
+    expect(decodeWslDistroList(utf16("Windows Subsystem for Linux has no installed distributions.\r\n", true))).toEqual([]);
+    expect(decodeWslDistroList(utf16("适用于 Linux 的 Windows 子系统没有已安装的分发版。\r\n", true))).toEqual([]);
+    expect(decodeWslDistroList(utf16("The Windows Subsystem for Linux is not installed.\r\nwsl.exe --install\r\n"))).toEqual([]);
+    expect(decodeWslDistroList(Buffer.alloc(0))).toEqual([]);
+  });
 });
 
 describe("buildWslAgentShellArgs", () => {

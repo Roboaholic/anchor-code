@@ -386,7 +386,8 @@
   font-size: 12px;
 }
 
-.workspace-dialog__local {
+.workspace-dialog__local,
+.workspace-dialog__notice {
   display: flex;
   align-items: center;
   flex-direction: column;
@@ -396,9 +397,26 @@
   font-size: 12.5px;
 }
 
-.workspace-dialog__local > .codicon {
+.workspace-dialog__local > .codicon,
+.workspace-dialog__notice > .codicon {
   color: var(--text-muted);
   font-size: 32px;
+}
+
+.workspace-dialog__notice strong {
+  color: var(--text);
+}
+
+.workspace-dialog__notice .modal__hint {
+  margin: 0;
+  max-width: 360px;
+}
+
+.workspace-dialog__notice code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .workspace-dialog .modal__error {
@@ -495,9 +513,13 @@
   }
 }
 
-/* Host kind segmented control (replaces radio cards). */
+/* Host kind segmented control (replaces radio cards). The shared .repo-seg
+   base is a fixed 18px inline toolbar pill; reset its height/margin so the
+   cards keep their full height and following content flows below them. */
 .workspace-dialog .host-choice.anchor-seg {
   display: grid;
+  height: auto;
+  margin-left: 0;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
   gap: 6px;

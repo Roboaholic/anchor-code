@@ -23,12 +23,16 @@ const DiffViewer = lazy(() =>
 const MarkdownViewer = lazy(() =>
   import("./MarkdownViewer").then((m) => ({ default: m.MarkdownViewer })),
 );
+const ImageViewer = lazy(() =>
+  import("./ImageViewer").then((m) => ({ default: m.ImageViewer })),
+);
 
 function ViewerFallback() {
   return <div className="empty-center muted" role="status" aria-label="Loading document">Loading…</div>;
 }
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
+import { isPreviewableImagePath } from "@/core/workspace/markdownLinks";
 
 const TAB_DND_MIME = "application/x-anchor-tab-index";
 
@@ -466,6 +470,24 @@ function ActiveView({
     return <ViewerFallback />;
   }
 
+  if (isPreviewableImagePath(item.path)) {
+    return (
+      <Suspense fallback={<ViewerFallback />}>
+        <ImageViewer
+          path={item.path}
+          content={item.content}
+          truncated={item.truncated}
+          size={item.size}
+          mode={item.mdViewMode}
+          onModeChange={onMdMode}
+          revealLine={item.revealLine}
+          focusCommentId={item.focusCommentId}
+          revealNonce={item.revealNonce}
+        />
+      </Suspense>
+    );
+  }
+
   if (item.isMarkdown) {
     return (
       <Suspense fallback={<ViewerFallback />}>
@@ -554,6 +576,7 @@ function tabIcon(item: OpenItem): CodiconName {
   if (item.kind === "welcome") return "home";
   if (item.kind === "diff") return "diff";
   if (item.kind === "file" && item.isMarkdown) return "markdown";
+  if (item.kind === "file" && isPreviewableImagePath(item.path)) return "file-media";
   if (item.kind === "file") {
     if (
       item.language === "typescript" ||

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, session, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
@@ -14,6 +14,7 @@ import { RelayConnector } from "./remote/relayConnector.js";
 import { RemoteAccessController } from "./remote/remoteAccessController.js";
 import { registerRuntimeLifecycle } from "./application/runtimeLifecycle.js";
 import { flushWorkspaceInstances } from "./services/workspaceState.js";
+import { installNavigationGuard } from "./navigationGuard.js";
 import {
   shellBackground,
   titleBarOverlayFor,
@@ -189,6 +190,20 @@ function createWindow(theme: UiTheme) {
         // ignore
       }
     }
+  });
+
+  const appUrl = process.env.VITE_DEV_SERVER_URL
+    ? process.env.VITE_DEV_SERVER_URL
+    : pathToFileURL(path.join(process.env.DIST!, "index.html")).toString();
+  // Prefer the URL Chromium actually committed (its own percent-encoding).
+  let committedAppUrl: string | null = null;
+  createdWindow.webContents.once("did-finish-load", () => {
+    committedAppUrl = createdWindow.webContents.getURL() || null;
+  });
+  installNavigationGuard(createdWindow.webContents, () => committedAppUrl ?? appUrl, (url) => {
+    void shell.openExternal(url).catch((err) => {
+      console.error("[main] openExternal failed:", err);
+    });
   });
 
   const loadPromise = process.env.VITE_DEV_SERVER_URL

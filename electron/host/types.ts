@@ -117,6 +117,11 @@ export interface HostSession {
     opts?: RunOptions,
   ): Promise<RunResult>;
   readFile(path: string, options?: ReadFileOptions): Promise<string>;
+  /**
+   * Read a whole file as raw bytes (image previews). Rejects with a HostError
+   * when the file is larger than `maxBytes` (default and cap: 20 MiB).
+   */
+  readFileBytes(path: string, maxBytes?: number): Promise<Buffer>;
   writeFile(path: string, data: string): Promise<void>;
   listDir(path: string): Promise<DirEntry[]>;
   stat(path: string): Promise<StatResult>;

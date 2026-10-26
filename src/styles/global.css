@@ -9992,3 +9992,40 @@ body:has(.comments-pane) .skill-install-toast {
 .files-search-group__head {
   line-height: 1.4;
 }
+
+/* Workspace images in rendered Markdown (relative paths, all host kinds). */
+.md-body img.md-img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.md-img-loading {
+  display: inline-block;
+  width: 120px;
+  height: 48px;
+  margin: 8px 0;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: var(--bg-muted);
+  vertical-align: middle;
+}
+
+.image-viewer__stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-muted);
+}
+
+.image-viewer__img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}

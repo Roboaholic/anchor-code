@@ -8,7 +8,7 @@ import { scheduleSshCommand } from "./openSshScheduler.js";
 import { OpenSshSearchRunner } from "./sshSearchRunner.js";
 import { WSL_SEARCH_HELPER_PY } from "./wslSearchTools.js";
 import { HostError } from "./types.js";
-import { boundedReadCommand, decodeFilePrefix, fileReadLimit } from "./fileRead.js";
+import { binaryReadLimit, boundedReadCommand, decodeBoundedBase64, decodeFilePrefix, fileReadLimit } from "./fileRead.js";
 import type {
   DirEntry,
   HostSession,
@@ -413,6 +413,17 @@ export class OpenSshHostSession implements HostSession {
       : boundedReadCommand(remotePath(filePath), limit);
     const output = await this.fileCommand(command, `Cannot read file: ${filePath}`, { retryRead: true });
     return limit === undefined ? output : decodeFilePrefix(Buffer.from(output, "base64"), limit);
+  }
+
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    const limit = binaryReadLimit(maxBytes);
+    // The SSH channel is text-only; base64 keeps every byte intact.
+    const output = await this.fileCommand(
+      boundedReadCommand(remotePath(filePath), limit),
+      `Cannot read file: ${filePath}`,
+      { retryRead: true },
+    );
+    return decodeBoundedBase64(output, limit, filePath);
   }
 
   async writeFile(filePath: string, data: string): Promise<void> {

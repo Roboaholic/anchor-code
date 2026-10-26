@@ -197,3 +197,23 @@ describe("workspace document persistence", () => {
     ]);
   });
 });
+
+describe("documentStore image tabs", () => {
+  beforeEach(() => {
+    useDocumentStore.setState({
+      openItems: [{ id: "welcome", kind: "welcome", title: "Welcome" }],
+      activeId: "welcome",
+    });
+  });
+
+  it("does not read raster images as text but keeps SVG source loaded", async () => {
+    const anchor = mockReadText({ "/proj/d/flow.svg": "<svg/>" });
+    await useDocumentStore.getState().openFile({ path: "/proj/d/shot.png", workspaceRoot: "/proj" });
+    await useDocumentStore.getState().openFile({ path: "/proj/d/flow.svg", workspaceRoot: "/proj" });
+    expect(anchor.workspace.readText).toHaveBeenCalledTimes(1);
+    expect(anchor.workspace.readText).toHaveBeenCalledWith("/proj/d/flow.svg");
+    const items = useDocumentStore.getState().openItems;
+    expect(items.find((i) => i.id === "file:/proj/d/shot.png")).toMatchObject({ loadState: "loaded", content: "" });
+    expect(items.find((i) => i.id === "file:/proj/d/flow.svg")).toMatchObject({ loadState: "loaded", content: "<svg/>" });
+  });
+});

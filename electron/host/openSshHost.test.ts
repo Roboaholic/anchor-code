@@ -543,6 +543,19 @@ describe.skipIf(process.platform === "win32").each([
     expect((await host.run(cwd, "pwd", [])).stdout).toBe(`${cwd}\n`);
   });
 
+  it("reads binary image bytes intact through the text-only SSH channel", async () => {
+    const file = `${root}/diagrams dir/结构 '图.svg`;
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const bytes = Buffer.concat([
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      Buffer.from(Array.from({ length: 2000 }, (_, i) => (i * 13) % 256)),
+    ]);
+    await fs.writeFile(file, bytes);
+    expect((await host.readFileBytes(file)).equals(bytes)).toBe(true);
+    await expect(host.readFileBytes(file, 100)).rejects.toMatchObject({ code: "failed" });
+    await expect(host.readFileBytes(`${root}/missing.svg`)).rejects.toMatchObject({ code: "not_found" });
+  });
+
   it("round-trips UTF-8 contents and tricky filenames across all filesystem operations", async () => {
     const folder = `${root}/dir space'\n\\backslash`;
     const filename = "-file'\n$(touch INJECTED)\\中文.txt";

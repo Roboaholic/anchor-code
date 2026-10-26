@@ -15,6 +15,7 @@ import {
   searchCompletionStatus,
   actionableSearchDiagnostics,
   searchResultsSummary,
+  searchTimedOut,
 } from "./searchResults";
 
 const h = (path: string, line: number) => ({ path, line, text: `l${line}` });
@@ -43,6 +44,15 @@ describe("search coverage", () => {
     expect(searchResultsSummary({ ...base, status: "failed" })).toBe("Search failed · 3 results in 2 files kept");
     expect(searchResultsSummary({ ...base, status: "cancelled" })).toBe("Search stopped · 3 results in 2 files kept");
     expect(searchResultsSummary({ ...base, status: "complete", truncated: true })).toBe("3 results in 2 files+");
+  });
+
+  it("says timed out instead of failed when the engine hit its time limit", () => {
+    const base = { searching: false, fileCount: 0, truncated: false, timedOut: true };
+    expect(searchResultsSummary({ ...base, hitCount: 0, status: "failed" })).toBe("Timed out · No matches so far");
+    expect(searchResultsSummary({ ...base, hitCount: 3, fileCount: 2, status: "partial" })).toBe("Timed out · 3 results in 2 files");
+    expect(searchResultsSummary({ ...base, hitCount: 0, status: "cancelled" })).toBe("Search stopped · No matches found so far");
+    expect(searchTimedOut([{ code: "rg-scope", message: "" }, { code: "timeout", message: "" }])).toBe(true);
+    expect(searchTimedOut([{ code: "search-failed", message: "" }])).toBe(false);
   });
 });
 

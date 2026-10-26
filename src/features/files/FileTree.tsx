@@ -42,6 +42,7 @@ import {
   saveSearchSettings,
   searchCompletionStatus,
   searchResultsSummary,
+  searchTimedOut,
   type SearchDiagnostic,
   type SearchFileGroup,
   type SearchHit,
@@ -903,6 +904,7 @@ export function FileTree() {
     hitCount,
     fileCount: fileGroups.length,
     truncated,
+    timedOut: searchTimedOut(searchDiagnostics),
   });
 
   /** Filters + open results: Explorer shrinks to its header so results get the space. */

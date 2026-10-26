@@ -163,9 +163,13 @@ function resolveRgCommand(host: HostSession): string | null {
   return "rg";
 }
 
+/** Hosts whose rg rejected the standard flags: skip the doomed first attempt. */
+const rgMinimalHosts = new Set<string>();
+
 function markRgUnavailable(host: HostSession): void {
   // A missing tool may be installed before the next search. Do not cache failures.
   rgCmdCache.delete(rgCacheKey(host));
+  rgMinimalHosts.delete(rgCacheKey(host));
 }
 
 function markRgOk(host: HostSession, cmd: string): void {
@@ -386,6 +390,18 @@ export function createGrepHitStreamer(
   };
 }
 
+/**
+ * rg budget. Remote hosts pay for connection/helper startup and walk large,
+ * often cold trees (an include glob such as `*.c` still visits every folder),
+ * so 15s ended many SSH searches before the first match. Hits stream and the
+ * user can stop the search at any time, so a longer remote budget is safe.
+ */
+export const RG_TIMEOUT_LOCAL_MS = 15_000;
+export const RG_TIMEOUT_REMOTE_MS = 90_000;
+export function rgTimeoutMs(host: Pick<HostSession, "kind">): number {
+  return host.kind === "local" ? RG_TIMEOUT_LOCAL_MS : RG_TIMEOUT_REMOTE_MS;
+}
+
 function attachGrepStream(
   o: ReturnType<typeof normalizeOpts>,
   onHits: ((hits: ContentSearchHit[]) => void) | undefined,
@@ -567,7 +583,9 @@ function searchFailure(
     ? [error.message, error.causeDetail].filter(Boolean).join(": ")
     : error instanceof Error ? error.message : String(error);
   const action = code === "timeout"
-    ? "Narrow the include filter and retry."
+    ? (hits.length > 0
+      ? "Matches found before the time limit are kept; other files were not searched. Limit the search to a folder (for example `src/**/*.c` in files to include) and retry."
+      : "No match was found before the time limit; files not reached yet were not searched. Limit the search to a folder (for example `src/**/*.c` in files to include) and retry.")
     : code === "disconnected"
       ? "Reconnect the workspace host and retry."
       : "Check the workspace connection, path and file permissions, then retry.";
@@ -576,7 +594,9 @@ function searchFailure(
     status: hits.length > 0 ? "partial" : "failed",
     diagnostics: [{
       code,
-      message: `${source} search ${code === "timeout" ? "timed out" : "failed"}. Results are incomplete. ${detail.slice(0, 1500)} ${action}`,
+      message: code === "timeout"
+        ? `${source} search timed out. ${action} (${detail.slice(0, 300)})`
+        : `${source} search failed. Results are incomplete. ${detail.slice(0, 1500)} ${action}`,
     }],
   };
 }
@@ -591,6 +611,67 @@ function grepFailed(result: RunResult): boolean {
   // SSH's `cd ... && exec ...` can fail with exit 1 before grep starts.
   // Genuine grep no-match exits have no stderr; do not hide shell/I/O failures.
   return (result.code !== 0 && result.code !== 1) || (result.code === 1 && Boolean(result.stderr.trim()));
+}
+
+/**
+ * rg rejected one of our newer flags. rg >= 14 says "unrecognized flag"; rg <= 13
+ * (clap 2) says "Found argument '--x' which wasn't expected" and rg 0.10 even
+ * exits 1 for it, which otherwise reads as "no matches + stderr" = failed.
+ */
+const RG_FLAG_REJECTED = /(?:unrecognized|unknown) (?:flag|option)|Found argument '[^']*' which wasn't expected|unexpected argument '/i;
+
+export function rgRejectedFlags(result: RunResult): boolean {
+  return !result.stdout && (result.code === 1 || result.code === 2) && RG_FLAG_REJECTED.test(result.stderr);
+}
+
+/**
+ * One rg per-path error line: unreadable/vanished entries end in "(os error N)",
+ * broken ignore files report "<file>: line N: ...". rg keeps searching every
+ * other path after these and only sets exit code 2.
+ */
+const RG_PATH_ERROR = /^(?:rg: )?(.+?): (?:.*\(os error \d+\)|line \d+: .+)$/;
+/** rg's note when every candidate was filtered out — a no-match, not a failure. */
+const RG_NOTHING_SEARCHED = /^(?:rg: )?No files were searched, which means ripgrep probably applied a filter you didn't expect\./;
+
+type RgOutcome = { ok: true; skippedPaths: string[] } | { ok: false };
+
+/**
+ * Classify an rg exit. Per-path errors (permission denied, vanished files,
+ * unparsable .gitignore) must not discard the matches from every other file;
+ * anything else on stderr (shell/cwd/usage/regex errors) is still a failure.
+ */
+export function classifyRgExit(result: RunResult): RgOutcome {
+  if (result.earlyExit) return { ok: true, skippedPaths: [] };
+  const lines = result.stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const pathErrors: string[] = [];
+  const other: string[] = [];
+  for (const line of lines) {
+    const path = RG_PATH_ERROR.exec(line)?.[1];
+    // The search root itself being unreadable means nothing was searched.
+    if (path && path !== "." && path !== "./") pathErrors.push(line.replace(/^rg: /, ""));
+    else if (!RG_NOTHING_SEARCHED.test(line)) other.push(line);
+  }
+  if (result.code === 0) return { ok: true, skippedPaths: pathErrors };
+  if (result.code === 1 || result.code === 2) {
+    // Exit 1 with unexplained stderr can be `cd` failing before rg started.
+    if (other.length > 0) return { ok: false };
+    if (result.code === 2 && pathErrors.length === 0) return { ok: false };
+    return { ok: true, skippedPaths: pathErrors };
+  }
+  return { ok: false };
+}
+
+function withSkippedPaths(result: ContentSearchResult, skippedPaths: string[]): ContentSearchResult {
+  if (skippedPaths.length === 0 || result.aborted) return result;
+  const shown = skippedPaths.slice(0, 5).join("; ");
+  const more = skippedPaths.length > 5 ? ` (+${skippedPaths.length - 5} more)` : "";
+  return {
+    ...result,
+    diagnostics: [...(result.diagnostics ?? []), {
+      code: "unreadable-paths",
+      message: `${skippedPaths.length} path${skippedPaths.length === 1 ? " was" : "s were"} skipped because rg could not read ${skippedPaths.length === 1 ? "it" : "them"}; all other files were searched. ${shown}${more}`,
+    }],
+  };
 }
 
 async function spawnMissing(host: HostSession, root: string, error: unknown): Promise<boolean> {
@@ -929,12 +1010,13 @@ async function tryRipgrepWslNative(
       return searchFailure(root, query, streamer.hits(), "rg", err, o.signal);
     }
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
-    if (!minimal && r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
+    if (!minimal && rgRejectedFlags(r)) {
       continue;
     }
-    if (!grepFailed(r)) {
+    const outcome = classifyRgExit(r);
+    if (outcome.ok) {
       rgCmdCache.set(cacheKey, rgCmd);
-      return withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), minimal);
+      return withSkippedPaths(withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), minimal), outcome.skippedPaths);
     }
     streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
     if (commandMissing(r) && streamer.hits().length === 0) {
@@ -978,19 +1060,20 @@ async function tryRipgrepWslUnc(
   try {
     onSource?.("rg");
     let r = await runner.run(uncRoot, rgCmd, buildRgArgs(query, o, false, searchPaths), stream.runOpts);
-    if (!r.aborted && r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
+    if (!r.aborted && rgRejectedFlags(r)) {
       minimal = true;
       stream = attachGrepStream(o, onHits, 20_000, shouldStop);
       r = await runner.run(uncRoot, rgCmd, buildRgArgs(query, o, true, searchPaths), stream.runOpts);
     }
     if (r.aborted) return abortedResult(root, query, stream.streamer.hits(), "rg");
-    if (grepFailed(r)) {
+    const outcome = classifyRgExit(r);
+    if (!outcome.ok) {
       stream.streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
       if (commandMissing(r) && stream.streamer.hits().length === 0) return null;
       return searchFailure(root, query, stream.streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
     }
     rgCmdCache.set(cacheKey, rgCmd);
-    return withRgCompatibility(finishGrepStream(root, query, r, o, stream.streamer, "rg"), minimal);
+    return withSkippedPaths(withRgCompatibility(finishGrepStream(root, query, r, o, stream.streamer, "rg"), minimal), outcome.skippedPaths);
   } catch (err) {
     if (!o.signal?.aborted && stream.streamer.hits().length === 0 && await spawnMissing(runner, uncRoot, err)) return null;
     return searchFailure(root, query, stream.streamer.hits(), "rg", err, o.signal);
@@ -1054,16 +1137,21 @@ async function runRipgrepOnce(
 
   const rgCmd = resolveRgCommand(host);
   if (!rgCmd) return null;
+  if (rgMinimalHosts.has(rgCacheKey(host))) {
+    return tryRipgrepMinimal(host, root, query, o, rgCmd, onHits, onSource, searchPaths, shouldStop);
+  }
 
-  const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
+  const { runOpts, streamer } = attachGrepStream(o, onHits, rgTimeoutMs(host), shouldStop);
   try {
     onSource?.("rg");
     const r = await runSearchCommand(host, root, rgCmd, buildRgArgs(query, o, false, searchPaths), runOpts);
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
-    if (r.code === 2 && /(?:unrecognized|unknown) (?:flag|option)/i.test(r.stderr) && !r.stdout) {
+    if (rgRejectedFlags(r)) {
+      rgMinimalHosts.add(rgCacheKey(host));
       return tryRipgrepMinimal(host, root, query, o, rgCmd, onHits, onSource, searchPaths, shouldStop);
     }
-    if (grepFailed(r)) {
+    const outcome = classifyRgExit(r);
+    if (!outcome.ok) {
       streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
       if (commandMissing(r) && streamer.hits().length === 0) {
         markRgUnavailable(host);
@@ -1072,7 +1160,7 @@ async function runRipgrepOnce(
       return searchFailure(root, query, streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
     }
     markRgOk(host, rgCmd);
-    return finishGrepStream(root, query, r, o, streamer, "rg");
+    return withSkippedPaths(finishGrepStream(root, query, r, o, streamer, "rg"), outcome.skippedPaths);
   } catch (err) {
     if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) {
       markRgUnavailable(host);
@@ -1094,12 +1182,13 @@ async function tryRipgrepMinimal(
   searchPaths: string[] = ["."],
   shouldStop?: () => boolean,
 ): Promise<ContentSearchResult | null> {
-  const { runOpts, streamer } = attachGrepStream(o, onHits, 15_000, shouldStop);
+  const { runOpts, streamer } = attachGrepStream(o, onHits, rgTimeoutMs(host), shouldStop);
   try {
     onSource?.("rg");
     const r = await runSearchCommand(host, root, rgCmd, buildRgArgs(query, o, true, searchPaths), runOpts);
     if (r.aborted) return abortedResult(root, query, streamer.hits(), "rg");
-    if (grepFailed(r)) {
+    const outcome = classifyRgExit(r);
+    if (!outcome.ok) {
       streamer.feed(r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
       if (commandMissing(r) && streamer.hits().length === 0) {
         markRgUnavailable(host);
@@ -1108,7 +1197,7 @@ async function tryRipgrepMinimal(
       return searchFailure(root, query, streamer.hits(), "rg", new Error(r.stderr || `Exit code ${r.code}`), o.signal);
     }
     markRgOk(host, rgCmd);
-    return withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), true);
+    return withSkippedPaths(withRgCompatibility(finishGrepStream(root, query, r, o, streamer, "rg"), true), outcome.skippedPaths);
   } catch (err) {
     if (!o.signal?.aborted && streamer.hits().length === 0 && await spawnMissing(host, root, err)) {
       markRgUnavailable(host);

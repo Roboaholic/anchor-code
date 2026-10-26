@@ -57,4 +57,27 @@ describe("ReviewFacade file previews", () => {
     expect(originalRead).toHaveBeenCalledOnce();
     expect(replacementRead).not.toHaveBeenCalled();
   });
+
+  it("serves workspace images as bytes with an image MIME type, SVG included", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><script>alert(1)</script></svg>';
+    await fs.mkdir(path.join(root, "diagrams"));
+    await fs.writeFile(path.join(root, "diagrams", "结构 图.svg"), svg);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+    await fs.writeFile(path.join(root, "a.png"), png);
+    const readBytes = vi.spyOn(host, "readFileBytes");
+    const image = await review.readImage("diagrams/结构 图.svg");
+    expect(image).toMatchObject({ mime: "image/svg+xml", size: Buffer.byteLength(svg) });
+    expect(Buffer.from(image.base64, "base64").toString("utf8")).toBe(svg);
+    expect(readBytes).toHaveBeenCalledWith(path.join(root, "diagrams", "结构 图.svg"), 20 * 1024 * 1024);
+    const raster = await review.readImage("a.png");
+    expect(raster.mime).toBe("image/png");
+    expect(Buffer.from(raster.base64, "base64").equals(png)).toBe(true);
+  });
+
+  it("refuses non-image files without reading them", async () => {
+    await fs.writeFile(path.join(root, "notes.txt"), "secret");
+    const readBytes = vi.spyOn(host, "readFileBytes");
+    await expect(review.readImage("notes.txt")).rejects.toMatchObject({ code: "failed" });
+    expect(readBytes).not.toHaveBeenCalled();
+  });
 });

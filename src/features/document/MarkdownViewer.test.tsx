@@ -35,7 +35,7 @@ vi.mock("@/core/annotations/mdSelection", async (importOriginal) => ({
     return [{ commentId: "comment-1", left: 10, top: calls.top, width: 80, height: 18 }];
   },
 }));
-vi.mock("@/features/shell/orchestrate", () => ({ addCommentFromSelection: vi.fn() }));
+vi.mock("@/features/shell/orchestrate", () => ({ addCommentFromSelection: vi.fn(), openFileFromTree: vi.fn() }));
 vi.mock("@/features/annotations/CommentBubble", () => ({ CommentBubble: () => <div>Comment</div> }));
 
 import { MarkdownViewer } from "./MarkdownViewer";

@@ -14,7 +14,15 @@ import type {
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
-import { boundedReadCommand, decodeFilePrefix, fileReadLimit, readLocalFile } from "./fileRead.js";
+import {
+  binaryReadLimit,
+  boundedReadCommand,
+  decodeBoundedBase64,
+  decodeFilePrefix,
+  fileReadLimit,
+  readLocalFile,
+  readLocalFileBytes,
+} from "./fileRead.js";
 import { hostNormalize } from "./paths.js";
 import { spawnLocalPty } from "./localPty.js";
 import {
@@ -381,6 +389,31 @@ export class WslHostSession implements HostSession {
         );
       }
       return limit === undefined ? r.stdout : decodeFilePrefix(Buffer.from(r.stdout, "base64"), limit);
+    }
+  }
+
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    const p = hostNormalize("wsl", filePath);
+    const limit = binaryReadLimit(maxBytes);
+    try {
+      const unc = await this.toUnc(p);
+      return await readLocalFileBytes(unc, limit);
+    } catch (err) {
+      if (!this.isUncGap(err)) {
+        throw this.mapFsError(err, `Cannot read file: ${p}`);
+      }
+      // Same UNC symlink gap as readFile: stream base64 from the distro.
+      const quoted = this.escapeSingle(p);
+      const r = await this.runBash(
+        `if [ ! -e ${quoted} ] && [ ! -L ${quoted} ]; then echo '__AC_ENOENT__' >&2; exit 44; fi; ${boundedReadCommand(quoted, limit)}`,
+      );
+      if (r.code === 44 || /__AC_ENOENT__/.test(r.stderr)) {
+        throw new HostError("not_found", `Cannot read file: ${p}`, r.stderr);
+      }
+      if (r.code !== 0) {
+        throw new HostError("failed", `Cannot read file: ${p}`, r.stderr || r.stdout);
+      }
+      return decodeBoundedBase64(r.stdout, limit, p);
     }
   }
 

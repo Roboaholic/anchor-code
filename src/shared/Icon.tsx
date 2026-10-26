@@ -18,6 +18,7 @@ export type CodiconName =
   | "export"
   | "file"
   | "file-code"
+  | "file-media"
   | "files"
   | "folder"
   | "folder-opened"

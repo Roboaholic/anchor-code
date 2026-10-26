@@ -173,6 +173,14 @@ export interface ReadTextResult {
   truncated: boolean;
 }
 
+export interface ReadImageResult {
+  path: string;
+  /** e.g. image/png, image/svg+xml */
+  mime: string;
+  base64: string;
+  size: number;
+}
+
 export interface RepoInfo {
   root: string;
   name: string;
@@ -514,6 +522,8 @@ export interface AnchorApi {
     ensureDefinition: () => Promise<{ path: string; definition: WorkspaceDefinition; created: boolean }>;
     listDir: (path: string) => Promise<DirEntry[]>;
     readText: (path: string) => Promise<ReadTextResult>;
+    /** Workspace image bytes for `<img>` previews (≤ 20 MiB). */
+    readImage: (path: string) => Promise<ReadImageResult>;
     stat: (path: string) => Promise<StatResult>;
     findFiles: (args?: {
       root?: string;

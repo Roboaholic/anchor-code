@@ -31,8 +31,10 @@ import {
 } from "../services/historyService.js";
 import type { WorkspaceFacade } from "./workspaceFacade.js";
 import { hostNormalize } from "../host/paths.js";
+import { imageMimeType } from "./imageMime.js";
 
 const MAX_READ_BYTES = 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export class ReviewFacade {
   constructor(
@@ -58,6 +60,20 @@ export class ReviewFacade {
       size: stat.size,
       truncated: stat.size > MAX_READ_BYTES,
     };
+  }
+
+  /**
+   * Read a workspace image for `<img>` previews. Only known image extensions
+   * are served, and SVG is labelled image/svg+xml so the renderer never has
+   * to inject markup (scripts inside an SVG do not run in an <img>).
+   */
+  async readImage(path: string): Promise<{ path: string; mime: string; base64: string; size: number }> {
+    const safePath = this.workspace.safePath(path);
+    const mime = imageMimeType(safePath);
+    if (!mime) throw new HostError("failed", `Not an image file: ${safePath}`);
+    const host = this.hosts.session;
+    const bytes = await host.readFileBytes(safePath, MAX_IMAGE_BYTES);
+    return { path: safePath, mime, base64: bytes.toString("base64"), size: bytes.length };
   }
 
   async fileIndex(

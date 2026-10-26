@@ -13,7 +13,7 @@ import type {
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
-import { readLocalFile } from "./fileRead.js";
+import { readLocalFile, readLocalFileBytes } from "./fileRead.js";
 import { shellDisplayName, spawnLocalPty } from "./localPty.js";
 
 function mapFsError(err: unknown, fallback: string): HostError {
@@ -179,6 +179,14 @@ export class LocalHostSession implements HostSession {
   async readFile(filePath: string, options?: ReadFileOptions): Promise<string> {
     try {
       return await readLocalFile(filePath, options);
+    } catch (err) {
+      throw mapFsError(err, `Cannot read file: ${filePath}`);
+    }
+  }
+
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    try {
+      return await readLocalFileBytes(filePath, maxBytes);
     } catch (err) {
       throw mapFsError(err, `Cannot read file: ${filePath}`);
     }

@@ -12,7 +12,7 @@ import type {
   StatResult,
 } from "./types.js";
 import { HostError } from "./types.js";
-import { fileReadLimit, readFilePrefix } from "./fileRead.js";
+import { binaryReadLimit, fileReadLimit, readFilePrefix, tooLargeError } from "./fileRead.js";
 import { hostNormalize } from "./paths.js";
 import { verifySshHostKey } from "./sshKnownHosts.js";
 
@@ -364,6 +364,30 @@ export class SshHostSession implements HostSession {
           return;
         }
         resolve(typeof data === "string" ? data : data.toString("utf8"));
+      });
+    });
+  }
+
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    const limit = binaryReadLimit(maxBytes);
+    const sftp = await this.ensureSftp();
+    const p = hostNormalize("ssh", filePath);
+    const size = await new Promise<number>((resolve, reject) => {
+      sftp.stat(p, (err, st) => err ? reject(mapSftpError(err, `Cannot read file: ${p}`)) : resolve(st.size));
+    });
+    if (size > limit) throw tooLargeError(p, limit);
+    return new Promise((resolve, reject) => {
+      sftp.readFile(p, (err, data) => {
+        if (err) {
+          reject(mapSftpError(err, `Cannot read file: ${p}`));
+          return;
+        }
+        const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (bytes.length > limit) {
+          reject(tooLargeError(p, limit));
+          return;
+        }
+        resolve(bytes);
       });
     });
   }

@@ -765,6 +765,15 @@ export function registerIpc(opts: {
     },
   );
 
+  ipcMain.handle("workspace:readImage", async (_evt, filePath: unknown) => {
+    try {
+      if (typeof filePath !== "string" || !filePath) throw new HostError("failed", "Invalid image path");
+      return await application.review.readImage(filePath);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
   ipcMain.handle("workspace:stat", async (_evt, targetPath: string) => {
     try {
       return await application.workspace.stat(targetPath);

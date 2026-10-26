@@ -7,6 +7,7 @@ import {
 } from "@/core/workspace/paths";
 import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
+import { isRasterImagePath } from "@/core/workspace/markdownLinks";
 import { invalidateWorktreeDiffCache } from "./fileDiffCache";
 
 export type MdViewMode = "rendered" | "raw";
@@ -396,6 +397,17 @@ function ensureFileLoaded(id: string): Promise<void> {
     // The user may have switched views before this queued read even started.
     if (fileLoads.get(id) !== request) return;
     try {
+      if (isRasterImagePath(file.path)) {
+        // Raster images render from bytes in ImageViewer; their text is noise.
+        useDocumentStore.setState((state) => ({
+          openItems: state.openItems.map((item) =>
+            item.id === id && item.kind === "file"
+              ? { ...item, content: "", truncated: false, loadState: "loaded", error: undefined }
+              : item,
+          ),
+        }));
+        return;
+      }
       const result = await window.anchor.workspace.readText(file.path);
       if (fileLoads.get(id) !== request) return;
       useDocumentStore.setState((state) => ({

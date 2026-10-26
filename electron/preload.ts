@@ -168,6 +168,13 @@ export interface ReadTextResult {
   truncated: boolean;
 }
 
+export interface ReadImageResult {
+  path: string;
+  mime: string;
+  base64: string;
+  size: number;
+}
+
 export interface RepoInfo {
   root: string;
   name: string;
@@ -346,6 +353,8 @@ const anchor = {
       ipcRenderer.invoke("workspace:listDir", path),
     readText: (path: string): Promise<ReadTextResult> =>
       ipcRenderer.invoke("workspace:readText", path),
+    readImage: (path: string): Promise<ReadImageResult> =>
+      ipcRenderer.invoke("workspace:readImage", path),
     stat: (path: string): Promise<StatResult> =>
       ipcRenderer.invoke("workspace:stat", path),
     findFiles: (args?: {

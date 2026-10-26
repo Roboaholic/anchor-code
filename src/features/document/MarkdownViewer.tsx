@@ -1,9 +1,11 @@
 import {
+  createContext,
   isValidElement,
   lazy,
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -25,7 +27,9 @@ import {
 } from "@/core/annotations/mdSelection";
 import { CommentBubble } from "@/features/annotations/CommentBubble";
 import { useAnnotationsStore } from "@/features/annotations/annotationsStore";
-import { addCommentFromSelection } from "@/features/shell/orchestrate";
+import { addCommentFromSelection, openFileFromTree } from "@/features/shell/orchestrate";
+import { resolveMarkdownTarget } from "@/core/workspace/markdownLinks";
+import { useWorkspaceImage } from "./workspaceImage";
 import type { CommentRecord } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import { markdownFontSize } from "@/core/theme/theme";
@@ -103,15 +107,10 @@ function codeChildToText(children: unknown): string {
 }
 
 
-function MarkdownImg(props: ComponentPropsWithoutRef<"img">) {
-  const src = props.src ?? "";
-  const isRemote =
-    /^(https?:|data:|blob:)/i.test(src) || src.startsWith("//");
-  if (isRemote) {
-    return <img {...props} />;
-  }
-  // Relative / local paths need a custom protocol we do not expose yet.
-  const label = props.alt?.trim() || src || "Image";
+/** Path of the Markdown file being rendered (relative links resolve against it). */
+const MarkdownDocumentPath = createContext<string>("");
+
+function ImagePlaceholder({ label, src, detail }: { label: string; src: string; detail?: string }) {
   return (
     <span className="md-img-placeholder" role="img" aria-label={label}>
       <span className="md-img-placeholder__icon" aria-hidden>
@@ -119,7 +118,105 @@ function MarkdownImg(props: ComponentPropsWithoutRef<"img">) {
       </span>
       <span className="md-img-placeholder__label">{label}</span>
       {src ? <span className="md-img-placeholder__src muted">{src}</span> : null}
+      {detail ? <span className="md-img-placeholder__src muted">{detail}</span> : null}
     </span>
+  );
+}
+
+function WorkspaceMarkdownImg({
+  path,
+  rawSrc,
+  alt,
+  title,
+}: {
+  path: string;
+  rawSrc: string;
+  alt?: string;
+  title?: string;
+}) {
+  const image = useWorkspaceImage(path);
+  const label = alt?.trim() || rawSrc || "Image";
+  if (image.status === "ready") {
+    return <img className="md-img" src={image.src} alt={alt ?? ""} title={title} draggable={false} />;
+  }
+  if (image.status === "loading") {
+    return <span className="md-img-loading" role="status" aria-label={`Loading ${label}`} />;
+  }
+  return <ImagePlaceholder label={label} src={rawSrc} detail={image.error} />;
+}
+
+export function MarkdownImg(props: ComponentPropsWithoutRef<"img">) {
+  const documentPath = useContext(MarkdownDocumentPath);
+  const src = props.src ?? "";
+  if (/^(https?:|data:image\/|blob:)/i.test(src) || src.startsWith("//")) {
+    return <img {...props} />;
+  }
+  const target = resolveMarkdownTarget(documentPath, src);
+  if (target.kind === "file" && documentPath) {
+    // Relative / local image: read it through the workspace host so Local,
+    // WSL and SSH workspaces behave the same (file:// would only reach Local).
+    return <WorkspaceMarkdownImg path={target.path} rawSrc={src} alt={props.alt} title={props.title} />;
+  }
+  return <ImagePlaceholder label={props.alt?.trim() || src || "Image"} src={src} />;
+}
+
+/** GitHub-style heading slug, used for `[x](#some-heading)` links. */
+export function headingSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/\s/g, "-");
+}
+
+function scrollToFragment(from: HTMLElement, fragment: string) {
+  const body = from.closest(".md-body");
+  if (!body || !fragment) return;
+  const wanted = fragment.toLowerCase();
+  const byId = Array.from(body.querySelectorAll<HTMLElement>("[id], a[name]")).find(
+    (el) => el.id.toLowerCase() === wanted || el.getAttribute("name")?.toLowerCase() === wanted,
+  );
+  const heading = byId ?? Array.from(body.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")).find(
+    (el) => headingSlug(el.textContent ?? "") === headingSlug(wanted),
+  );
+  heading?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+/**
+ * Links never navigate the app window: workspace files open as tabs, web/mail
+ * links go to the OS (target=_blank is routed to shell.openExternal by main),
+ * and `#fragment` scrolls within the rendered document.
+ */
+export function MarkdownLink(props: ComponentPropsWithoutRef<"a">) {
+  const { href, children, onClick, ...rest } = props;
+  const documentPath = useContext(MarkdownDocumentPath);
+  const target = resolveMarkdownTarget(documentPath, href);
+  if (target.kind === "external") {
+    return (
+      <a {...rest} href={target.url} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  }
+  const handleClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    onClick?.(event);
+    event.preventDefault();
+    if (target.kind === "anchor") {
+      scrollToFragment(event.currentTarget, target.fragment);
+    } else if (target.kind === "file") {
+      const line = /^L(\d+)/i.exec(target.fragment);
+      void openFileFromTree(target.path, line ? { revealLine: Number(line[1]) } : undefined);
+    }
+  };
+  return (
+    <a
+      {...rest}
+      href={href}
+      title={rest.title ?? (target.kind === "file" ? target.path : undefined)}
+      onClick={handleClick}
+    >
+      {children}
+    </a>
   );
 }
 
@@ -201,15 +298,17 @@ export function MarkdownPre({ children, node, ...rest }: MdPreProps) {
 }
 
 const markdownPlugins = [remarkGfm];
-const markdownComponents = { code: MarkdownCode, pre: MarkdownPre, img: MarkdownImg };
+const markdownComponents = { code: MarkdownCode, pre: MarkdownPre, img: MarkdownImg, a: MarkdownLink };
 
 // Comment overlays and selection UI change frequently while the document stays
 // the same. Keep those updates from parsing and rendering the Markdown again.
-const MarkdownBody = memo(function MarkdownBody({ content }: { content: string }) {
+const MarkdownBody = memo(function MarkdownBody({ content, path }: { content: string; path: string }) {
   return (
-    <ReactMarkdown remarkPlugins={markdownPlugins} components={markdownComponents}>
-      {content}
-    </ReactMarkdown>
+    <MarkdownDocumentPath.Provider value={path}>
+      <ReactMarkdown remarkPlugins={markdownPlugins} components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </MarkdownDocumentPath.Provider>
   );
 });
 
@@ -712,7 +811,7 @@ function RenderedMarkdownPane({
             fontSize: `${mdFontSize}px`,
           }}
         >
-          <MarkdownBody content={content} />
+          <MarkdownBody content={content} path={path} />
         </article>
 
         {marks.map((m) => (

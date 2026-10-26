@@ -51,3 +51,49 @@ export async function readLocalFile(filePath: string, options?: ReadFileOptions)
 export function boundedReadCommand(quotedPath: string, limit: number): string {
   return `set -o pipefail; head -c ${limit + 1} -- ${quotedPath} | base64`;
 }
+
+/** Hard cap for whole-file binary reads (image previews). */
+export const MAX_BINARY_READ_BYTES = 20 * 1024 * 1024;
+
+export function binaryReadLimit(maxBytes?: number): number {
+  const limit = maxBytes ?? MAX_BINARY_READ_BYTES;
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > MAX_BINARY_READ_BYTES) {
+    throw new HostError("failed", "Binary read limit must be a nonnegative byte count up to 20 MiB");
+  }
+  return limit;
+}
+
+export function tooLargeError(filePath: string, limit: number): HostError {
+  return new HostError("failed", `File is too large to preview (over ${Math.floor(limit / 1024 / 1024)} MiB): ${filePath}`);
+}
+
+/** Reject once the bounded read produced more than `limit` bytes. */
+export function checkBinarySize(bytes: Buffer, limit: number, filePath: string): Buffer {
+  if (bytes.length > limit) throw tooLargeError(filePath, limit);
+  return bytes;
+}
+
+/** Decode the base64 output of `boundedReadCommand` (line-wrapped by coreutils). */
+export function decodeBoundedBase64(output: string, limit: number, filePath: string): Buffer {
+  return checkBinarySize(Buffer.from(output.replace(/\s+/g, ""), "base64"), limit, filePath);
+}
+
+export async function readLocalFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+  const limit = binaryReadLimit(maxBytes);
+  const file = await fs.open(filePath, "r");
+  try {
+    const st = await file.stat();
+    if (st.size > limit) throw tooLargeError(filePath, limit);
+    const buffer = Buffer.alloc(Math.min(st.size, limit) + 1);
+    let position = 0;
+    // Read up to limit + 1 so a file that grew after stat() is still bounded.
+    while (position < buffer.length) {
+      const { bytesRead } = await file.read(buffer, position, buffer.length - position, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+    }
+    return checkBinarySize(buffer.subarray(0, position), limit, filePath);
+  } finally {
+    await file.close();
+  }
+}

@@ -50,7 +50,7 @@ export function AskDialog() {
   const popRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number; placement: string } | null>(null);
-  const [readOnly, setReadOnly] = useState(true);
+  const readOnly = true;
   const [target, setTarget] = useState("");
   const dismissRef = useRef<() => void>(() => {});
   const [sending, setSending] = useState(false);
@@ -77,7 +77,6 @@ export function AskDialog() {
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setError(null);
     setSending(false);
-    setReadOnly(true);
     void loadAgentProfiles();
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -202,7 +201,8 @@ export function AskDialog() {
         const base = context.path.split(/[\\/]/).pop() || context.path;
         const ok = await store.createAgentTab(profile, {
           prompt,
-          readOnly,
+          permissionMode: "read-only",
+          readOnly: true,
           title: `Ask · ${base} ${askLineLabel(context)}`,
         });
         if (!ok) throw new Error(store.error ?? "Could not start agent session");
@@ -330,17 +330,14 @@ export function AskDialog() {
         />
         <label
           className="ask__readonly"
-          title={
-            isNew
-              ? "Launch with the CLI's read-only / plan mode when supported"
-              : "Existing session: adds a read-only instruction to the prompt"
-          }
+          title="Ask sessions always launch read-only"
         >
           <input
             type="checkbox"
             className="anchor-checkbox"
-            checked={readOnly}
-            onChange={(e) => setReadOnly(e.target.checked)}
+            checked
+            disabled
+            readOnly
           />
           Read-only
         </label>

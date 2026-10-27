@@ -4,6 +4,10 @@ import {
   saveSettings,
   type AgentCliProfile,
 } from "../settings.js";
+import {
+  normalizeAgentPermissionMode,
+  type AgentPermissionMode,
+} from "./agentLaunch.js";
 
 /** Built-in candidates scanned on the active host. */
 export const BUILTIN_AGENT_CANDIDATES: Omit<
@@ -99,6 +103,22 @@ export async function setDefaultAgentId(
   settings.defaultAgentId = id;
   await saveSettings(settings);
 }
+
+export async function getDefaultAgentPermissionMode(): Promise<AgentPermissionMode> {
+  const settings = await loadSettings();
+  return normalizeAgentPermissionMode(settings.defaultAgentPermissionMode);
+}
+
+export async function setDefaultAgentPermissionMode(
+  mode: AgentPermissionMode,
+): Promise<AgentPermissionMode> {
+  const settings = await loadSettings();
+  const next = normalizeAgentPermissionMode(mode);
+  settings.defaultAgentPermissionMode = next;
+  await saveSettings(settings);
+  return next;
+}
+
 
 /**
  * Probe `command -v` / `where` on the active host for each profile.

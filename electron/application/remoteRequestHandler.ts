@@ -388,11 +388,20 @@ export class RemoteRequestHandler {
 
     if (method === "POST" && path === "/api/v1/agents/sessions") {
       const body = bodyValue(request);
+      const permissionModeRaw = stringValue(body.permissionMode, "permissionMode", true);
+      const permissionMode =
+        permissionModeRaw === "cli-default" ||
+        permissionModeRaw === "read-only" ||
+        permissionModeRaw === "full-access"
+          ? permissionModeRaw
+          : undefined;
       return ok(toRemoteTerminalInfo(await this.opts.application.agent.createSession({
         profileId: stringValue(body.profileId, "profileId"),
         model: stringValue(body.model, "model", true) || undefined,
         effort: stringValue(body.effort, "effort", true) || undefined,
         prompt: stringValue(body.prompt, "prompt", true) || undefined,
+        permissionMode,
+        readOnly: body.readOnly === true ? true : undefined,
         cols: numberValue(body.cols, 56),
         rows: numberValue(body.rows, 28),
       })));

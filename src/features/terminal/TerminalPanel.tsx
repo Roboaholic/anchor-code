@@ -14,6 +14,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   agentTabsInWorkgroup,
   sessionsForMode,
+  getAgentTabPermissionMode,
   isAgentTabReadOnly,
   useTerminalStore,
   type AgentActivityState,
@@ -345,7 +346,11 @@ export function TerminalPanel({
                           const sessionId = activeTab.agentSessionId!.trim();
                           const title = activeTab.title;
                           const profileId = activeTab.agentId;
-                          const readOnly = isAgentTabReadOnly(activeTab.id);
+                          const permissionMode =
+                            getAgentTabPermissionMode(activeTab.id) ??
+                            (isAgentTabReadOnly(activeTab.id)
+                              ? "read-only"
+                              : undefined);
                           void (async () => {
                             await closeTab(activeTab.id);
                             const profiles =
@@ -359,7 +364,8 @@ export function TerminalPanel({
                               .createAgentTab(profile, {
                                 title,
                                 resumeSessionId: sessionId,
-                                readOnly,
+                                permissionMode,
+                                readOnly: permissionMode === "read-only",
                               });
                           })();
                         }}

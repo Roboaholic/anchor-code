@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AgentCliProfile,
+  AgentPermissionMode,
   TerminalSessionKind,
   TerminalTabInfo,
 } from "@/shared/anchor-api";
@@ -73,8 +74,10 @@ type PersistedAgent = {
   resumable?: boolean;
   /** User/caller-set title (e.g. "Ask · file L3"): re-pinned on resume. */
   titlePinned?: boolean;
-  /** Ask / plan-mode sessions must resume with read-only CLI flags. */
+  /** @deprecated Migrated to permissionMode. */
   readOnly?: boolean;
+  /** Permission mode used when the session was launched. */
+  permissionMode?: AgentPermissionMode;
 };
 
 export type ParkedAgent = {
@@ -89,20 +92,48 @@ export type ParkedAgent = {
   resumable?: boolean;
   /** Last resume failure (shown in the sidebar). */
   error?: string;
-  /** Ask / plan-mode sessions must resume with read-only CLI flags. */
+  /** @deprecated Migrated to permissionMode. */
   readOnly?: boolean;
+  /** Permission mode used when the session was launched. */
+  permissionMode?: AgentPermissionMode;
 };
 
 const UNRESUMABLE_PREFIX = "unresumable:";
+
+function normalizePersistedPermissionMode(saved: {
+  permissionMode?: unknown;
+  readOnly?: boolean;
+}): AgentPermissionMode | undefined {
+  if (saved.readOnly === true) return "read-only";
+  if (
+    saved.permissionMode === "cli-default" ||
+    saved.permissionMode === "read-only" ||
+    saved.permissionMode === "full-access"
+  ) {
+    return saved.permissionMode;
+  }
+  return undefined;
+}
+
 /** A resumed CLI that exits this fast most likely failed to resume. */
 export const RESUME_FAIL_WINDOW_MS = 5_000;
 const agentLastActiveAt = new Map<string, number>();
 const resumingSessions = new Set<string>();
 const resumeWatch = new Map<string, { parked: ParkedAgent; at: number }>();
 const agentReadOnlyByTabId = new Map<string, boolean>();
+const agentPermissionModeByTabId = new Map<string, AgentPermissionMode>();
 
 export function isAgentTabReadOnly(tabId: string): boolean {
-  return agentReadOnlyByTabId.get(tabId) === true;
+  return (
+    agentReadOnlyByTabId.get(tabId) === true ||
+    agentPermissionModeByTabId.get(tabId) === "read-only"
+  );
+}
+
+export function getAgentTabPermissionMode(
+  tabId: string,
+): AgentPermissionMode | undefined {
+  return agentPermissionModeByTabId.get(tabId);
 }
 
 export function markAgentActive(tabId: string, at = Date.now()): void {
@@ -243,7 +274,10 @@ function parkedFromPersisted(
       ...(saved.lastActiveAt ? { lastActiveAt: saved.lastActiveAt } : {}),
       ...(saved.titlePinned ? { titlePinned: true } : {}),
       ...(resumable ? {} : { resumable: false }),
-      ...(saved.readOnly ? { readOnly: true } : {}),
+      ...(() => {
+        const mode = normalizePersistedPermissionMode(saved);
+        return mode ? { permissionMode: mode } : {};
+      })(),
     }];
   }));
 }
@@ -423,7 +457,12 @@ export function saveWorkspaceAgents(
             (state.activeByMode.agent === tab.id ? now : undefined),
           ...(sessionId ? {} : { resumable: false }),
           ...(tab.titleSource === "user" ? { titlePinned: true } : {}),
-          ...(agentReadOnlyByTabId.get(tab.id) ? { readOnly: true } : {}),
+          ...(() => {
+            const mode =
+              agentPermissionModeByTabId.get(tab.id) ??
+              (agentReadOnlyByTabId.get(tab.id) ? "read-only" : undefined);
+            return mode ? { permissionMode: mode } : {};
+          })(),
         };
       });
     const bySession = new Map<string, PersistedAgent>();
@@ -436,7 +475,12 @@ export function saveWorkspaceAgents(
         lastActiveAt: item.lastActiveAt,
         ...(item.resumable === false ? { resumable: false } : {}),
         ...(item.titlePinned ? { titlePinned: true } : {}),
-        ...(item.readOnly ? { readOnly: true } : {}),
+        ...(() => {
+          const mode =
+            item.permissionMode ??
+            (item.readOnly ? "read-only" : undefined);
+          return mode ? { permissionMode: mode } : {};
+        })(),
       });
     }
     for (const item of live) bySession.set(item.sessionId, item);
@@ -514,6 +558,9 @@ export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
     const ok = await useTerminalStore.getState().createAgentTab(profile, {
       title: parked.title,
       resumeSessionId: parked.sessionId,
+      permissionMode:
+        parked.permissionMode ??
+        (parked.readOnly ? "read-only" : undefined),
       readOnly: parked.readOnly,
     });
     if (!ok) {
@@ -619,6 +666,8 @@ export type AgentLaunchOptions = {
   prompt?: string;
   /** Ask: launch with read-only / plan CLI flags when supported. */
   readOnly?: boolean;
+  /** Override Settings default for this launch. */
+  permissionMode?: AgentPermissionMode;
   resumeSessionId?: string;
 };
 
@@ -645,6 +694,7 @@ export interface TerminalState {
   exitCodeById: Record<string, number>;
   agentProfiles: AgentCliProfile[];
   defaultAgentId: string | null;
+  defaultAgentPermissionMode: AgentPermissionMode;
   agentMenuOpen: boolean;
   agentMenuIntent: AgentMenuIntent;
 
@@ -721,6 +771,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   exitCodeById: {},
   agentProfiles: [],
   defaultAgentId: null,
+  defaultAgentPermissionMode: "full-access",
   agentMenuOpen: false,
   agentMenuIntent: { kind: "new" },
 
@@ -938,19 +989,27 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       }
       const taskTitle = launch?.title?.trim();
+      const permissionMode =
+        launch?.readOnly === true
+          ? "read-only"
+          : launch?.permissionMode ??
+            get().defaultAgentPermissionMode ??
+            "full-access";
       const tab = await window.anchor.agent.createSession({
         profileId: profile.id,
         model: launch?.model,
         effort: launch?.effort,
         prompt: launch?.prompt?.trim() || taskTitle,
-        readOnly: launch?.readOnly,
+        permissionMode,
+        readOnly: launch?.readOnly === true || permissionMode === "read-only",
         resume: Boolean(launch?.resumeSessionId),
         sessionId: launch?.resumeSessionId,
         title: taskTitle || undefined,
         cols: 80,
         rows: 24,
       });
-      if (launch?.readOnly) agentReadOnlyByTabId.set(tab.id, true);
+      agentPermissionModeByTabId.set(tab.id, permissionMode);
+      if (permissionMode === "read-only") agentReadOnlyByTabId.set(tab.id, true);
       else agentReadOnlyByTabId.delete(tab.id);
       set((s) => {
         const existing = s.tabs.find((item) => item.id === tab.id);
@@ -1044,6 +1103,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     disposeXtermSession(id);
     clearAgentCompletionTimer(id);
     agentReadOnlyByTabId.delete(id);
+    agentPermissionModeByTabId.delete(id);
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const closed = s.tabs.find((t) => t.id === id);
@@ -1160,13 +1220,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   loadAgentProfiles: async () => {
     try {
-      const [profiles, defaultId] = await Promise.all([
+      const [profiles, defaultId, defaultPermissionMode] = await Promise.all([
         window.anchor.agent.listProfiles(),
         window.anchor.agent.getDefaultId(),
+        // Missing/failed permission API must not block profile loading
+        // (history sidebar and older preloads).
+        Promise.resolve(
+          typeof window.anchor.agent.getDefaultPermissionMode === "function"
+            ? window.anchor.agent.getDefaultPermissionMode()
+            : ("full-access" as AgentPermissionMode),
+        ).catch(() => "full-access" as AgentPermissionMode),
       ]);
       set({
         agentProfiles: profiles,
         defaultAgentId: defaultId ?? null,
+        defaultAgentPermissionMode: defaultPermissionMode ?? "full-access",
       });
     } catch {
       // optional surface

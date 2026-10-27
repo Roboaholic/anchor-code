@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentFullAccessArgs,
   agentReadOnlyArgs,
+  buildAgentModeArgs,
+  normalizeAgentPermissionMode,
+  resolveAgentPermissionMode,
+  withoutDuplicatePermissionFlags,
   bareModelId,
   buildAgentLaunchArgs,
   buildAgentResumeArgs,
@@ -435,5 +440,149 @@ describe("resume + readOnly args", () => {
       ...agentReadOnlyArgs("claude"),
       ...(buildAgentResumeArgs("claude", id) ?? []),
     ]).toEqual(["--permission-mode", "plan", "--resume", id]);
+  });
+});
+
+describe("full-access launch args", () => {
+  it("maps known CLIs to true full-access flags", () => {
+    expect(agentFullAccessArgs("claude")).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
+    ]);
+    expect(agentFullAccessArgs("codex")).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+    ]);
+    expect(agentFullAccessArgs("gemini")).toEqual(["--approval-mode", "yolo"]);
+    expect(agentFullAccessArgs("cursor-agent")).toEqual([
+      "--force",
+      "--sandbox",
+      "disabled",
+    ]);
+    expect(agentFullAccessArgs("grok")).toEqual(["--always-approve"]);
+    expect(agentFullAccessArgs("omp")).toEqual(["--yolo"]);
+    expect(agentFullAccessArgs("aider")).toEqual(["--yes-always"]);
+    expect(agentFullAccessArgs("pi")).toEqual([]);
+    expect(agentFullAccessArgs("goose")).toEqual([]);
+    expect(agentFullAccessArgs("custom-foo")).toEqual([]);
+  });
+
+  it("buildAgentLaunchArgs injects full-access before model/prompt", () => {
+    expect(
+      buildAgentLaunchArgs("claude", {
+        permissionMode: "full-access",
+        model: "sonnet",
+        prompt: "hi",
+      }),
+    ).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
+      "--model",
+      "sonnet",
+      "hi",
+    ]);
+    expect(
+      buildAgentLaunchArgs("codex", {
+        permissionMode: "full-access",
+        model: "m",
+      }),
+    ).toEqual(["--dangerously-bypass-approvals-and-sandbox", "-m", "m"]);
+  });
+
+  it("cli-default injects nothing", () => {
+    expect(
+      buildAgentLaunchArgs("claude", {
+        permissionMode: "cli-default",
+        prompt: "q",
+      }),
+    ).toEqual(["q"]);
+  });
+});
+
+describe("permissionMode resolve / normalize", () => {
+  it("defaults missing settings to full-access", () => {
+    expect(normalizeAgentPermissionMode(undefined)).toBe("full-access");
+    expect(normalizeAgentPermissionMode("nope")).toBe("full-access");
+    expect(normalizeAgentPermissionMode("read-only")).toBe("read-only");
+  });
+
+  it("readOnly wins over permissionMode and fallback", () => {
+    expect(
+      resolveAgentPermissionMode(
+        { permissionMode: "full-access", readOnly: true },
+        "full-access",
+      ),
+    ).toBe("read-only");
+    expect(
+      resolveAgentPermissionMode({ readOnly: true }, "cli-default"),
+    ).toBe("read-only");
+  });
+
+  it("uses explicit permissionMode then fallback", () => {
+    expect(
+      resolveAgentPermissionMode({ permissionMode: "cli-default" }, "full-access"),
+    ).toBe("cli-default");
+    expect(resolveAgentPermissionMode({}, "full-access")).toBe("full-access");
+  });
+});
+
+describe("permission flag dedupe vs profile.args", () => {
+  it("skips claude inject when profile already has --permission-mode", () => {
+    expect(
+      buildAgentModeArgs("claude", "full-access", [
+        "--permission-mode",
+        "acceptEdits",
+      ]),
+    ).toEqual([]);
+  });
+
+  it("skips claude inject when profile has --dangerously-skip-permissions", () => {
+    expect(
+      buildAgentModeArgs("claude", "full-access", [
+        "--dangerously-skip-permissions",
+      ]),
+    ).toEqual([]);
+  });
+
+  it("skips omp --yolo when profile already has --yolo", () => {
+    expect(buildAgentModeArgs("omp", "full-access", ["--yolo"])).toEqual([]);
+  });
+
+  it("skips cursor --force when profile has --yolo alias", () => {
+    expect(
+      withoutDuplicatePermissionFlags(
+        "cursor-agent",
+        ["--yolo"],
+        ["--force", "--sandbox", "disabled"],
+      ),
+    ).toEqual(["--sandbox", "disabled"]);
+  });
+
+  it("still injects when profile.args unrelated", () => {
+    expect(
+      buildAgentModeArgs("codex", "full-access", ["--search"]),
+    ).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
+  });
+});
+
+describe("resume + full-access args", () => {
+  it("prefixes full-access flags before resume args", () => {
+    const id = "sess-1";
+    expect([
+      ...buildAgentModeArgs("claude", "full-access"),
+      ...(buildAgentResumeArgs("claude", id) ?? []),
+    ]).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
+      "--resume",
+      id,
+    ]);
+    expect([
+      ...buildAgentModeArgs("codex", "full-access"),
+      ...(buildAgentResumeArgs("codex", id) ?? []),
+    ]).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "resume",
+      id,
+    ]);
   });
 });

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentCliProfile,
   AgentLaunchDiscovery,
+  AgentPermissionMode,
   AgentSessionSummary,
 } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { Dropdown } from "@/shared/Dropdown";
+import { SegmentedControl } from "@/shared/SegmentedControl";
 import { Icon } from "@/shared/Icon";
 import {
   agentAuthorFromProfile,
@@ -89,6 +91,11 @@ export function NewAgentDialog({
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
+  const defaultPermissionMode = useTerminalStore(
+    (s) => s.defaultAgentPermissionMode,
+  );
+  const [permissionMode, setPermissionMode] =
+    useState<AgentPermissionMode>(defaultPermissionMode);
   const [opening, setOpening] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
   const [skillInstalling, setSkillInstalling] = useState(false);
@@ -139,6 +146,10 @@ export function NewAgentDialog({
   useEffect(() => {
     if (isFeedback) notesRef.current?.focus();
   }, [isFeedback]);
+
+  useEffect(() => {
+    setPermissionMode(defaultPermissionMode);
+  }, [defaultPermissionMode]);
 
   useEffect(() => {
     if (!profile) return;
@@ -224,6 +235,7 @@ export function NewAgentDialog({
         void onOpen(profile, {
           model: model || undefined,
           effort: effort || undefined,
+          permissionMode,
           title: feedbackTabTitle(intent.sessionTitle),
           prompt,
         }).then((ok) => {
@@ -239,6 +251,7 @@ export function NewAgentDialog({
     const ok = await onOpen(profile, {
       model: model || undefined,
       effort: effort || undefined,
+      permissionMode,
     });
     if (!ok) setOpening(false);
   };
@@ -248,6 +261,7 @@ export function NewAgentDialog({
     const ok = await onOpen(profile, {
       title: session.title,
       resumeSessionId: session.id,
+      permissionMode,
     });
     if (!ok) setOpening(false);
   };
@@ -364,6 +378,26 @@ export function NewAgentDialog({
               onChange={setEffort}
             />
           </div>
+        </div>
+
+        <div
+          className="agent-new__field agent-new__permission"
+          data-testid="agent-new-permission"
+        >
+          <span className="agent-new__label" id="agent-new-permission-label">
+            Permission
+          </span>
+          <SegmentedControl
+            aria-label="Permission mode"
+            size="sm"
+            value={permissionMode}
+            onChange={setPermissionMode}
+            options={[
+              { value: "full-access", label: "Full access" },
+              { value: "cli-default", label: "CLI default" },
+              { value: "read-only", label: "Read-only" },
+            ]}
+          />
         </div>
 
         {isFeedback && intent.kind === "feedback" ? (

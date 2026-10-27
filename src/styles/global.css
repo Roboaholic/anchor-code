@@ -6336,6 +6336,14 @@ select.field__input {
   }
 }
 
+.agent-new__permission {
+  margin-top: 10px;
+}
+
+.agent-new__permission .anchor-seg {
+  width: 100%;
+}
+
 .agent-new__field {
   display: flex;
   flex-direction: column;

@@ -153,6 +153,34 @@ export async function discoverAgentLaunchOptions(
   return result;
 }
 
+/** Permission / approval mode for agent CLI launches. */
+export type AgentPermissionMode = "cli-default" | "read-only" | "full-access";
+
+export const DEFAULT_AGENT_PERMISSION_MODE: AgentPermissionMode = "full-access";
+
+export function isAgentPermissionMode(value: unknown): value is AgentPermissionMode {
+  return value === "cli-default" || value === "read-only" || value === "full-access";
+}
+
+/** Missing / invalid → full-access (product default). */
+export function normalizeAgentPermissionMode(value: unknown): AgentPermissionMode {
+  return isAgentPermissionMode(value) ? value : DEFAULT_AGENT_PERMISSION_MODE;
+}
+
+/**
+ * Resolve the effective mode for one create/resume.
+ * `readOnly: true` always wins (Ask). Explicit permissionMode next.
+ * Otherwise `fallback` (usually the Settings global default).
+ */
+export function resolveAgentPermissionMode(
+  input: { permissionMode?: unknown; readOnly?: boolean },
+  fallback: AgentPermissionMode = DEFAULT_AGENT_PERMISSION_MODE,
+): AgentPermissionMode {
+  if (input.readOnly === true) return "read-only";
+  if (isAgentPermissionMode(input.permissionMode)) return input.permissionMode;
+  return normalizeAgentPermissionMode(fallback);
+}
+
 /**
  * CLI flags that keep a session read-only (Ask). Unknown CLIs → [] (prompt-only).
  * - claude: `--permission-mode plan`
@@ -170,12 +198,144 @@ export function agentReadOnlyArgs(profileId: string): string[] {
   return [];
 }
 
+/**
+ * CLI flags for true full access (approvals + sandbox off where the CLI allows).
+ * pi / goose / custom → [] (no known flag; CLI default already has tools).
+ */
+export function agentFullAccessArgs(profileId: string): string[] {
+  const id = profileId.trim().toLowerCase();
+  if (id === "claude") return ["--permission-mode", "bypassPermissions"];
+  if (id === "codex") return ["--dangerously-bypass-approvals-and-sandbox"];
+  if (id === "gemini") return ["--approval-mode", "yolo"];
+  // Official Cursor CLI: `--sandbox enabled|disabled` and `--force`/`--yolo`.
+  if (id === "cursor-agent") return ["--force", "--sandbox", "disabled"];
+  if (id === "grok") return ["--always-approve"];
+  if (id === "omp") return ["--yolo"];
+  if (id === "aider") return ["--yes-always"];
+  return [];
+}
+
+export function agentPermissionArgs(
+  profileId: string,
+  mode: AgentPermissionMode,
+): string[] {
+  if (mode === "read-only") return agentReadOnlyArgs(profileId);
+  if (mode === "full-access") return agentFullAccessArgs(profileId);
+  return [];
+}
+
+/** Flag tokens that already express a permission/sandbox choice in profile.args. */
+function profileArgTokens(profileArgs: string[]): Set<string> {
+  const tokens = new Set<string>();
+  for (const raw of profileArgs) {
+    const arg = raw.trim();
+    if (!arg) continue;
+    const eq = arg.indexOf("=");
+    const flag = eq >= 0 ? arg.slice(0, eq) : arg;
+    tokens.add(flag);
+  }
+  return tokens;
+}
+
+function aliasesForFlag(flag: string): string[] {
+  switch (flag) {
+    case "--force":
+      return ["--force", "--yolo", "-f"];
+    case "--yolo":
+      return ["--yolo", "--force", "-f", "--auto-approve", "--always-approve", "--dangerously-bypass-approvals-and-sandbox"];
+    case "--always-approve":
+      return ["--always-approve", "--yolo", "--dangerously-skip-permissions"];
+    case "--auto-approve":
+      return ["--auto-approve", "--yolo"];
+    case "--yes-always":
+      return ["--yes-always"];
+    case "--dangerously-bypass-approvals-and-sandbox":
+      return ["--dangerously-bypass-approvals-and-sandbox", "--yolo"];
+    case "--dangerously-skip-permissions":
+      return ["--dangerously-skip-permissions", "--permission-mode"];
+    case "--permission-mode":
+      return ["--permission-mode", "--dangerously-skip-permissions"];
+    case "--approval-mode":
+      return ["--approval-mode", "--yolo", "-y"];
+    case "--sandbox":
+      return ["--sandbox", "-s"];
+    case "--tools":
+      return ["--tools", "-t"];
+    default:
+      return [flag];
+  }
+}
+
+/**
+ * Drop mode flags already covered by profile.args (user hand-wrote YOLO etc.).
+ * Claude: any `--permission-mode` or `--dangerously-skip-permissions` in
+ * profile.args means we inject nothing for that mode.
+ */
+export function withoutDuplicatePermissionFlags(
+  profileId: string,
+  profileArgs: string[],
+  modeArgs: string[],
+): string[] {
+  if (!modeArgs.length) return [];
+  const id = profileId.trim().toLowerCase();
+  const tokens = profileArgTokens(profileArgs);
+
+  if (id === "claude") {
+    if (tokens.has("--permission-mode") || tokens.has("--dangerously-skip-permissions")) {
+      return [];
+    }
+  }
+
+  const out: string[] = [];
+  const valueFlags = new Set([
+    "--permission-mode",
+    "--sandbox",
+    "--approval-mode",
+    "--tools",
+  ]);
+  let i = 0;
+  while (i < modeArgs.length) {
+    const flag = modeArgs[i]!;
+    const aliases = aliasesForFlag(flag);
+    const already = aliases.some((a) => tokens.has(a));
+    if (valueFlags.has(flag) && i + 1 < modeArgs.length) {
+      if (!already) out.push(flag, modeArgs[i + 1]!);
+      i += 2;
+      continue;
+    }
+    if (!already) out.push(flag);
+    i += 1;
+  }
+  return out;
+}
+
+export function buildAgentModeArgs(
+  profileId: string,
+  mode: AgentPermissionMode,
+  profileArgs: string[] = [],
+): string[] {
+  return withoutDuplicatePermissionFlags(
+    profileId,
+    profileArgs,
+    agentPermissionArgs(profileId, mode),
+  );
+}
+
 export function buildAgentLaunchArgs(
   profileId: string,
-  opts: { model?: string; effort?: string; prompt?: string; readOnly?: boolean },
+  opts: {
+    model?: string;
+    effort?: string;
+    prompt?: string;
+    /** @deprecated Prefer permissionMode; true forces read-only. */
+    readOnly?: boolean;
+    permissionMode?: AgentPermissionMode;
+    profileArgs?: string[];
+  },
 ): string[] {
   const id = profileId.trim().toLowerCase();
-  const args: string[] = opts.readOnly ? agentReadOnlyArgs(id) : [];
+  const mode = resolveAgentPermissionMode(opts, "cli-default");
+  const args: string[] = buildAgentModeArgs(id, mode, opts.profileArgs ?? []);
   const prompt = opts.prompt?.trim();
 
   if (id === "codex") {

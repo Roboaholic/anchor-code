@@ -8,7 +8,7 @@ export const UI_THEMES: UiTheme[] = ["light", "light-modern", "dark", "dark-mode
 export const EDITOR_FONT_FAMILY =
   "SF Mono, JetBrains Mono, Menlo, Monaco, Consolas, 'Courier New', monospace";
 
-/** Named presets shown in Settings → Appearance. Values are CSS font-family stacks. */
+/** Named presets shown in Settings → Appearance (font family). Values are CSS font-family stacks. */
 export const EDITOR_FONT_PRESETS: Array<{ id: string; label: string; value: string }> = [
   {
     id: "default",

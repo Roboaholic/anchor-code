@@ -37,6 +37,41 @@
   pointer-events: none;
 }
 
+.workspace-dialog__pages-wrap {
+  flex: 0 0 auto;
+  padding: 0 18px 10px;
+}
+
+/* Page tabs (Recent | New). Shared .repo-seg is a fixed 18px pill — override. */
+.workspace-dialog .workspace-dialog__pages.anchor-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  width: 100%;
+  height: 28px;
+  margin-left: 0;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bg-elevated, var(--bg-hover));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.workspace-dialog .workspace-dialog__pages.anchor-seg .repo-seg__btn {
+  height: 100%;
+  min-height: 0;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  justify-content: center;
+}
+
+.workspace-dialog .workspace-dialog__pages.anchor-seg .repo-seg__btn.is-active {
+  background: var(--bg-panel);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
 .workspace-dialog__content {
   flex: 1;
   min-height: 0;
@@ -53,6 +88,131 @@
   flex-shrink: 0;
   min-width: 0;
 }
+
+.workspace-dialog__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace-dialog__content:has(.workspace-dialog__recent) > .workspace-dialog__recent {
+  flex-shrink: 1;
+}
+
+.workspace-dialog__recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-dialog__recent-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.workspace-dialog__recent-item:hover,
+.workspace-dialog__recent-item:focus-within {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.workspace-dialog__recent-open {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 28px 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-dialog__recent-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.workspace-dialog__recent-icon.codicon {
+  flex: 0 0 auto;
+  width: 16px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.workspace-dialog__recent-name {
+  flex: 0 1 auto;
+  max-width: 34%;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dialog__recent-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dialog__recent-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.workspace-dialog__recent-item:hover .workspace-dialog__recent-time,
+.workspace-dialog__recent-item:focus-within .workspace-dialog__recent-time {
+  visibility: hidden;
+}
+
+.workspace-dialog__recent-remove {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-dialog__recent-item:hover .workspace-dialog__recent-remove,
+.workspace-dialog__recent-item:focus-within .workspace-dialog__recent-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workspace-dialog__recent-remove .codicon {
+  font-size: 12px;
+}
+
+
 
 .workspace-dialog .host-choice {
   display: grid;

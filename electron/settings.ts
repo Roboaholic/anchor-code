@@ -308,6 +308,19 @@ export async function pushRecentWorkspace(
   return next;
 }
 
+export async function removeRecentWorkspace(
+  workspacePath: string,
+  hostProfileId: string,
+): Promise<RecentWorkspace[]> {
+  const settings = await loadSettings();
+  const next = settings.recentWorkspaces.filter(
+    (r) => !(r.path === workspacePath && r.hostProfileId === hostProfileId),
+  );
+  settings.recentWorkspaces = next;
+  await saveSettings(settings);
+  return next;
+}
+
 export async function getHostProfile(
   profileId: string,
 ): Promise<HostProfile | null> {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
+import type { DirEntry, HostKind, HostProfile, RecentWorkspace } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { Combobox, isComboboxOpen } from "@/shared/Combobox";
 import { Dropdown, isDropdownOpen } from "@/shared/Dropdown";
@@ -13,6 +13,13 @@ import {
   joinPosix,
   parentPosix,
 } from "./openWorkspacePaths";
+import {
+  buildRecentWorkspaceViews,
+  formatRecentMeta,
+  formatRecentOpenedAt,
+  hostIconName,
+  type RecentWorkspaceView,
+} from "./recentWorkspaces";
 
 export type OpenWorkspaceResult = {
   path: string;
@@ -58,6 +65,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
   const [configHosts, setConfigHosts] = useState<{ alias: string; source: string }[]>([]);
   const [configWarning, setConfigWarning] = useState("");
   const [configAlias, setConfigAlias] = useState("");
+  const [recent, setRecent] = useState<RecentWorkspace[]>([]);
+  const [page, setPage] = useState<"recent" | "new">("new");
   const [connectedSshProfileId, setConnectedSshProfileId] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +138,18 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     let cancelled = false;
     void (async () => {
       try {
+        try {
+          const recentList = (await window.anchor?.workspace?.getRecent?.()) ?? [];
+          if (!cancelled && interaction === interactionVersion.current) {
+            setRecent(recentList);
+            setPage(recentList.length > 0 ? "recent" : "new");
+          }
+        } catch {
+          if (!cancelled && interaction === interactionVersion.current) {
+            setRecent([]);
+            setPage("new");
+          }
+        }
         const list = (await window.anchor?.host?.listProfiles?.()) ?? [];
         if (cancelled) return;
         if (interaction === interactionVersion.current) {
@@ -269,7 +290,51 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     if (open && error) errorRef.current?.focus();
   }, [open, error]);
 
+  const recentViews = useMemo(
+    () => buildRecentWorkspaceViews(recent, profiles),
+    [recent, profiles],
+  );
+
   if (!open) return null;
+
+  async function openRecentEntry(entry: RecentWorkspaceView) {
+    if (busy || committingWorkspace.current) return;
+    committingWorkspace.current = true;
+    setOpeningWorkspace(true);
+    setBusy(true);
+    setError(null);
+    try {
+      await window.anchor.host.useProfile(entry.hostProfileId);
+      // Probe reachability on the switched host before closing the dialog.
+      await window.anchor.workspace.listDir(entry.path);
+      onOpen({
+        path: entry.path,
+        hostProfileId: entry.hostProfileId,
+        hostKind: entry.hostKind,
+      });
+      onClose();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      committingWorkspace.current = false;
+      setOpeningWorkspace(false);
+      setBusy(false);
+    }
+  }
+
+  async function removeRecentEntry(entry: RecentWorkspaceView) {
+    if (busy) return;
+    try {
+      const next = await window.anchor.workspace.removeRecent({
+        path: entry.path,
+        hostProfileId: entry.hostProfileId,
+      });
+      setRecent(next);
+      if (next.length === 0) setPage("new");
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }
 
   async function chooseLocal() {
     if (busy || committingWorkspace.current) return;
@@ -424,6 +489,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     }
   }
 
+
   const parent = parentPosix(browsePath);
   const connectedProfile = profiles.find((profile) => profile.id === connectedSshProfileId);
   const connectedLabel = connectedProfile?.label ?? (sshMode === "config" ? configAlias : `${sshUsername}@${sshHost}`);
@@ -468,7 +534,64 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
           </button>
         </header>
 
+        {recentViews.length > 0 ? (
+          <div className="workspace-dialog__pages-wrap">
+            <SegmentedControl
+              className="workspace-dialog__pages"
+              aria-label="Open workspace page"
+              value={page}
+              disabled={busy}
+              onChange={(next) => setPage(next)}
+              options={[
+                { value: "recent", label: "Recent", "aria-label": "Recent" },
+                { value: "new", label: "New", "aria-label": "New" },
+              ]}
+            />
+          </div>
+        ) : null}
+
         <div className="workspace-dialog__content">
+          {page === "recent" && recentViews.length > 0 ? (
+            <section className="workspace-dialog__recent" aria-labelledby="workspace-recent-title">
+              <h3 id="workspace-recent-title" className="workspace-dialog__section-title">Recent workspaces</h3>
+              <ul className="workspace-dialog__recent-list">
+                {recentViews.map((entry) => {
+                  const meta = formatRecentMeta(entry.path, entry.hostLabel);
+                  const time = entry.lastOpenedAt ? formatRecentOpenedAt(entry.lastOpenedAt) : "";
+                  return (
+                    <li key={`${entry.hostProfileId}::${entry.path}`} className="workspace-dialog__recent-item">
+                      <button
+                        type="button"
+                        className="workspace-dialog__recent-open"
+                        disabled={busy}
+                        aria-label={`Open ${entry.name} (${entry.hostLabel})`}
+                        onClick={() => void openRecentEntry(entry)}
+                      >
+                        <Icon name={hostIconName(entry.hostKind)} className="workspace-dialog__recent-icon" />
+                        <span className="workspace-dialog__recent-name">{entry.name}</span>
+                        <span className="workspace-dialog__recent-meta">{meta}</span>
+                        {time ? <span className="workspace-dialog__recent-time">{time}</span> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--icon workspace-dialog__recent-remove"
+                        aria-label={`Remove ${entry.name} from recent`}
+                        disabled={busy}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void removeRecentEntry(entry);
+                        }}
+                      >
+                        <Icon name="close" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : (
+            <>
           <SegmentedControl
             className="host-choice"
             aria-label="Host"
@@ -678,22 +801,35 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
               <p className="modal__hint">Choose a project folder on this computer.<br />Your terminal, Git and comments will stay local.</p>
             </div>
           ) : null}
+            </>
+          )}
           {error ? <p ref={errorRef} tabIndex={-1} className="modal__error" role="alert">{error}</p> : null}
         </div>
 
         <footer className="modal__footer workspace-dialog__footer">
-          <div className="workspace-dialog__footer-context" aria-live="polite">
-            {selectingFolder ? <><span>Selected folder</span><strong title={browsePath}>{browsePath}</strong></> : <span>{kind === "ssh" ? (busy ? "Connecting to your host…" : "Next: choose a project folder") : kind === "wsl" ? (wslStatus === "unavailable" ? "WSL is not available" : "Checking WSL…") : "Select a folder to get started"}</span>}
-          </div>
-          <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
-          {kind === "ssh" && !connectedSshProfileId ? (
-            <button type="submit" form="ssh-connection-form" className="btn btn--accent" disabled={busy || !connectionReady}>
-              {busy ? "Connecting…" : "Connect"}{!busy ? <Icon name="arrow-right" /> : null}
-            </button>
-          ) : kind === "local" ? (
-            <button type="button" className="btn btn--accent" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
+          {page === "recent" && recentViews.length > 0 ? (
+            <>
+              <div className="workspace-dialog__footer-context" aria-live="polite">
+                <span>Click a workspace to open it</span>
+              </div>
+              <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
+            </>
           ) : (
-            <button type="button" className="btn btn--accent" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged || (kind === "wsl" && !wslReady)} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
+            <>
+              <div className="workspace-dialog__footer-context" aria-live="polite">
+                {selectingFolder ? <><span>Selected folder</span><strong title={browsePath}>{browsePath}</strong></> : <span>{kind === "ssh" ? (busy ? "Connecting to your host…" : "Next: choose a project folder") : kind === "wsl" ? (wslStatus === "unavailable" ? "WSL is not available" : "Checking WSL…") : "Select a folder to get started"}</span>}
+              </div>
+              <button type="button" className="btn btn--ghost" onClick={closeDialog} disabled={openingWorkspace}>Cancel</button>
+              {kind === "ssh" && !connectedSshProfileId ? (
+                <button type="submit" form="ssh-connection-form" className="btn btn--accent" disabled={busy || !connectionReady}>
+                  {busy ? "Connecting…" : "Connect"}{!busy ? <Icon name="arrow-right" /> : null}
+                </button>
+              ) : kind === "local" ? (
+                <button type="button" className="btn btn--accent" disabled={busy} onClick={() => void chooseLocal()}>{busy ? "Opening…" : "Choose folder…"}</button>
+              ) : (
+                <button type="button" className="btn btn--accent" disabled={busy || !browsePath.startsWith("/") || browseLoading || pathChanged || (kind === "wsl" && !wslReady)} onClick={() => void (kind === "ssh" ? chooseSsh() : chooseWsl())}>{openingWorkspace || busy ? "Opening…" : "Open Workspace"}</button>
+              )}
+            </>
           )}
         </footer>
       </div>

@@ -343,6 +343,8 @@ const anchor = {
     }> => ipcRenderer.invoke("workspace:close", id),
     getRecent: (): Promise<RecentWorkspace[]> =>
       ipcRenderer.invoke("workspace:getRecent"),
+    removeRecent: (args: { path: string; hostProfileId: string }): Promise<RecentWorkspace[]> =>
+      ipcRenderer.invoke("workspace:removeRecent", args),
     getRestoreTarget: (): Promise<{ path: string; hostProfileId: string } | null> =>
       ipcRenderer.invoke("workspace:getRestoreTarget"),
     listOpenInstances: (): Promise<WorkspaceInstancesState> =>

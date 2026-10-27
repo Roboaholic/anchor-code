@@ -516,6 +516,7 @@ export interface AnchorApi {
       workspaceInstances: WorkspaceInstancesState;
     }>;
     getRecent: () => Promise<RecentWorkspace[]>;
+    removeRecent: (args: { path: string; hostProfileId: string }) => Promise<RecentWorkspace[]>;
     /** Last active workspace if restore-on-launch is on and it is reachable. */
     getRestoreTarget: () => Promise<{ path: string; hostProfileId: string } | null>;
     listOpenInstances: () => Promise<WorkspaceInstancesState>;

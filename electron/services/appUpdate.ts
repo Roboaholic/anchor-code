@@ -55,6 +55,12 @@ let state: UpdateState = {
 const listeners = new Set<Listener>();
 let wired = false;
 let getMainWindow: (() => BrowserWindow | null) | null = null;
+/**
+ * True only after electron-updater emitted update-available (updateInfoAndProvider set).
+ * GitHub API fallback can mark status "available" without this — downloadUpdate then
+ * throws "Please check update first" until a real updater check succeeds.
+ */
+let canDownloadViaUpdater = false;
 /** Periodic background check handle (packaged + dev). */
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 /** Default: 30 minutes between automatic checks. */
@@ -129,6 +135,7 @@ function wireAutoUpdater() {
   });
 
   autoUpdater.on("update-available", (info: UpdateInfo) => {
+    canDownloadViaUpdater = true;
     setState({
       status: "available",
       latestVersion: info.version,
@@ -141,6 +148,7 @@ function wireAutoUpdater() {
   });
 
   autoUpdater.on("update-not-available", (info: UpdateInfo) => {
+    canDownloadViaUpdater = false;
     setState({
       status: "not-available",
       latestVersion: info.version,
@@ -281,6 +289,8 @@ async function checkViaGithubApi(): Promise<UpdateState> {
     if (!latest) throw new Error("Latest release has no tag");
     const current = app.getVersion();
     const cmp = compareSemver(latest, current);
+    // GitHub-only path does not populate electron-updater's updateInfoAndProvider.
+    canDownloadViaUpdater = false;
     if (cmp > 0) {
       setState({
         status: "available",
@@ -334,6 +344,34 @@ export async function checkForAppUpdates(): Promise<UpdateState> {
   return getUpdateState();
 }
 
+/**
+ * Ensure electron-updater has updateInfoAndProvider before downloadUpdate().
+ * Needed when UI "available" came from GitHub API fallback / a stale badge state.
+ */
+async function ensureUpdaterReadyForDownload(): Promise<boolean> {
+  if (canDownloadViaUpdater) return true;
+  setState({
+    status: "checking",
+    message: "Preparing download…",
+    error: null,
+    progress: null,
+  });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    // Do not fall back to GitHub here — download needs updater metadata.
+    canDownloadViaUpdater = false;
+    setState({
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+      message: null,
+      progress: null,
+    });
+    return false;
+  }
+  return canDownloadViaUpdater;
+}
+
 export async function downloadAppUpdate(): Promise<UpdateState> {
   const useUpdater = app.isPackaged || Boolean(process.env.ANCHOR_UPDATE_URL?.trim());
   if (!useUpdater) {
@@ -347,6 +385,19 @@ export async function downloadAppUpdate(): Promise<UpdateState> {
   }
   wireAutoUpdater();
   try {
+    const ready = await ensureUpdaterReadyForDownload();
+    if (!ready) {
+      if (state.status !== "error") {
+        setState({
+          status: "error",
+          error:
+            "No downloadable update from the updater feed. Try Check for updates, or open the release page.",
+          message: null,
+          progress: null,
+        });
+      }
+      return getUpdateState();
+    }
     setState({
       status: "downloading",
       progress: 0,
@@ -355,14 +406,45 @@ export async function downloadAppUpdate(): Promise<UpdateState> {
     });
     await autoUpdater.downloadUpdate();
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Stale flag / race: updater forgot updateInfo — one retry with a fresh check.
+    if (/check update first/i.test(msg)) {
+      canDownloadViaUpdater = false;
+      try {
+        const ready = await ensureUpdaterReadyForDownload();
+        if (ready) {
+          setState({
+            status: "downloading",
+            progress: 0,
+            message: "Starting download…",
+            error: null,
+          });
+          await autoUpdater.downloadUpdate();
+          return getUpdateState();
+        }
+      } catch (retryErr) {
+        setState({
+          status: "error",
+          error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+          message: null,
+          progress: null,
+        });
+        return getUpdateState();
+      }
+    }
     setState({
       status: "error",
-      error: err instanceof Error ? err.message : String(err),
+      error: msg,
       message: null,
       progress: null,
     });
   }
   return getUpdateState();
+}
+
+/** Test helper: whether Download can call electron-updater without another check. */
+export function isUpdaterReadyToDownload(): boolean {
+  return canDownloadViaUpdater;
 }
 
 export function installAppUpdate(): { ok: boolean; error?: string } {

@@ -65,6 +65,9 @@ describe("SettingsPanel", () => {
         getState: vi.fn(async () => null),
         onState: vi.fn(() => () => undefined),
         check: vi.fn(async () => null),
+        download: vi.fn(async () => null),
+        install: vi.fn(async () => ({ ok: true })),
+        openReleasePage: vi.fn(async () => ({ ok: true })),
       },
       agent: {
         listProfiles: vi.fn(async () => profiles),
@@ -187,5 +190,58 @@ describe("SettingsPanel", () => {
     act(() => useThemeStore.getState().setSettingsOpen(true));
     expect(screen.getByTestId("settings-font-family")).toBeTruthy();
     expect(screen.getByTestId("settings-line-height")).toBeTruthy();
+  });
+
+  it("reuses cached available update state without forcing Check for updates", async () => {
+    const available = {
+      status: "available" as const,
+      currentVersion: "0.1.69",
+      latestVersion: "0.1.70",
+      releaseUrl: "https://github.com/Roboaholic/anchor-code/releases/tag/v0.1.70",
+      canInstall: false,
+      packaged: true,
+      progress: null,
+      message: "Version 0.1.70 is available.",
+      error: null,
+    };
+    vi.mocked(window.anchor.updates.getState).mockResolvedValue(available);
+
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("updates"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Download update")).toBeTruthy();
+    });
+    expect(screen.getByText("v0.1.70")).toBeTruthy();
+    expect(window.anchor.updates.check).not.toHaveBeenCalled();
+  });
+
+  it("auto-checks Updates when main process has no actionable state yet", async () => {
+    const idle = {
+      status: "idle" as const,
+      currentVersion: "0.1.69",
+      latestVersion: null,
+      releaseUrl: null,
+      canInstall: false,
+      packaged: true,
+      progress: null,
+      message: null,
+      error: null,
+    };
+    const afterCheck = {
+      ...idle,
+      status: "not-available" as const,
+      latestVersion: "0.1.69",
+      message: "You're on the latest version.",
+    };
+    vi.mocked(window.anchor.updates.getState).mockResolvedValue(idle);
+    vi.mocked(window.anchor.updates.check).mockResolvedValue(afterCheck);
+
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("updates"));
+
+    await waitFor(() => {
+      expect(window.anchor.updates.check).toHaveBeenCalled();
+    });
   });
 });

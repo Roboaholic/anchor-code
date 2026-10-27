@@ -49,6 +49,7 @@ import {
   findTextSpans,
   rangesForSpans,
   scrollRangeIntoView,
+  shouldClaimMarkdownFindShortcut,
   stepMatchIndex,
 } from "./mdPreviewFind";
 
@@ -696,18 +697,23 @@ function RenderedMarkdownPane({
       const root = scrollRef.current;
       if (!root) return;
 
+      const pane = root.closest(".document-area__pane");
+      const sel = window.getSelection();
+      const selectionInsideSurface =
+        !!sel &&
+        sel.rangeCount > 0 &&
+        root.contains(sel.getRangeAt(0).commonAncestorContainer);
+      const claim = shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.activeElement,
+        findOpen,
+        selectionInsideSurface,
+      });
+      // Inactive/hidden panes must never capture — DocumentArea keeps them mounted.
+      if (!claim) return;
+
       if (mod && key === "f") {
-        const active = document.activeElement;
-        const inPane =
-          root.contains(active) ||
-          active === document.body ||
-          (active instanceof Element && Boolean(active.closest(".md-find-bar, .md-viewer")));
-        const sel = window.getSelection();
-        const selInPane =
-          !!sel &&
-          sel.rangeCount > 0 &&
-          root.contains(sel.getRangeAt(0).commonAncestorContainer);
-        if (!inPane && !selInPane && !findOpen) return;
         e.preventDefault();
         e.stopPropagation();
         openFind();

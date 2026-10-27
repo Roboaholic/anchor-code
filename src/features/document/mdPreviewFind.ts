@@ -178,3 +178,37 @@ export function scrollRangeIntoView(
     });
   }
 }
+
+/**
+ * Whether the Markdown rendered-preview Ctrl/Cmd+F handler should claim the
+ * keydown. Inactive/hidden document panes must not steal find from Monaco
+ * (or another tab) — DocumentArea keeps previously opened panes mounted.
+ *
+ * When there is no `.document-area__pane` ancestor (unit tests / standalone),
+ * the pane is treated as active.
+ */
+export function shouldClaimMarkdownFindShortcut(input: {
+  pane: Element | null;
+  surface: Element;
+  activeElement: Element | null;
+  findOpen: boolean;
+  selectionInsideSurface: boolean;
+}): boolean {
+  const { pane, surface, activeElement, findOpen, selectionInsideSurface } = input;
+  if (pane) {
+    if (pane instanceof HTMLElement && pane.hidden) return false;
+    if (pane.getAttribute("aria-hidden") === "true") return false;
+    if (!pane.classList.contains("is-active")) return false;
+  }
+
+  if (findOpen) return true;
+  if (selectionInsideSurface) return true;
+
+  const active = activeElement;
+  if (!active) return true;
+  if (active === document.body || active === document.documentElement) return true;
+  if (surface.contains(active)) return true;
+  if (active.closest(".md-find-bar, .md-viewer__rendered")) return true;
+  // Focus lives elsewhere (terminal, file tree, Monaco in another view, …).
+  return false;
+}

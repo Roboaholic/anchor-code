@@ -5,6 +5,7 @@ import {
   findTextSpans,
   rangeForSpan,
   rangesForSpans,
+  shouldClaimMarkdownFindShortcut,
   stepMatchIndex,
 } from "./mdPreviewFind";
 
@@ -73,5 +74,107 @@ describe("collectTextChunks / rangeForSpan", () => {
     const range = rangeForSpan(chunks, world);
     expect(range?.toString()).toBe("world");
     root.remove();
+  });
+});
+
+describe("shouldClaimMarkdownFindShortcut", () => {
+  function surface() {
+    const el = document.createElement("div");
+    el.className = "md-viewer__rendered-surface";
+    return el;
+  }
+
+  it("claims when there is no document pane (standalone / tests)", () => {
+    const root = surface();
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane: null,
+        surface: root,
+        activeElement: document.body,
+        findOpen: false,
+        selectionInsideSurface: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not claim for a hidden or inactive document pane", () => {
+    const root = surface();
+    const pane = document.createElement("div");
+    pane.className = "document-area__pane";
+    pane.hidden = true;
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.body,
+        findOpen: true,
+        selectionInsideSurface: false,
+      }),
+    ).toBe(false);
+
+    pane.hidden = false;
+    pane.setAttribute("aria-hidden", "true");
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.body,
+        findOpen: true,
+        selectionInsideSurface: false,
+      }),
+    ).toBe(false);
+
+    pane.removeAttribute("aria-hidden");
+    // mounted but not the active tab
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.body,
+        findOpen: true,
+        selectionInsideSurface: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("claims for an active pane with body focus or selection inside", () => {
+    const root = surface();
+    const pane = document.createElement("div");
+    pane.className = "document-area__pane is-active";
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.body,
+        findOpen: false,
+        selectionInsideSurface: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: document.createElement("textarea"),
+        findOpen: false,
+        selectionInsideSurface: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not claim when focus is outside an active pane and find is closed", () => {
+    const root = surface();
+    const pane = document.createElement("div");
+    pane.className = "document-area__pane is-active";
+    const terminalInput = document.createElement("textarea");
+    terminalInput.className = "xterm-helper-textarea";
+    expect(
+      shouldClaimMarkdownFindShortcut({
+        pane,
+        surface: root,
+        activeElement: terminalInput,
+        findOpen: false,
+        selectionInsideSurface: false,
+      }),
+    ).toBe(false);
   });
 });

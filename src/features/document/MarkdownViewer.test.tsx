@@ -237,4 +237,41 @@ describe("Markdown preview find", () => {
     });
     expect(screen.queryByRole("search", { name: "Find in Markdown" })).toBeNull();
   });
+
+  it("does not steal Ctrl+F from an inactive mounted markdown pane", () => {
+    setComments(false);
+    const { container } = render(
+      <div className="document-area__pane" hidden aria-hidden="true">
+        <MarkdownViewer {...props} content="# Hidden\n\nsecret match" />
+      </div>,
+    );
+    expect((container.querySelector(".document-area__pane") as HTMLElement | null)?.hidden).toBe(true);
+
+    const prevented = vi.fn();
+    act(() => {
+      const event = new KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      event.preventDefault = prevented;
+      window.dispatchEvent(event);
+    });
+    expect(screen.queryByRole("search", { name: "Find in Markdown" })).toBeNull();
+    expect(prevented).not.toHaveBeenCalled();
+  });
+
+  it("claims Ctrl+F when the markdown pane is the active document tab", () => {
+    setComments(false);
+    render(
+      <div className="document-area__pane is-active">
+        <MarkdownViewer {...props} content="# Active\n\nfind me" />
+      </div>,
+    );
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    });
+    expect(screen.getByRole("search", { name: "Find in Markdown" })).toBeTruthy();
+  });
 });

@@ -216,3 +216,25 @@ describe("Markdown viewer performance", () => {
     expect(scrollTo).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Markdown preview find", () => {
+  it("opens the find bar on Ctrl+F and closes on Escape", () => {
+    setComments(false);
+    render(<MarkdownViewer {...props} content="# Alpha\n\nAlpha beta alpha." />);
+    expect(screen.queryByRole("search", { name: "Find in Markdown" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    });
+    const bar = screen.getByRole("search", { name: "Find in Markdown" });
+    expect(bar).toBeTruthy();
+    const input = screen.getByLabelText("Find in document") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Alpha" } });
+    expect(input.value).toBe("Alpha");
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(screen.queryByRole("search", { name: "Find in Markdown" })).toBeNull();
+  });
+});

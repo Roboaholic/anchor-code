@@ -41,6 +41,16 @@ import { isMermaidLanguage, MermaidBlock } from "./MermaidBlock";
 import { elementAnchor, openAsk } from "@/features/ask/askStore";
 import type { AskAnchorRect } from "@/features/ask/askPrompt";
 import { NewCommentPopover } from "@/features/annotations/NewCommentPopover";
+import { MarkdownFindBar } from "./MarkdownFindBar";
+import {
+  applyMdFindHighlights,
+  clearMdFindHighlights,
+  collectTextChunks,
+  findTextSpans,
+  rangesForSpans,
+  scrollRangeIntoView,
+  stepMatchIndex,
+} from "./mdPreviewFind";
 
 // Rendered Markdown does not need Monaco. Load it only for Raw/search views.
 const CodeViewer = lazy(() => import("./CodeViewer").then((m) => ({ default: m.CodeViewer })));
@@ -492,6 +502,13 @@ function RenderedMarkdownPane({
   const [marks, setMarks] = useState<MdMarkRect[]>([]);
   const markFrameRef = useRef<number | null>(null);
   const [locateError, setLocateError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findActiveIndex, setFindActiveIndex] = useState(-1);
+  const [findMatchCount, setFindMatchCount] = useState(0);
+  const [findFocusNonce, setFindFocusNonce] = useState(0);
+  const findRangesRef = useRef<Range[]>([]);
 
   composerOpenRef.current = Boolean(composer);
   bubbleRef.current = bubble;
@@ -601,6 +618,122 @@ function RenderedMarkdownPane({
   useEffect(() => {
     setSelToolbar(null);
   }, [path]);
+
+  useEffect(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    setFindActiveIndex(-1);
+    setFindMatchCount(0);
+    clearMdFindHighlights();
+  }, [path]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    clearMdFindHighlights();
+    setFindActiveIndex(-1);
+    setFindMatchCount(0);
+  }, []);
+
+  const openFind = useCallback(() => {
+    const sel = window.getSelection()?.toString().trim();
+    if (sel && sel.length < 200 && !sel.includes("\n")) {
+      setFindQuery(sel);
+      setFindActiveIndex(-1);
+    }
+    setFindOpen(true);
+    setFindFocusNonce((n) => n + 1);
+  }, []);
+
+  const goFind = useCallback((direction: 1 | -1) => {
+    setFindActiveIndex((prev) =>
+      stepMatchIndex(prev, findRangesRef.current.length, direction),
+    );
+  }, []);
+
+  // Rebuild DOM ranges + CSS highlights whenever the query or document changes.
+  useEffect(() => {
+    if (!findOpen) {
+      clearMdFindHighlights();
+      findRangesRef.current = [];
+      setFindMatchCount(0);
+      return;
+    }
+    const root = bodyRef.current;
+    if (!root) {
+      findRangesRef.current = [];
+      setFindMatchCount(0);
+      return;
+    }
+    const { text: visible, chunks } = collectTextChunks(root);
+    const spans = findTextSpans(visible, findQuery, findCaseSensitive);
+    const ranges = rangesForSpans(chunks, spans);
+    findRangesRef.current = ranges;
+    setFindMatchCount(ranges.length);
+    setFindActiveIndex((prev) => {
+      if (ranges.length === 0) return -1;
+      if (prev < 0) return 0;
+      return Math.min(prev, ranges.length - 1);
+    });
+  }, [findOpen, findQuery, findCaseSensitive, content, widthStep, mdFontSize, revealNonce]);
+
+  // Apply highlight + scroll whenever the active match (or match set) changes.
+  useEffect(() => {
+    if (!findOpen) return;
+    const ranges = findRangesRef.current;
+    const container = scrollRef.current;
+    applyMdFindHighlights(ranges, findActiveIndex);
+    if (findActiveIndex >= 0 && ranges[findActiveIndex] && container) {
+      scrollRangeIntoView(ranges[findActiveIndex]!, container);
+    }
+  }, [findActiveIndex, findOpen, findMatchCount, findQuery, findCaseSensitive, content]);
+
+  useEffect(() => () => clearMdFindHighlights(), []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      const root = scrollRef.current;
+      if (!root) return;
+
+      if (mod && key === "f") {
+        const active = document.activeElement;
+        const inPane =
+          root.contains(active) ||
+          active === document.body ||
+          (active instanceof Element && Boolean(active.closest(".md-find-bar, .md-viewer")));
+        const sel = window.getSelection();
+        const selInPane =
+          !!sel &&
+          sel.rangeCount > 0 &&
+          root.contains(sel.getRangeAt(0).commonAncestorContainer);
+        if (!inPane && !selInPane && !findOpen) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFind();
+        return;
+      }
+
+      if (!findOpen) return;
+
+      if (key === "escape") {
+        // Let an open composer / context menu take Esc first.
+        if (composerOpenRef.current || ctxMenu) return;
+        e.preventDefault();
+        e.stopPropagation();
+        closeFind();
+        return;
+      }
+
+      if (mod && key === "g") {
+        e.preventDefault();
+        e.stopPropagation();
+        goFind(e.shiftKey ? -1 : 1);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [findOpen, openFind, closeFind, goFind, ctxMenu]);
 
   const updateSelectionToolbar = useCallback(() => {
     if (composerOpenRef.current) {
@@ -788,6 +921,26 @@ function RenderedMarkdownPane({
 
   return (
     <div className="md-viewer__rendered">
+      {findOpen ? (
+        <MarkdownFindBar
+          query={findQuery}
+          caseSensitive={findCaseSensitive}
+          matchCount={findMatchCount}
+          activeIndex={findActiveIndex}
+          focusNonce={findFocusNonce}
+          onQueryChange={(q) => {
+            setFindQuery(q);
+            setFindActiveIndex(-1);
+          }}
+          onCaseSensitiveChange={(v) => {
+            setFindCaseSensitive(v);
+            setFindActiveIndex(-1);
+          }}
+          onNext={() => goFind(1)}
+          onPrev={() => goFind(-1)}
+          onClose={closeFind}
+        />
+      ) : null}
       {truncated ? (
         <div className="banner banner--warn">
           File is larger than 1 MB — rendered view uses the first portion only.

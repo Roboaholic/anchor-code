@@ -136,15 +136,21 @@ export function NewCommentPopover({
 
   const submit = async () => {
     if (!canSubmit) return;
+    const body = draft.body.trim();
+    const status = draft.status;
+    const forceNewSession = newSession;
     setSaving(true);
     setError(null);
+    // Close immediately so SSH/persistence latency is not shown as "Adding…".
+    // On failure the draft is restored so the user can reopen and retry; the
+    // annotations store also surfaces a toast.
+    clearDraft(key);
+    closeRef.current();
     try {
-      await onSubmit(draft.body.trim(), draft.status, newSession);
-      clearDraft(key);
-      closeRef.current();
+      await onSubmit(body, status, forceNewSession);
     } catch (err) {
+      setDraft(key, { body, status });
       setError(formatError(err));
-    } finally {
       setSaving(false);
     }
   };

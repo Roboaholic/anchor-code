@@ -73,22 +73,51 @@ describe("NewCommentPopover", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the popover open and shows the error when saving fails", async () => {
+  it("closes immediately on submit and restores the draft when saving fails", async () => {
     const onClose = vi.fn();
+    let rejectSave!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
     render(
       <NewCommentPopover
         {...base}
-        onSubmit={async () => {
-          throw new Error("disk full");
-        }}
+        onSubmit={() => pending}
         onClose={onClose}
       />,
     );
-    fireEvent.change(screen.getByLabelText("Comment"), { target: { value: "x" } });
+    fireEvent.change(screen.getByLabelText("Comment"), { target: { value: "keep me" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Add" }));
     });
-    expect(screen.getByRole("alert").textContent).toBe("disk full");
-    expect(onClose).not.toHaveBeenCalled();
+    // Optimistic: popover closes before persistence finishes.
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      rejectSave(new Error("disk full"));
+      await pending.catch(() => undefined);
+    });
+    const key = commentDraftKey(base.path, 12, 18);
+    expect(useCommentDraftStore.getState().drafts[key]?.body).toBe("keep me");
+  });
+
+  it("does not wait for a slow save before closing", async () => {
+    const onClose = vi.fn();
+    let resolveSave!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    render(
+      <NewCommentPopover {...base} onSubmit={() => pending} onClose={onClose} />,
+    );
+    fireEvent.change(screen.getByLabelText("Comment"), { target: { value: "ship it" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useCommentDraftStore.getState().drafts).toEqual({});
+    await act(async () => {
+      resolveSave();
+      await pending;
+    });
   });
 });

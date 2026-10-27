@@ -504,7 +504,10 @@ export const useAnnotationsStore = create<AnnotationsState>((set, get) => ({
     const isCurrent = currentAnnotationContext(input.repoRoot);
     ++annotationSaveRevision;
     try {
-      const session = await window.anchor.annotations.addComment(input);
+      const session = await window.anchor.annotations.addComment({
+        ...input,
+        sessionId: get().activeSession?.id,
+      });
       if (!isCurrent()) return;
       ++annotationSaveRevision;
       set({

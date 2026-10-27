@@ -131,6 +131,7 @@ function cacheLineHeightLocally(lineHeight: number): void {
 
 export type SettingsFocusSection =
   | "appearance"
+  | "theme"
   | "agent"
   | "agent-skill"
   | "updates"

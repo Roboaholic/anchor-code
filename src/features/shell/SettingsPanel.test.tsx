@@ -114,18 +114,45 @@ describe("SettingsPanel", () => {
     act(() => useThemeStore.getState().setSettingsOpen(false));
   });
 
-  it("shows Appearance, Agent, Updates, Experimental — mobile access only under Experimental", () => {
+  it("shows Appearance, Theme, Agent, Updates, Experimental — mobile access only under Experimental", () => {
     render(<SettingsPanel />);
     act(() => useThemeStore.getState().setSettingsOpen(true));
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     const items = Array.from(nav.querySelectorAll("button")).map(
       (b) => b.textContent,
     );
-    expect(items).toEqual(["Appearance", "Agent", "Updates", "Experimental"]);
+    expect(items).toEqual([
+      "Appearance",
+      "Theme",
+      "Agent",
+      "Updates",
+      "Experimental",
+    ]);
     expect(screen.queryByText(/^Agent skill$/)).toBeNull();
     // Not on the default page.
     expect(screen.queryByText(/^Mobile access$/)).toBeNull();
   });
+
+  it("opens Theme section with color theme picker and no Appearance font controls", async () => {
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("theme"));
+    await waitFor(() => screen.getByTestId("settings-theme-picker"));
+    expect(screen.getByLabelText("Theme")).toBeTruthy();
+    expect(screen.getByText(/^Color theme$/)).toBeTruthy();
+    expect(screen.queryByTestId("settings-font-family")).toBeNull();
+    expect(screen.queryByTestId("settings-line-height")).toBeNull();
+  });
+
+  it("Appearance keeps fonts/layout and no longer hosts Color theme", () => {
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().setSettingsOpen(true));
+    expect(screen.getByTestId("settings-font-family")).toBeTruthy();
+    expect(screen.getByTestId("settings-line-height")).toBeTruthy();
+    expect(screen.getByText(/^Layout$/)).toBeTruthy();
+    expect(screen.queryByText(/^Color theme$/)).toBeNull();
+    expect(screen.queryByTestId("settings-theme-picker")).toBeNull();
+  });
+
 
   it("Experimental shows Mobile access with the relay off and no QR until enabled", async () => {
     render(<SettingsPanel />);

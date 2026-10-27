@@ -6788,9 +6788,15 @@ select.field__input {
 }
 
 .settings-theme {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .settings-theme {
+    grid-template-columns: 1fr;
+  }
 }
 
 .settings-theme__card {
@@ -6820,8 +6826,8 @@ select.field__input {
 
 /* Swatches use hardcoded theme colors — never var(--*) from the active theme. */
 .settings-theme__swatch {
-  width: 48px;
-  height: 34px;
+  width: 52px;
+  height: 38px;
   border-radius: 6px;
   border: 1px solid transparent;
   flex-shrink: 0;

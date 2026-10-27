@@ -219,10 +219,32 @@ export function SettingsPanel() {
     }
   }, []);
 
-  // Open Settings → Updates: always re-check so the Download button can appear.
+  // Open Settings → Updates: reuse main-process state when an update is already
+  // known (badge / background poll). Only auto-check when we don't have an
+  // actionable status yet — avoids forcing another "Check for updates" cycle
+  // that hides Download and can fail when the prior "available" came from the
+  // GitHub API fallback without electron-updater metadata.
   useEffect(() => {
     if (!open || section !== "updates") return;
-    void runCheck();
+    let cancelled = false;
+    void (async () => {
+      const s = await window.anchor?.updates?.getState?.().catch(() => null);
+      if (cancelled) return;
+      if (s) setUpdate(s);
+      if (
+        s &&
+        (s.status === "available" ||
+          s.status === "downloaded" ||
+          s.status === "downloading" ||
+          s.status === "checking")
+      ) {
+        return;
+      }
+      await runCheck();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open, section, runCheck]);
 
   const runDownload = useCallback(async () => {

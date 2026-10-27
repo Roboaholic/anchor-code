@@ -32,6 +32,8 @@ function ViewerFallback() {
 }
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
+import { ExternalChangeBanner } from "./ExternalChangeBanner";
+import { startOpenFileExternalSync } from "./openFileExternalSync";
 import { isPreviewableImagePath } from "@/core/workspace/markdownLinks";
 
 const TAB_DND_MIME = "application/x-anchor-tab-index";
@@ -66,6 +68,11 @@ export function DocumentArea() {
 
   useEffect(() => {
     setMountedIds(new Set(active ? [active.id] : []));
+  }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    return startOpenFileExternalSync();
   }, [workspaceRoot]);
 
   useEffect(() => {
@@ -470,56 +477,68 @@ function ActiveView({
     return <ViewerFallback />;
   }
 
+  const banner = <ExternalChangeBanner path={item.path} />;
+
   if (isPreviewableImagePath(item.path)) {
     return (
-      <Suspense fallback={<ViewerFallback />}>
-        <ImageViewer
-          path={item.path}
-          content={item.content}
-          truncated={item.truncated}
-          size={item.size}
-          mode={item.mdViewMode}
-          onModeChange={onMdMode}
-          revealLine={item.revealLine}
-          focusCommentId={item.focusCommentId}
-          revealNonce={item.revealNonce}
-        />
-      </Suspense>
+      <>
+        {banner}
+        <Suspense fallback={<ViewerFallback />}>
+          <ImageViewer
+            path={item.path}
+            content={item.content}
+            truncated={item.truncated}
+            size={item.size}
+            mode={item.mdViewMode}
+            onModeChange={onMdMode}
+            revealLine={item.revealLine}
+            focusCommentId={item.focusCommentId}
+            revealNonce={item.revealNonce}
+            reloadEpoch={item.reloadEpoch}
+          />
+        </Suspense>
+      </>
     );
   }
 
   if (item.isMarkdown) {
     return (
-      <Suspense fallback={<ViewerFallback />}>
-      <MarkdownViewer
-        path={item.path}
-        content={item.content}
-        truncated={item.truncated}
-        mode={item.mdViewMode}
-        onModeChange={onMdMode}
-        revealLine={item.revealLine}
-        focusCommentId={item.focusCommentId}
-        revealNonce={item.revealNonce}
-        searchHighlight={item.searchHighlight}
-      />
-      </Suspense>
+      <>
+        {banner}
+        <Suspense fallback={<ViewerFallback />}>
+        <MarkdownViewer
+          path={item.path}
+          content={item.content}
+          truncated={item.truncated}
+          mode={item.mdViewMode}
+          onModeChange={onMdMode}
+          revealLine={item.revealLine}
+          focusCommentId={item.focusCommentId}
+          revealNonce={item.revealNonce}
+          searchHighlight={item.searchHighlight}
+        />
+        </Suspense>
+      </>
     );
   }
 
   return (
-    <Suspense fallback={<ViewerFallback />}>
-    <CodeViewer
-      path={item.path}
-      content={item.content}
-      language={item.language}
-      truncated={item.truncated}
-      revealLine={item.revealLine}
-      focusCommentId={item.focusCommentId}
-      revealNonce={item.revealNonce}
-      searchHighlight={item.searchHighlight}
-      kind="source"
-    />
-    </Suspense>
+    <>
+      {banner}
+      <Suspense fallback={<ViewerFallback />}>
+      <CodeViewer
+        path={item.path}
+        content={item.content}
+        language={item.language}
+        truncated={item.truncated}
+        revealLine={item.revealLine}
+        focusCommentId={item.focusCommentId}
+        revealNonce={item.revealNonce}
+        searchHighlight={item.searchHighlight}
+        kind="source"
+      />
+      </Suspense>
+    </>
   );
 }
 

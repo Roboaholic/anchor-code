@@ -269,6 +269,15 @@ export type OpenItem =
       /** Bumps on every jump so repeated clicks re-run reveal. */
       revealNonce?: number;
       searchHighlight?: SearchHighlight | null;
+      /** True when the in-memory buffer diverges from the last loaded disk content. */
+      dirty?: boolean;
+      /** mtime/size fingerprint from the last successful disk load (or Keep mine). */
+      diskMtimeMs?: number;
+      diskSize?: number;
+      /** Pending external change while dirty; banner offers Reload / Keep mine. */
+      externalChange?: { mtimeMs: number; size: number } | null;
+      /** Bumps on each successful reload so image previews re-fetch bytes. */
+      reloadEpoch?: number;
     }
   | {
       id: string;
@@ -315,6 +324,14 @@ export interface DocumentState {
   /** Alias of closeAllItems (kept for existing callers). */
   closeAllFiles: () => void;
   updateFileContent: (path: string, content: string) => void;
+  /** Mark a tab dirty (future editable buffers). Read-only tabs stay clean. */
+  setFileDirty: (path: string, dirty: boolean) => void;
+  /** Re-read from disk and replace the buffer (clears dirty / externalChange). */
+  reloadFileFromDisk: (path: string) => Promise<void>;
+  /** Keep the buffer; adopt the external fingerprint so this change is ignored. */
+  keepFileBuffer: (path: string) => void;
+  /** Apply a fresh disk fingerprint; auto-reload when clean, else flag the tab. */
+  applyExternalDiskStat: (path: string, stat: { mtimeMs: number; size: number }) => void;
 }
 
 function welcomeItem(): OpenItem {
@@ -385,6 +402,29 @@ function diffItem(payload: DiffOpenPayload): Extract<OpenItem, { kind: "diff" }>
   };
 }
 
+function diskFingerprint(
+  item: Extract<OpenItem, { kind: "file" }>,
+): { mtimeMs: number; size: number } | null {
+  if (item.diskMtimeMs == null || item.diskSize == null) return null;
+  return { mtimeMs: item.diskMtimeMs, size: item.diskSize };
+}
+
+function sameDiskFingerprint(
+  a: { mtimeMs: number; size: number } | null | undefined,
+  b: { mtimeMs: number; size: number },
+): boolean {
+  return !!a && a.mtimeMs === b.mtimeMs && a.size === b.size;
+}
+
+async function readDiskFingerprint(path: string): Promise<{ mtimeMs: number; size: number } | null> {
+  try {
+    const st = await window.anchor.workspace.stat(path);
+    return { mtimeMs: st.mtimeMs, size: st.size };
+  } catch {
+    return null;
+  }
+}
+
 function ensureFileLoaded(id: string): Promise<void> {
   const file = useDocumentStore.getState().openItems.find((item) => item.id === id);
   if (file?.kind !== "file") return Promise.resolve();
@@ -397,23 +437,49 @@ function ensureFileLoaded(id: string): Promise<void> {
     // The user may have switched views before this queued read even started.
     if (fileLoads.get(id) !== request) return;
     try {
+      const fingerprintPromise = readDiskFingerprint(file.path);
       if (isRasterImagePath(file.path)) {
         // Raster images render from bytes in ImageViewer; their text is noise.
+        const fingerprint = await fingerprintPromise;
+        if (fileLoads.get(id) !== request) return;
         useDocumentStore.setState((state) => ({
           openItems: state.openItems.map((item) =>
             item.id === id && item.kind === "file"
-              ? { ...item, content: "", truncated: false, loadState: "loaded", error: undefined }
+              ? {
+                  ...item,
+                  content: "",
+                  truncated: false,
+                  size: fingerprint?.size ?? item.size,
+                  loadState: "loaded",
+                  error: undefined,
+                  dirty: false,
+                  externalChange: null,
+                  diskMtimeMs: fingerprint?.mtimeMs,
+                  diskSize: fingerprint?.size,
+                }
               : item,
           ),
         }));
         return;
       }
       const result = await window.anchor.workspace.readText(file.path);
+      const fingerprint = await fingerprintPromise;
       if (fileLoads.get(id) !== request) return;
       useDocumentStore.setState((state) => ({
         openItems: state.openItems.map((item) =>
           item.id === id && item.kind === "file"
-            ? { ...item, content: result.text, size: result.size, truncated: result.truncated, loadState: "loaded", error: undefined }
+            ? {
+                ...item,
+                content: result.text,
+                size: result.size,
+                truncated: result.truncated,
+                loadState: "loaded",
+                error: undefined,
+                dirty: false,
+                externalChange: null,
+                diskMtimeMs: fingerprint?.mtimeMs,
+                diskSize: fingerprint?.size ?? result.size,
+              }
             : item,
         ),
       }));
@@ -651,7 +717,94 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set((s) => ({
       openItems: s.openItems.map((item) =>
         item.id === existing.id && item.kind === "file"
-          ? { ...item, content, loadState: "loaded" }
+          ? {
+              ...item,
+              content,
+              loadState: "loaded",
+              // In-memory edit diverges from the last disk load.
+              dirty: true,
+              externalChange: null,
+            }
+          : item,
+      ),
+    }));
+  },
+
+  setFileDirty: (path, dirty) => {
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing) return;
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === existing.id && item.kind === "file"
+          ? {
+              ...item,
+              dirty,
+              ...(dirty ? {} : { externalChange: null }),
+            }
+          : item,
+      ),
+    }));
+  },
+
+  reloadFileFromDisk: async (path) => {
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing) return;
+    fileLoads.delete(existing.id);
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === existing.id && item.kind === "file"
+          ? {
+              ...item,
+              loadState: "deferred",
+              error: undefined,
+              dirty: false,
+              externalChange: null,
+              reloadEpoch: (item.reloadEpoch ?? 0) + 1,
+            }
+          : item,
+      ),
+    }));
+    await ensureFileLoaded(existing.id);
+  },
+
+  keepFileBuffer: (path) => {
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing?.externalChange) return;
+    const adopted = existing.externalChange;
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === existing.id && item.kind === "file"
+          ? {
+              ...item,
+              externalChange: null,
+              diskMtimeMs: adopted.mtimeMs,
+              diskSize: adopted.size,
+            }
+          : item,
+      ),
+    }));
+  },
+
+  applyExternalDiskStat: (path, stat) => {
+    const existing = findOpenFile(get().openItems, path);
+    if (!existing) return;
+    if (existing.loadState !== "loaded") return;
+    if (sameDiskFingerprint(diskFingerprint(existing), stat)) return;
+    // Already prompting for this exact fingerprint.
+    if (
+      existing.externalChange &&
+      sameDiskFingerprint(existing.externalChange, stat)
+    ) {
+      return;
+    }
+    if (!existing.dirty) {
+      void get().reloadFileFromDisk(path);
+      return;
+    }
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === existing.id && item.kind === "file"
+          ? { ...item, externalChange: { mtimeMs: stat.mtimeMs, size: stat.size } }
           : item,
       ),
     }));
@@ -746,4 +899,17 @@ export function bindDocumentAutosave(
     unsubscribeAutosave = null;
   };
   return unsubscribeAutosave;
+}
+
+
+/** Normalize path keys the same way open tabs do (for external sync / tests). */
+export function normalizeOpenFilePath(filePath: string): string {
+  return normalizePathKey(filePath);
+}
+
+export function openFileDiskFingerprintChanged(
+  item: Extract<OpenItem, { kind: "file" }>,
+  stat: { mtimeMs: number; size: number },
+): boolean {
+  return !sameDiskFingerprint(diskFingerprint(item), stat);
 }

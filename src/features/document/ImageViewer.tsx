@@ -25,6 +25,7 @@ export function ImageViewer({
   revealLine,
   focusCommentId,
   revealNonce,
+  reloadEpoch,
 }: {
   path: string;
   content: string;
@@ -35,11 +36,16 @@ export function ImageViewer({
   revealLine?: number;
   focusCommentId?: string | null;
   revealNonce?: number;
+  /** Bumps when the tab reloads from disk so raster previews re-fetch. */
+  reloadEpoch?: number;
 }) {
   const svg = isSvgPath(path);
   const showSource = svg && mode === "raw";
   // Re-read when the file content changes (SVG source reload / watcher refresh).
-  const image = useWorkspaceImage(showSource ? null : path, svg ? content : size);
+  const image = useWorkspaceImage(
+    showSource ? null : path,
+    svg ? content : `${size}:${reloadEpoch ?? 0}`,
+  );
 
   return (
     <div className="md-viewer image-viewer">

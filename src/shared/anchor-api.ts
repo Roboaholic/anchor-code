@@ -409,6 +409,10 @@ export interface AddCommentInput {
   lineText?: string;
   body: string;
   author?: string;
+  /** Initial status (default discussing). */
+  status?: CommentRecord["status"];
+  /** Skip listing every session YAML when the active id is already known. */
+  sessionId?: string;
 }
 
 export interface AnchReviewExportPayload {

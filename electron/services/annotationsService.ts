@@ -88,9 +88,45 @@ export interface AddCommentInput {
   author?: string;
   /** Initial status (default `discussing`). */
   status?: CommentStatus;
+  /**
+   * Prefer this active session file instead of listing/reading every YAML under
+   * `.anchor-code/`. Critical on SSH: each remote read is a round trip.
+   */
+  sessionId?: string;
 }
 
 const COMMENT_STATUSES: readonly CommentStatus[] = ["discussing", "need_modify", "closed"];
+
+/** Last-known active session id per host+repo. Avoids O(n) YAML scans on SSH. */
+const preferredActiveIds = new WeakMap<HostSession, Map<string, string>>();
+
+function cacheRootKey(host: HostSession, repoRoot: string): string {
+  return hostNormalize(host.kind, repoRoot).replace(/\\/g, "/");
+}
+
+function rememberActiveSession(
+  host: HostSession,
+  repoRoot: string,
+  sessionId: string,
+): void {
+  let map = preferredActiveIds.get(host);
+  if (!map) {
+    map = new Map();
+    preferredActiveIds.set(host, map);
+  }
+  map.set(cacheRootKey(host, repoRoot), sessionId);
+}
+
+function cachedActiveSessionId(
+  host: HostSession,
+  repoRoot: string,
+): string | undefined {
+  return preferredActiveIds.get(host)?.get(cacheRootKey(host, repoRoot));
+}
+
+function forgetActiveSession(host: HostSession, repoRoot: string): void {
+  preferredActiveIds.get(host)?.delete(cacheRootKey(host, repoRoot));
+}
 
 function sessionDir(host: HostSession, repoRoot: string): string {
   return hostJoin(host.kind, repoRoot, ".anchor-code");
@@ -242,27 +278,65 @@ export async function listSessionSummaries(
   };
 }
 
+async function readSessionFile(
+  host: HostSession,
+  filePath: string,
+): Promise<SessionRecord> {
+  const parsed = validateSession(parseYaml(await host.readFile(filePath)));
+  parsed.filePath = filePath;
+  return parsed;
+}
+
 async function loadSessionById(
   host: HostSession,
   repoRoot: string,
   sessionId: string,
 ): Promise<SessionRecord> {
-  const { sessions, error } = await loadSessions(host, repoRoot);
-  if (error) throw new HostError("failed", error);
-  const found = sessions.find((s) => s.id === sessionId);
-  if (!found) throw new HostError("not_found", `Session not found: ${sessionId}`);
-  return found;
+  // One file read — do not list/parse every session YAML just to fetch one id.
+  const filePath = sessionFilePath(host, repoRoot, sessionId);
+  try {
+    return await readSessionFile(host, filePath);
+  } catch (err) {
+    if (err instanceof HostError && err.code === "not_found") {
+      throw new HostError("not_found", `Session not found: ${sessionId}`);
+    }
+    throw err;
+  }
 }
 
+/**
+ * Load the writable session. When `preferredSessionId` is set (renderer already
+ * knows the active id, or CommentFacade cached it), only that YAML is read —
+ * avoiding an O(n) remote directory scan on every comment save over SSH.
+ */
 async function requireActiveSession(
   host: HostSession,
   repoRoot: string,
   author = "local-user",
+  preferredSessionId?: string,
 ): Promise<SessionRecord> {
+  const hint = preferredSessionId ?? cachedActiveSessionId(host, repoRoot);
+  if (hint) {
+    try {
+      const preferred = await loadSessionById(host, repoRoot, hint);
+      if (preferred.status === "active") {
+        rememberActiveSession(host, repoRoot, preferred.id);
+        return preferred;
+      }
+      forgetActiveSession(host, repoRoot);
+    } catch (err) {
+      // Stale id / externally deleted file → fall back to a full scan + create.
+      forgetActiveSession(host, repoRoot);
+      if (!(err instanceof HostError && (err.code === "not_found" || err.code === "failed"))) {
+        throw err;
+      }
+    }
+  }
   const session = await ensureActiveSession(host, repoRoot, author);
   if (session.status !== "active") {
     throw new HostError("failed", "No active session");
   }
+  rememberActiveSession(host, repoRoot, session.id);
   return session;
 }
 
@@ -286,6 +360,7 @@ export async function ensureActiveSession(
     );
   }
   if (active) {
+    rememberActiveSession(host, repoRoot, active.id);
     return active;
   }
   const id = makeId("session");
@@ -302,6 +377,7 @@ export async function ensureActiveSession(
   };
   await writeSession(host, repoRoot, session);
   session.filePath = sessionFilePath(host, repoRoot, id);
+  rememberActiveSession(host, repoRoot, id);
   return session;
 }
 
@@ -339,6 +415,7 @@ export async function addComment(
     host,
     input.repoRoot,
     input.author ?? "local-user",
+    input.sessionId,
   );
   const ts = nowIso();
   const selected = input.selectedText;
@@ -485,11 +562,19 @@ export async function endSession(
   repoRoot: string,
   options?: { export?: boolean; sessionId?: string },
 ): Promise<{ session: SessionRecord | null; exportPath?: string }> {
-  const { sessions, error } = await loadSessions(host, repoRoot);
-  if (error) throw new HostError("failed", error);
-  const active = options?.sessionId
-    ? sessions.find((s) => s.id === options.sessionId)
-    : sessions.find((s) => s.status === "active");
+  let active: SessionRecord | null = null;
+  if (options?.sessionId) {
+    try {
+      active = await loadSessionById(host, repoRoot, options.sessionId);
+    } catch (err) {
+      if (err instanceof HostError && err.code === "not_found") return { session: null };
+      throw err;
+    }
+  } else {
+    const { sessions, error } = await loadSessions(host, repoRoot);
+    if (error) throw new HostError("failed", error);
+    active = sessions.find((s) => s.status === "active") ?? null;
+  }
   if (!active) return { session: null };
   if (active.status === "active") {
     active.status = "closed";
@@ -497,6 +582,7 @@ export async function endSession(
   }
   const filePath = await writeSession(host, repoRoot, active);
   active.filePath = filePath;
+  forgetActiveSession(host, repoRoot);
 
   let exportPath: string | undefined;
   if (options?.export !== false) {
@@ -549,6 +635,7 @@ export async function restoreSession(
   target.ended_at = null;
   const filePath = await writeSession(host, repoRoot, target);
   target.filePath = filePath;
+  rememberActiveSession(host, repoRoot, target.id);
   return target;
 }
 

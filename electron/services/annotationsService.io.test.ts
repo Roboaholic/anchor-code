@@ -96,7 +96,8 @@ describe("annotation session I/O", () => {
     expect(reply.comments[0]!.messages.map((message) => message.body)).toEqual(["Comment", "Reply"]);
     expect(host.mkdirp).not.toHaveBeenCalled();
     expect(host.writeFile).toHaveBeenCalledTimes(2);
-    expect(host.listDir).toHaveBeenCalledTimes(2);
+    // First mutation scans once; the cached active id makes the reply a single-file read.
+    expect(host.listDir).toHaveBeenCalledTimes(1);
     expect(host.readFile).toHaveBeenCalledTimes(2);
     expect(host.exists).not.toHaveBeenCalled();
   });
@@ -110,5 +111,77 @@ describe("annotation session I/O", () => {
     });
     expect(host.mkdirp).toHaveBeenCalledExactlyOnceWith("/repo/.anchor-code");
     expect(host.writeFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("adds with sessionId using one read + one write and skips the directory scan", async () => {
+    const records = Array.from({ length: 8 }, (_, index) =>
+      session(index === 0 ? "active-one" : `closed-${index}`, `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00Z`),
+    );
+    records[0] = { ...records[0]!, status: "active" };
+    for (let i = 1; i < records.length; i++) records[i] = { ...records[i]!, status: "closed" };
+    const { host, api } = makeHost(records);
+    const added = await addComment(api, {
+      repoRoot: "/repo", filePath: "/repo/code.ts", kind: "source",
+      startLine: 1, endLine: 1, startColumn: 1, endColumn: 4,
+      selectedText: "let", beforeContext: "", afterContext: "", body: "Fast path",
+      sessionId: "active-one",
+    });
+    expect(added.comments).toHaveLength(1);
+    expect(host.listDir).not.toHaveBeenCalled();
+    expect(host.readFile).toHaveBeenCalledTimes(1);
+    expect(host.readFile).toHaveBeenCalledWith("/repo/.anchor-code/active-one.yaml");
+    expect(host.writeFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps addComment remote work to one read + write after the active id is known", async () => {
+    const delayMs = 40;
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const records = Array.from({ length: 10 }, (_, index) => {
+      const id = `session-${index}`;
+      return { ...session(id, `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00Z`), status: index === 9 ? "active" as const : "closed" as const };
+    });
+    const { host, api, files } = makeHost(records);
+    host.listDir.mockImplementation(async () => {
+      await sleep(delayMs);
+      return [...files.keys()].map((file) => ({ name: file.split("/").pop()!, type: "file" as const }));
+    });
+    host.readFile.mockImplementation(async (file: string) => {
+      await sleep(delayMs);
+      return files.get(file)!;
+    });
+    host.writeFile.mockImplementation(async (file: string, text: string) => {
+      await sleep(delayMs);
+      files.set(file, text);
+    });
+
+    const coldStarted = Date.now();
+    await addComment(api, {
+      repoRoot: "/repo", filePath: "/repo/code.ts", kind: "source",
+      startLine: 1, endLine: 1, startColumn: 1, endColumn: 4,
+      selectedText: "let", beforeContext: "", afterContext: "", body: "cold",
+    });
+    const coldMs = Date.now() - coldStarted;
+
+    host.listDir.mockClear();
+    host.readFile.mockClear();
+    host.writeFile.mockClear();
+
+    const warmStarted = Date.now();
+    await addComment(api, {
+      repoRoot: "/repo", filePath: "/repo/code.ts", kind: "source",
+      startLine: 2, endLine: 2, startColumn: 1, endColumn: 4,
+      selectedText: "var", beforeContext: "", afterContext: "", body: "warm",
+      sessionId: "session-9",
+    });
+    const warmMs = Date.now() - warmStarted;
+
+    expect(host.listDir).not.toHaveBeenCalled();
+    expect(host.readFile).toHaveBeenCalledTimes(1);
+    expect(host.writeFile).toHaveBeenCalledTimes(1);
+    // Cold path: listDir + ceil(10/4) read batches + write ≈ 1+3+1 = 5 delays.
+    // Warm path: 1 read + 1 write = 2 delays. Require a clear gap.
+    expect(coldMs).toBeGreaterThanOrEqual(delayMs * 4);
+    expect(warmMs).toBeLessThan(delayMs * 3);
+    expect(warmMs).toBeLessThan(coldMs);
   });
 });

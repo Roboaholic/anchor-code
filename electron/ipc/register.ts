@@ -61,6 +61,7 @@ import {
   normalizeTheme,
   pushHistoryRecentCompare,
   removeHistoryRecentCompare,
+  removeRecentWorkspace,
   setFontSize,
   setEditorFontFamily,
   setLineHeight,
@@ -568,6 +569,16 @@ export function registerIpc(opts: {
     async (): Promise<RecentWorkspace[]> => {
       const settings = await loadSettings();
       return settings.recentWorkspaces;
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:removeRecent",
+    async (_evt, args: { path?: unknown; hostProfileId?: unknown }): Promise<RecentWorkspace[]> => {
+      const workspacePath = typeof args?.path === "string" ? args.path : "";
+      const hostProfileId = typeof args?.hostProfileId === "string" ? args.hostProfileId : "";
+      if (!workspacePath || !hostProfileId) return (await loadSettings()).recentWorkspaces;
+      return removeRecentWorkspace(workspacePath, hostProfileId);
     },
   );
 

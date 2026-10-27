@@ -18,6 +18,9 @@ interface AnchorMock {
   };
   workspace: {
     pickFolder: ReturnType<typeof vi.fn>;
+    getRecent: ReturnType<typeof vi.fn>;
+    removeRecent: ReturnType<typeof vi.fn>;
+    listDir: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -61,6 +64,9 @@ function installAnchor(pickFolder?: ReturnType<typeof vi.fn>): AnchorMock {
     },
     workspace: {
       pickFolder: pickFolder ?? vi.fn(async () => null),
+      getRecent: vi.fn(async () => []),
+      removeRecent: vi.fn(async () => []),
+      listDir: vi.fn(async () => []),
     },
   };
   Object.assign(window, { anchor });
@@ -690,6 +696,140 @@ describe("SSH workspace connections", () => {
 // jsdom does not lay out elements or support min()/Electron CSS declarations.
 // Protect the stylesheet contracts here; actual bounds and hit testing require
 // rendered browser/Electron QA.
+
+describe("recent workspaces", () => {
+  let anchor: AnchorMock;
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  beforeEach(() => {
+    setWindowsUa(true);
+    anchor = installAnchor();
+    anchor.host.listProfiles.mockResolvedValue([
+      { id: "local-default", kind: "local" as const, label: "Local" },
+      { id: "wsl-default", kind: "wsl" as const, label: "WSL (Ubuntu)", wsl: { distro: "Ubuntu" } },
+      { id: "ssh-config-pyoneer3", kind: "ssh" as const, label: "pyoneer3", ssh: { configHost: "pyoneer3" } },
+    ]);
+    anchor.workspace.getRecent.mockResolvedValue([
+      { path: "/data/miles/pyoneer3", hostProfileId: "ssh-config-pyoneer3", lastOpenedAt: "2026-10-27T10:00:00.000Z" },
+      { path: "/home/miles/app", hostProfileId: "wsl-default", lastOpenedAt: "2026-10-26T10:00:00.000Z" },
+      { path: "/tmp/local-proj", hostProfileId: "local-default", lastOpenedAt: "2026-10-25T10:00:00.000Z" },
+    ]);
+  });
+
+  it("hides the page switcher and shows New when there are no entries", async () => {
+    anchor.workspace.getRecent.mockResolvedValue([]);
+    render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(anchor.workspace.getRecent).toHaveBeenCalled());
+    expect(screen.queryByRole("radiogroup", { name: "Open workspace page" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recent workspaces" })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Local" })).toBeTruthy());
+  });
+
+  it("lists recent workspaces with host icons and opens one on click", async () => {
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onClose={onClose} onOpen={onOpen} />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Recent workspaces" })).toBeTruthy());
+    expect(screen.getByRole("radio", { name: "Recent" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeTruthy();
+    expect(screen.getByText("/data/miles/pyoneer3 · pyoneer3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open app (WSL (Ubuntu))" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open local-proj (Local)" })).toBeTruthy();
+    // Recent page: Cancel only in footer
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" }));
+    await waitFor(() => expect(anchor.host.useProfile).toHaveBeenCalledWith("ssh-config-pyoneer3"));
+    expect(anchor.workspace.listDir).toHaveBeenCalledWith("/data/miles/pyoneer3");
+    expect(onOpen).toHaveBeenCalledWith({
+      path: "/data/miles/pyoneer3",
+      hostProfileId: "ssh-config-pyoneer3",
+      hostKind: "ssh",
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("keeps the entry and shows an inline error when a recent path is unreachable", async () => {
+    anchor.workspace.listDir.mockRejectedValueOnce(new Error("Cannot list directory: /data/miles/pyoneer3"));
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onClose={onClose} onOpen={onOpen} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Cannot list directory"));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeTruthy();
+  });
+
+  it("removes a recent entry from the list", async () => {
+    anchor.workspace.removeRecent.mockResolvedValue([
+      { path: "/home/miles/app", hostProfileId: "wsl-default", lastOpenedAt: "2026-10-26T10:00:00.000Z" },
+      { path: "/tmp/local-proj", hostProfileId: "local-default", lastOpenedAt: "2026-10-25T10:00:00.000Z" },
+    ]);
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Remove pyoneer3 from recent" }));
+    await waitFor(() => expect(anchor.workspace.removeRecent).toHaveBeenCalledWith({
+      path: "/data/miles/pyoneer3",
+      hostProfileId: "ssh-config-pyoneer3",
+    }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Open app (WSL (Ubuntu))" })).toBeTruthy();
+  });
+
+  it("switches between Recent and New pages", async () => {
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Recent workspaces" })).toBeTruthy());
+    await user.click(screen.getByRole("radio", { name: "New" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Local" })).toBeTruthy());
+    expect(screen.queryByRole("heading", { name: "Recent workspaces" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "New" }).getAttribute("aria-checked")).toBe("true");
+    // Windows default host is WSL → Open Workspace; Local would show Choose folder…
+    expect(screen.getByRole("button", { name: "Open Workspace" })).toBeTruthy();
+    await user.click(screen.getByRole("radio", { name: "Recent" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Recent workspaces" })).toBeTruthy());
+  });
+
+  it("lists every recent entry without a Show all cap", async () => {
+    const now = Date.parse("2026-10-27T12:00:00.000Z");
+    anchor.workspace.getRecent.mockResolvedValue(
+      Array.from({ length: 6 }, (_, i) => ({
+        path: `/tmp/proj-${i}`,
+        hostProfileId: "local-default",
+        lastOpenedAt: new Date(now - i * 3600000).toISOString(),
+      })),
+    );
+    render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Recent workspaces" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Open proj-0 (Local)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open proj-5 (Local)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("switches to New after removing the last recent entry", async () => {
+    anchor.workspace.getRecent.mockResolvedValue([
+      { path: "/data/miles/pyoneer3", hostProfileId: "ssh-config-pyoneer3", lastOpenedAt: "2026-10-27T10:00:00.000Z" },
+    ]);
+    anchor.workspace.removeRecent.mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<OpenWorkspaceDialog open onClose={() => {}} onOpen={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open pyoneer3 (pyoneer3)" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Remove pyoneer3 from recent" }));
+    await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "Open workspace page" })).toBeNull());
+    expect(screen.getByRole("radio", { name: "Local" })).toBeTruthy();
+  });
+});
+
 describe("workspace dialog layout contracts", () => {
   const dialogCss = readFileSync("src/features/workspace/OpenWorkspaceDialog.css", "utf8").replace(/\r\n/g, "\n");
 
@@ -733,7 +873,9 @@ describe("workspace dialog layout contracts", () => {
     await waitFor(() => expect(screen.getByText("home")).toBeTruthy());
     const content = document.querySelector(".workspace-dialog__content")!;
     const children = Array.from(content.children).map((el) => el.className.split(" ").find((c) => c.startsWith("host-choice") || c.startsWith("workspace-dialog__")) ?? el.className);
-    expect(children.slice(0, 3)).toEqual(["host-choice", "workspace-dialog__connected", "workspace-dialog__folder"]);
+    const hostIdx = children.indexOf("host-choice");
+    expect(hostIdx).toBeGreaterThanOrEqual(0);
+    expect(children.slice(hostIdx, hostIdx + 3)).toEqual(["host-choice", "workspace-dialog__connected", "workspace-dialog__folder"]);
     cleanup();
   });
 

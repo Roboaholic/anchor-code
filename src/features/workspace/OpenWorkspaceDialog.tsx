@@ -677,9 +677,7 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                           }))}
                         />
                       </div>
-                      <p className="modal__hint">Uses your OpenSSH config, keys, agent and jump hosts.</p>
                       {configHosts.length === 0 ? <p className="modal__hint">No named hosts found. Type an alias or use a manual connection.</p> : null}
-                      <div className="workspace-dialog__security-note"><Icon name="shield" /><p>Only connect to hosts you trust. Unknown host keys must be verified in a terminal first.</p></div>
                       <Disclosure className="workspace-dialog__details" summary="Authentication & security details">
                         <p>SSH config may run local commands. Key or agent authentication is required; load encrypted keys into ssh-agent. For password authentication, use a manual connection. Changed host keys are always rejected.</p>
                       </Disclosure>

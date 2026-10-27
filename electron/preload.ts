@@ -852,6 +852,13 @@ const anchor = {
       ipcRenderer.invoke("agent:getDefaultId"),
     setDefaultId: (id: string | null | undefined): Promise<void> =>
       ipcRenderer.invoke("agent:setDefaultId", id),
+    getDefaultPermissionMode: (): Promise<
+      "cli-default" | "read-only" | "full-access"
+    > => ipcRenderer.invoke("agent:getDefaultPermissionMode"),
+    setDefaultPermissionMode: (
+      mode: "cli-default" | "read-only" | "full-access",
+    ): Promise<"cli-default" | "read-only" | "full-access"> =>
+      ipcRenderer.invoke("agent:setDefaultPermissionMode", mode),
     discoverLaunch: (
       profileId: string | { profileId: string; force?: boolean },
     ) =>
@@ -874,6 +881,7 @@ const anchor = {
       model?: string;
       effort?: string;
       prompt?: string;
+      permissionMode?: "cli-default" | "read-only" | "full-access";
       readOnly?: boolean;
       resume?: boolean;
       sessionId?: string;

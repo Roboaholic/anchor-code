@@ -3,12 +3,21 @@ import { HostError } from "../host/types.js";
 import {
   detectAgentClis,
   getDefaultAgentId,
+  getDefaultAgentPermissionMode,
   listAgentProfiles,
   saveAgentProfiles,
   setDefaultAgentId,
+  setDefaultAgentPermissionMode,
   upsertAgentProfile,
 } from "../services/agentCli.js";
-import { agentReadOnlyArgs, buildAgentLaunchArgs, buildAgentResumeArgs, discoverAgentLaunchOptions } from "../services/agentLaunch.js";
+import {
+  buildAgentLaunchArgs,
+  buildAgentModeArgs,
+  buildAgentResumeArgs,
+  discoverAgentLaunchOptions,
+  resolveAgentPermissionMode,
+  type AgentPermissionMode,
+} from "../services/agentLaunch.js";
 import {
   listAgentSessionIds,
   listAgentSessions,
@@ -42,7 +51,18 @@ export class AgentFacade {
   upsertProfile(profile: Parameters<typeof upsertAgentProfile>[0]) { return upsertAgentProfile(profile); }
   defaultId() { return getDefaultAgentId(); }
   setDefaultId(id?: string) { return setDefaultAgentId(id); }
-  buildLaunchArgs(profileId: string, input: { model?: string; effort?: string; prompt?: string }) {
+  defaultPermissionMode() { return getDefaultAgentPermissionMode(); }
+  setDefaultPermissionMode(mode: AgentPermissionMode) {
+    return setDefaultAgentPermissionMode(mode);
+  }
+  buildLaunchArgs(profileId: string, input: {
+    model?: string;
+    effort?: string;
+    prompt?: string;
+    readOnly?: boolean;
+    permissionMode?: AgentPermissionMode;
+    profileArgs?: string[];
+  }) {
     return buildAgentLaunchArgs(profileId, input);
   }
 
@@ -107,20 +127,23 @@ export class AgentFacade {
     const fallbackTitle = [profile.name.trim() || profile.id, input.model, input.effort, time]
       .filter(Boolean)
       .join(" · ");
+    const globalMode = await getDefaultAgentPermissionMode();
+    const permissionMode = resolveAgentPermissionMode(input, globalMode);
+    const profileArgs = profile.args ?? [];
     const extra = input.resume && input.sessionId
       ? (() => {
           const resumeArgs = buildAgentResumeArgs(profile.id, input.sessionId);
           if (!resumeArgs) return null;
-          // Keep read-only flags on resume (Ask sessions must stay plan/read-only).
-          return input.readOnly
-            ? [...agentReadOnlyArgs(profile.id), ...resumeArgs]
-            : resumeArgs;
+          // Re-apply the session's permission flags before resume args.
+          const modeArgs = buildAgentModeArgs(profile.id, permissionMode, profileArgs);
+          return [...modeArgs, ...resumeArgs];
         })()
       : buildAgentLaunchArgs(profile.id, {
           model: input.model,
           effort: input.effort,
           prompt: prompt || undefined,
-          readOnly: input.readOnly,
+          permissionMode,
+          profileArgs,
         });
     if (!extra) {
       throw new HostError(

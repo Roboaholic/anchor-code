@@ -73,6 +73,8 @@ describe("SettingsPanel", () => {
         listProfiles: vi.fn(async () => profiles),
         getDefaultId: vi.fn(async () => "claude"),
         setDefaultId: vi.fn(async () => undefined),
+        getDefaultPermissionMode: vi.fn(async () => "full-access"),
+        setDefaultPermissionMode: vi.fn(async (m: string) => m),
         detect: vi.fn(async () =>
           profiles.map((p) => ({ ...p, detected: true })),
         ),
@@ -102,6 +104,7 @@ describe("SettingsPanel", () => {
       useTerminalStore.setState({
         agentProfiles: profiles,
         defaultAgentId: "claude",
+        defaultAgentPermissionMode: "full-access",
       });
     });
   });
@@ -164,6 +167,27 @@ describe("SettingsPanel", () => {
     });
     expect(screen.getByTestId("settings-agent-list")).toBeTruthy();
     expect(screen.getByText("Anchor Review skill")).toBeTruthy();
+  });
+
+  it("shows default permission Full access and persists changes", async () => {
+    render(<SettingsPanel />);
+    act(() => useThemeStore.getState().openSettings("agent"));
+    await waitFor(() => screen.getByTestId("settings-default-permission"));
+    const row = screen.getByTestId("settings-default-permission");
+    expect(row.querySelector('[aria-checked="true"]')?.textContent).toMatch(
+      /Full access/i,
+    );
+    const readOnly = Array.from(row.querySelectorAll('[role="radio"]')).find(
+      (b) => b.textContent === "Read-only",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(readOnly);
+    });
+    await waitFor(() => {
+      expect(window.anchor.agent.setDefaultPermissionMode).toHaveBeenCalledWith(
+        "read-only",
+      );
+    });
   });
 
   it("toggles agent enabled and persists via upsertProfile", async () => {

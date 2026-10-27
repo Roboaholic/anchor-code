@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AgentCliProfile, SkillInstallStatus } from "@/shared/anchor-api";
+import type {
+  AgentCliProfile,
+  AgentPermissionMode,
+  SkillInstallStatus,
+} from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { Dropdown } from "@/shared/Dropdown";
+import { SegmentedControl } from "@/shared/SegmentedControl";
 import { Switch } from "@/shared/Switch";
 import { Checkbox } from "@/shared/Checkbox";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
@@ -25,6 +30,9 @@ export function SettingsAgentSection() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot);
   const agentProfiles = useTerminalStore((s) => s.agentProfiles);
   const defaultAgentId = useTerminalStore((s) => s.defaultAgentId);
+  const defaultPermissionMode = useTerminalStore(
+    (s) => s.defaultAgentPermissionMode,
+  );
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
   const detectAgents = useTerminalStore((s) => s.detectAgents);
   const addCustomAgent = useTerminalStore((s) => s.addCustomAgent);
@@ -117,6 +125,19 @@ export function SettingsAgentSection() {
       setAgentError(formatError(err));
     }
   }, []);
+
+  const setDefaultPermission = useCallback(
+    async (mode: AgentPermissionMode) => {
+      setAgentError(null);
+      try {
+        await window.anchor.agent.setDefaultPermissionMode(mode);
+        await useTerminalStore.getState().loadAgentProfiles();
+      } catch (err) {
+        setAgentError(formatError(err));
+      }
+    },
+    [],
+  );
 
   const toggleEnabled = useCallback(
     async (profile: AgentCliProfile, enabled: boolean) => {
@@ -261,6 +282,30 @@ export function SettingsAgentSection() {
           onChange={(id) => void setDefault(id)}
           className="settings-dropdown"
           minMenuWidth={240}
+        />
+      </div>
+
+      <h3 className="settings-section__title settings-section__title--spaced">
+        Default permission
+      </h3>
+      <p className="settings-section__desc muted">
+        Applied to new agent sessions (including Feedback and mobile). Ask
+        always stays read-only. Override per launch in the New Agent dialog.
+      </p>
+      <div
+        className="settings-field-row"
+        data-testid="settings-default-permission"
+      >
+        <SegmentedControl
+          aria-label="Default agent permission"
+          size="sm"
+          value={defaultPermissionMode}
+          onChange={(mode) => void setDefaultPermission(mode)}
+          options={[
+            { value: "full-access", label: "Full access" },
+            { value: "cli-default", label: "CLI default" },
+            { value: "read-only", label: "Read-only" },
+          ]}
         />
       </div>
 

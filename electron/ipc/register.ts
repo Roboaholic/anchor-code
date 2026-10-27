@@ -1670,6 +1670,27 @@ export function registerIpc(opts: {
     },
   );
 
+  ipcMain.handle("agent:getDefaultPermissionMode", async () => {
+    try {
+      return await application.agent.defaultPermissionMode();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+
+  ipcMain.handle(
+    "agent:setDefaultPermissionMode",
+    async (_evt, mode: unknown) => {
+      try {
+        return await application.agent.setDefaultPermissionMode(
+          mode as "cli-default" | "read-only" | "full-access",
+        );
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+
   ipcMain.handle(
     "agent:discoverLaunch",
     async (
@@ -1715,6 +1736,7 @@ export function registerIpc(opts: {
         model?: string;
         effort?: string;
         prompt?: string;
+        permissionMode?: "cli-default" | "read-only" | "full-access";
         readOnly?: boolean;
         resume?: boolean;
         sessionId?: string;

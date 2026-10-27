@@ -33,6 +33,8 @@ describe("AgentSidebar history", () => {
       agent: {
         listProfiles: vi.fn(async () => profiles()),
         getDefaultId: vi.fn(async () => "codex"),
+        getDefaultPermissionMode: vi.fn(async () => "full-access"),
+        setDefaultPermissionMode: vi.fn(async (m: string) => m),
         detect: vi.fn(async () => profiles()),
         listSessions,
       },

@@ -537,10 +537,24 @@ components:
         source: { type: string }
         error: { type: string }
         cached: { type: boolean }
+    AgentPermissionMode:
+      type: string
+      enum: [cli-default, read-only, full-access]
     CreateAgentSessionInput:
       type: object
       required: [profileId]
-      properties: { profileId: { type: string }, model: { type: string }, effort: { type: string }, prompt: { type: string }, cols: { type: integer }, rows: { type: integer } }
+      properties:
+        profileId: { type: string }
+        model: { type: string }
+        effort: { type: string }
+        prompt: { type: string }
+        permissionMode: { $ref: "#/components/schemas/AgentPermissionMode" }
+        readOnly: { type: boolean, description: "Deprecated. Prefer permissionMode: read-only. Forces read-only when true." }
+        resume: { type: boolean }
+        sessionId: { type: string }
+        title: { type: string }
+        cols: { type: integer }
+        rows: { type: integer }
     CreateTerminalInput:
       type: object
       properties: { cols: { type: integer }, rows: { type: integer } }

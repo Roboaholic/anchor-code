@@ -331,6 +331,8 @@ export interface AgentLaunchDiscovery {
   cached?: boolean;
 }
 
+export type AgentPermissionMode = "cli-default" | "read-only" | "full-access";
+
 export interface AgentCliProfile {
   id: string;
   name: string;
@@ -800,6 +802,10 @@ export interface AnchorApi {
     upsertProfile: (profile: AgentCliProfile) => Promise<AgentCliProfile[]>;
     getDefaultId: () => Promise<string | undefined>;
     setDefaultId: (id: string | null | undefined) => Promise<void>;
+    getDefaultPermissionMode: () => Promise<AgentPermissionMode>;
+    setDefaultPermissionMode: (
+      mode: AgentPermissionMode,
+    ) => Promise<AgentPermissionMode>;
     discoverLaunch: (
       profileId: string | { profileId: string; force?: boolean },
     ) => Promise<AgentLaunchDiscovery>;
@@ -818,6 +824,7 @@ export interface AnchorApi {
       model?: string;
       effort?: string;
       prompt?: string;
+      permissionMode?: AgentPermissionMode;
       readOnly?: boolean;
       resume?: boolean;
       sessionId?: string;

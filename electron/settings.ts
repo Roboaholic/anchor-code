@@ -69,6 +69,11 @@ export interface AppSettings {
   /** Default agent id for Agent mode "+". */
   defaultAgentId?: string;
   /**
+   * Default permission mode for new agent sessions (New Agent, Feedback, mobile).
+   * Missing / invalid values normalize to full-access.
+   */
+  defaultAgentPermissionMode?: "cli-default" | "read-only" | "full-access";
+  /**
    * Persisted model/effort discovery per host+profile.
    * Key: `${hostKind}:${hostProfileId}:${agentId}`
    */
@@ -139,6 +144,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastHostProfileId:
     process.platform === "win32" ? "wsl-default" : "local-default",
   agentProfiles: [],
+  defaultAgentPermissionMode: "full-access",
   agentLaunchCache: {},
   historyRecentCompares: {},
   workspaceFilters: {},
@@ -203,6 +209,12 @@ export async function loadSettings(): Promise<AppSettings> {
         parsed.lastHostProfileId ?? DEFAULT_SETTINGS.lastHostProfileId,
       agentProfiles: parsed.agentProfiles ?? [],
       defaultAgentId: parsed.defaultAgentId,
+      defaultAgentPermissionMode:
+        parsed.defaultAgentPermissionMode === "cli-default" ||
+        parsed.defaultAgentPermissionMode === "read-only" ||
+        parsed.defaultAgentPermissionMode === "full-access"
+          ? parsed.defaultAgentPermissionMode
+          : "full-access",
       agentLaunchCache: parsed.agentLaunchCache ?? {},
       historyRecentCompares: parsed.historyRecentCompares ?? {},
       workspaceFilters: parsed.workspaceFilters ?? {},

@@ -181,12 +181,20 @@ export interface RemoteAgentLaunchOptions {
   cached?: boolean;
 }
 
+export type AgentPermissionMode = "cli-default" | "read-only" | "full-access";
+
 export interface CreateAgentSessionInput {
   profileId: string;
   model?: string;
   effort?: string;
   prompt?: string;
-  /** Ask: launch with the CLI's read-only / plan flags when supported. */
+  /**
+   * Permission / approval mode for the CLI launch.
+   * When omitted, the host Settings default applies (full-access when unset).
+   * `readOnly: true` still forces read-only and wins over this field.
+   */
+  permissionMode?: AgentPermissionMode;
+  /** @deprecated Prefer permissionMode: "read-only". Ask: forces read-only. */
   readOnly?: boolean;
   resume?: boolean;
   sessionId?: string;

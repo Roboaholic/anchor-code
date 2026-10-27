@@ -2503,6 +2503,22 @@ body.files-split-resizing .monaco-editor {
   border-bottom: 1px solid var(--warn-border);
 }
 
+.file-external-change {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.file-external-change__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.file-external-change__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .banner--info {
   background: var(--bg-elevated, var(--bg-hover));
   color: var(--text);

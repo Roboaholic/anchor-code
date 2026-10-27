@@ -2685,6 +2685,113 @@ body.files-split-resizing .monaco-editor {
   margin-left: auto;
 }
 
+/* Markdown rendered-preview find bar (Ctrl/Cmd+F). */
+.md-find-bar {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-menu, 0 4px 16px color-mix(in srgb, #000 18%, transparent));
+  flex-shrink: 0;
+}
+
+.md-find-bar__icon {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.md-find-bar__input {
+  width: 160px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.md-find-bar__input::placeholder {
+  color: var(--text-muted);
+}
+
+.md-find-bar__count {
+  min-width: 64px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.md-find-bar__toggle,
+.md-find-bar__nav,
+.md-find-bar__close {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+
+.md-find-bar__toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.md-find-bar__nav:disabled,
+.md-find-bar__close:disabled {
+  opacity: 0.4;
+}
+
+.md-find-bar [data-tip] {
+  position: relative;
+}
+
+.md-find-bar [data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--bg-elevated, var(--bg-panel));
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms ease;
+  z-index: var(--z-tooltip);
+}
+
+.md-find-bar [data-tip]:hover::after,
+.md-find-bar [data-tip]:focus-visible::after {
+  opacity: 1;
+}
+
+/* CSS Custom Highlight API — match search-jump-match palette. */
+::highlight(md-find) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: inherit;
+}
+
+::highlight(md-find-current) {
+  background-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: inherit;
+}
+
 .md-width-controls {
   display: inline-flex;
   align-items: center;
@@ -2739,6 +2846,7 @@ body.files-split-resizing .monaco-editor {
 }
 
 .md-viewer__rendered {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;

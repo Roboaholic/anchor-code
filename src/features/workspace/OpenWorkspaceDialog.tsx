@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DirEntry, HostKind, HostProfile } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
-import { Dropdown } from "@/shared/Dropdown";
+import { Combobox, isComboboxOpen } from "@/shared/Combobox";
+import { Dropdown, isDropdownOpen } from "@/shared/Dropdown";
 import { Disclosure } from "@/shared/Disclosure";
 import { Icon } from "@/shared/Icon";
 import { SegmentedControl } from "@/shared/SegmentedControl";
@@ -231,6 +232,8 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
     dialog?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        // Leave Escape to an open themed menu first.
+        if (isDropdownOpen() || isComboboxOpen()) return;
         if (!committingWorkspace.current) {
           event.preventDefault();
           closeDialog();
@@ -533,11 +536,24 @@ export function OpenWorkspaceDialog({ open, onClose, onOpen }: Props) {
                   </div>
                   {sshMode === "config" ? (
                     <>
-                      <label className="field">
-                        <span className="field__label">SSH config host</span>
-                        <input className="field__input" list="ssh-config-hosts" value={configAlias} disabled={busy} onChange={(event) => { invalidateSsh(); setConfigAlias(event.target.value); }} placeholder="Select or type a host alias" autoCapitalize="none" spellCheck={false} />
-                      </label>
-                      <datalist id="ssh-config-hosts">{configHosts.map((host) => <option key={host.alias} value={host.alias}>{host.source}</option>)}</datalist>
+                      <div className="field">
+                        <label className="field__label" htmlFor="ssh-config-host">SSH config host</label>
+                        <Combobox
+                          id="ssh-config-host"
+                          value={configAlias}
+                          disabled={busy}
+                          onChange={(next) => { invalidateSsh(); setConfigAlias(next); }}
+                          placeholder="Select or type a host alias"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          options={configHosts.map((host) => ({
+                            value: host.alias,
+                            label: host.alias,
+                            hint: host.source,
+                            textValue: host.alias,
+                          }))}
+                        />
+                      </div>
                       <p className="modal__hint">Uses your OpenSSH config, keys, agent and jump hosts.</p>
                       {configHosts.length === 0 ? <p className="modal__hint">No named hosts found. Type an alias or use a manual connection.</p> : null}
                       <div className="workspace-dialog__security-note"><Icon name="shield" /><p>Only connect to hosts you trust. Unknown host keys must be verified in a terminal first.</p></div>

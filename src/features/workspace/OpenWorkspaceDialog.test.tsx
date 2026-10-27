@@ -774,6 +774,15 @@ describe("workspace dialog layout contracts", () => {
     expect(dialogCss).not.toContain("workspace-dialog__steps");
   });
 
+
+  it("uses the themed Combobox for SSH config hosts instead of a native datalist", () => {
+    const dialogTsx = readFileSync("src/features/workspace/OpenWorkspaceDialog.tsx", "utf8");
+    expect(dialogTsx).toContain('from "@/shared/Combobox"');
+    expect(dialogTsx).toContain("<Combobox");
+    expect(dialogTsx).not.toContain("<datalist");
+    expect(dialogTsx).not.toMatch(/list=["']ssh-config-hosts["']/);
+  });
+
   it("gives the secondary connection controls smaller text with comfortable padding", () => {
     for (const selector of [".workspace-dialog__modes > .btn", ".workspace-dialog__connected > .btn"]) {
       const button = styleFor(selector);

@@ -538,11 +538,12 @@ describe("SSH workspace connections", () => {
     expect(screen.queryByLabelText("Remote folders")).toBeNull();
   });
 
-  it("connects by Enter and preserves verification guidance without a second CTA", async () => {
+  it("connects by Enter and keeps authentication details collapsible without a second CTA", async () => {
     const user = await showSsh();
     const summary = screen.getByRole("button", { name: "Authentication & security details" });
     expect(summary.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.getByText(/Unknown host keys must be verified/)).toBeTruthy();
+    expect(screen.queryByText(/Uses your OpenSSH config/)).toBeNull();
+    expect(screen.queryByText(/Unknown host keys must be verified/)).toBeNull();
     await user.click(summary);
     expect(summary.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText(/SSH config may run local commands/)).toBeTruthy();

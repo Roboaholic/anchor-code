@@ -9658,17 +9658,32 @@ input[type="radio"] {
 .anchor-seg {
   width: 100%;
 }
+/* SegmentedControl always pairs .repo-seg + .anchor-seg. The shared .repo-seg
+   base is an 18px toolbar pill — give dialog/settings tracks a real height and
+   center labels with height:100% + horizontal-only padding (same idea as Open
+   Workspace Recent|New tabs). Toolbar All/Tracked keeps raw .repo-seg only.
+   Host-choice cards override height/min-height/padding for the tall tiles. */
+.repo-seg.anchor-seg {
+  height: 28px;
+  margin-left: 0;
+  align-items: stretch;
+  padding: 2px;
+  box-sizing: border-box;
+}
 .anchor-seg .repo-seg__btn {
   flex: 1 1 0;
+  align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
-  height: auto;
-  padding: 6px 8px;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: 0 8px;
+  line-height: 1;
 }
 .anchor-seg--sm .repo-seg__btn {
-  min-height: 24px;
-  padding: 2px 6px;
+  min-height: 0;
+  padding: 0 6px;
 }
 .anchor-seg__title {
   display: block;

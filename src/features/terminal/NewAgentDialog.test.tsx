@@ -87,3 +87,53 @@ describe("NewAgentDialog permission override", () => {
     });
   });
 });
+
+describe("NewAgentDialog permission segmented control CSS", () => {
+  it("lets permission segmented control escape the 18px toolbar pill", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const css = fs.readFileSync(
+      path.resolve(__dirname, "../../styles/global.css"),
+      "utf8",
+    );
+    const styleFor = (selector: string, source = css) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(
+        `(^|\\s|})(${escaped})\\s*{([^}]*)}`,
+        "g",
+      );
+      const matches = [...source.matchAll(re)];
+      expect(matches.length, `Missing CSS rule: ${selector}`).toBeGreaterThan(0);
+      const body = matches.map((rule) => rule[3]).join(";");
+      return Object.fromEntries(
+        body
+          .split(";")
+          .filter((declaration) => declaration.includes(":"))
+          .map((declaration) => {
+            const colon = declaration.indexOf(":");
+            return [
+              declaration.slice(0, colon).trim(),
+              declaration.slice(colon + 1).trim(),
+            ];
+          }),
+      );
+    };
+    const unlocked = styleFor(".repo-seg.anchor-seg");
+    expect(unlocked.height).toBe("28px");
+    expect(unlocked["margin-left"]).toBe("0");
+    expect(unlocked["align-items"]).toBe("stretch");
+    expect(unlocked.padding).toBe("2px");
+    const btn = styleFor(".anchor-seg .repo-seg__btn");
+    expect(btn.height).toBe("100%");
+    expect(btn["min-height"]).toBe("0");
+    expect(btn.padding).toBe("0 8px");
+    expect(btn["align-items"]).toBe("center");
+    expect(btn["justify-content"]).toBe("center");
+    expect(btn["line-height"]).toBe("1");
+    const sm = styleFor(".anchor-seg--sm .repo-seg__btn");
+    expect(sm.padding).toBe("0 6px");
+    expect(sm["min-height"]).toBe("0");
+    // Toolbar All/Tracked keeps the fixed 18px pill (raw .repo-seg, no .anchor-seg).
+    expect(styleFor(".repo-seg").height).toBe("18px");
+  });
+});

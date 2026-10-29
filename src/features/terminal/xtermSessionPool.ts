@@ -87,14 +87,72 @@ export function isAgentTaskSubmitKey(event: {
 }
 export function shouldDeferAgentCtrlKey(
   kind: string,
-  event: { key: string; ctrlKey: boolean; metaKey: boolean },
+  event: { key: string; ctrlKey: boolean; metaKey: boolean; shiftKey?: boolean },
   hasSelection: boolean,
 ): boolean {
   if (kind !== "agent" || !event.ctrlKey || event.metaKey) return false;
   const key = event.key.toLowerCase();
-  if (key === "c" && hasSelection) return false;
+  // Ctrl+C with a selection and Ctrl+Shift+C always copy; Ctrl+Insert copies.
+  if (key === "c" && (hasSelection || event.shiftKey)) return false;
   if (key === "v") return false;
+  if (event.key === "Insert") return false;
   return true;
+}
+
+/**
+ * Agent TUIs (Codex) turn on xterm mouse tracking (DECSET 1000/1002/1003),
+ * which routes a plain drag to the CLI and leaves nothing selected to copy.
+ * xterm only forces a selection while Shift (Option on macOS) is held, so
+ * agent terminals rewrite an unmodified primary-button mousedown into that
+ * forced-selection form. Wheel reports still reach the CLI.
+ */
+export function shouldForceAgentSelection(
+  kind: string,
+  mouseTrackingMode: string,
+  event: { button: number; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean },
+): boolean {
+  return (
+    kind === "agent" &&
+    mouseTrackingMode !== "none" &&
+    event.button === 0 &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  );
+}
+
+function installAgentDragSelection(term: Terminal, hostEl: HTMLElement): () => void {
+  const isMac = navigator.platform.startsWith("Mac");
+  const onMouseDown = (ev: MouseEvent) => {
+    if (!ev.isTrusted) return;
+    if (!shouldForceAgentSelection("agent", term.modes.mouseTrackingMode, ev)) return;
+    const target = ev.target;
+    if (!(target instanceof Element) || !term.element?.contains(target)) return;
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    // Shift+click would extend an existing range; a plain click starts anew.
+    term.clearSelection();
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: ev.view,
+        detail: ev.detail,
+        screenX: ev.screenX,
+        screenY: ev.screenY,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        button: ev.button,
+        buttons: ev.buttons,
+        shiftKey: !isMac,
+        altKey: isMac,
+      }),
+    );
+  };
+  hostEl.addEventListener("mousedown", onMouseDown, true);
+  return () => hostEl.removeEventListener("mousedown", onMouseDown, true);
 }
 
 export type TerminalClipboardAction = "copy" | "paste";
@@ -298,6 +356,7 @@ export function acquireXtermSession(
     theme: xtermThemeFromCss(theme),
     allowProposedApi: true,
     rightClickSelectsWord: false,
+    macOptionClickForcesSelection: true,
     scrollback: 50_000,
     // Animates wheel/scrollbar scrolling only: buffer-driven scrolling (new
     // output while following the bottom) syncs immediately in xterm's Viewport.
@@ -334,6 +393,9 @@ export function acquireXtermSession(
     kind === "agent"
       ? installAgentWheelScrolling(term, (data) => useTerminalStore.getState().write(id, data))
       : [];
+
+  const disposeAgentDragSelection =
+    kind === "agent" ? installAgentDragSelection(term, hostEl) : () => undefined;
 
   let hydrating = true;
   const pendingData: Array<{ data: string; seq: number }> = [];
@@ -432,6 +494,7 @@ export function acquireXtermSession(
       ansiModeQueryDisposable.dispose();
       decModeQueryDisposable.dispose();
       for (const d of agentWheelDisposables) d.dispose();
+      disposeAgentDragSelection();
     };
 
   const session: PooledXterm = { id, kind, term, fit, hostEl, opened: false };

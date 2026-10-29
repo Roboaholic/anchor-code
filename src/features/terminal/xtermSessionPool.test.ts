@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAgentTaskSubmitKey,
   shouldDeferAgentCtrlKey,
+  shouldForceAgentSelection,
   shouldForwardAgentImagePaste,
   terminalClipboardAction,
   terminalKeySequence,
@@ -109,5 +110,31 @@ describe("isAgentTaskSubmitKey", () => {
         shiftKey: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("agent terminal copy", () => {
+  const ctrl = (key: string, shiftKey = false) => ({ key, ctrlKey: true, metaKey: false, shiftKey });
+
+  it("keeps copy shortcuts in the app instead of sending them to the CLI", () => {
+    expect(shouldDeferAgentCtrlKey("agent", ctrl("c"), true)).toBe(false);
+    expect(shouldDeferAgentCtrlKey("agent", ctrl("C", true), false)).toBe(false);
+    expect(shouldDeferAgentCtrlKey("agent", ctrl("Insert"), true)).toBe(false);
+    // Unselected Ctrl+C still interrupts the agent.
+    expect(shouldDeferAgentCtrlKey("agent", ctrl("c"), false)).toBe(true);
+  });
+
+  it("copies with Ctrl+Insert when text is selected", () => {
+    expect(terminalClipboardAction(ctrl("Insert"), true)).toBe("copy");
+    expect(terminalClipboardAction(ctrl("C", true), false)).toBe("copy");
+  });
+
+  it("forces drag selection while an agent TUI has mouse tracking on", () => {
+    const down = { button: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false };
+    expect(shouldForceAgentSelection("agent", "any", down)).toBe(true);
+    expect(shouldForceAgentSelection("agent", "none", down)).toBe(false);
+    expect(shouldForceAgentSelection("shell", "any", down)).toBe(false);
+    expect(shouldForceAgentSelection("agent", "any", { ...down, button: 2 })).toBe(false);
+    expect(shouldForceAgentSelection("agent", "any", { ...down, shiftKey: true })).toBe(false);
   });
 });

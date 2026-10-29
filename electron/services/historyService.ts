@@ -825,6 +825,25 @@ export async function checkoutBranch(
 }
 
 /**
+ * Build an error whose *message* carries git's own output. Electron IPC only
+ * preserves `message` across `ipcMain.handle`, so anything left in
+ * `causeDetail` never reaches the renderer.
+ */
+export function gitFailure(
+  summary: string,
+  result: { code: number | null; stdout: string; stderr: string },
+): HostError {
+  const detail = (result.stderr.trim() || result.stdout.trim())
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter((l) => l.length > 0)
+    .slice(-20)
+    .join("\n");
+  const head = `${summary} (exit ${result.code ?? "unknown"})`;
+  return new HostError("failed", detail ? `${head}:\n${detail}` : head, detail);
+}
+
+/**
  * Stage changes and create a commit with the given message.
  * When `paths` is a non-empty array, only those paths are staged
  * (`git add -- <paths>`); otherwise all changes are staged (`git add -A`).
@@ -845,11 +864,7 @@ export async function commitChanges(
     // Verify the selection will actually produce staged changes.
     const add = await host.run(repoRoot, "git", ["add", "--", ...paths]);
     if (add.code !== 0) {
-      throw new HostError(
-        "failed",
-        "Failed to stage selected files",
-        add.stderr || add.stdout,
-      );
+      throw gitFailure("Failed to stage selected files", add);
     }
     const cached = await readRun(host, repoRoot, "git", [
       "diff",
@@ -876,11 +891,7 @@ export async function commitChanges(
 
     const add = await host.run(repoRoot, "git", ["add", "-A"]);
     if (add.code !== 0) {
-      throw new HostError(
-        "failed",
-        "Failed to stage changes",
-        add.stderr || add.stdout,
-      );
+      throw gitFailure("Failed to stage changes", add);
     }
   }
 
@@ -889,11 +900,7 @@ export async function commitChanges(
     stdin: msg,
   });
   if (commit.code !== 0) {
-    throw new HostError(
-      "failed",
-      "git commit failed",
-      commit.stderr || commit.stdout,
-    );
+    throw gitFailure("git commit failed", commit);
   }
 
   const rev = await readRun(host, repoRoot, "git", [

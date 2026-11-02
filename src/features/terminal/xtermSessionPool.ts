@@ -151,8 +151,57 @@ function installAgentDragSelection(term: Terminal, hostEl: HTMLElement): () => v
       }),
     );
   };
+  // xterm treats every mouse report as user input and clears the selection,
+  // and Codex's any-motion tracking (DECSET 1003) reports plain hovering. Keep
+  // a finished selection highlighted by not reporting button-less motion or
+  // mouseup while it exists; the next click starts a new selection anyway.
+  const onPassiveMouse = (ev: MouseEvent) => {
+    if (!shouldHoldAgentSelection(term.modes.mouseTrackingMode, term.hasSelection(), ev)) return;
+    const target = ev.target;
+    if (!(target instanceof Element) || !term.element?.contains(target)) return;
+    ev.stopImmediatePropagation();
+  };
   hostEl.addEventListener("mousedown", onMouseDown, true);
-  return () => hostEl.removeEventListener("mousedown", onMouseDown, true);
+  hostEl.addEventListener("mousemove", onPassiveMouse, true);
+  hostEl.addEventListener("mouseup", onPassiveMouse, true);
+  return () => {
+    hostEl.removeEventListener("mousedown", onMouseDown, true);
+    hostEl.removeEventListener("mousemove", onPassiveMouse, true);
+    hostEl.removeEventListener("mouseup", onPassiveMouse, true);
+  };
+}
+
+/** Whether a mouse event over an agent terminal must not reach the CLI. */
+export function shouldHoldAgentSelection(
+  mouseTrackingMode: string,
+  hasSelection: boolean,
+  event: { type: string; buttons: number },
+): boolean {
+  if (mouseTrackingMode === "none" || !hasSelection) return false;
+  // During a drag xterm's selection listener lives on document; stopping the
+  // event at the host would also starve it, so only hold button-less motion.
+  if (event.type === "mousemove") return event.buttons === 0;
+  return event.type === "mouseup";
+}
+
+/**
+ * Decode an OSC 52 clipboard write (`52;c;<base64>`). Returns null for
+ * clipboard reads (`?`) and malformed payloads; reads are never answered.
+ */
+export function decodeOsc52Write(data: string): string | null {
+  const sep = data.indexOf(";");
+  if (sep < 0) return null;
+  const targets = data.slice(0, sep);
+  const payload = data.slice(sep + 1);
+  if (targets && !/[cps0-7]/.test(targets)) return null;
+  if (!payload || payload === "?") return null;
+  try {
+    const bin = atob(payload);
+    const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 export type TerminalClipboardAction = "copy" | "paste";
@@ -394,6 +443,18 @@ export function acquireXtermSession(
       ? installAgentWheelScrolling(term, (data) => useTerminalStore.getState().write(id, data))
       : [];
 
+  // Codex over SSH copies its own mouse selection with OSC 52
+  // ("Copy sent to terminal"); xterm.js ignores OSC 52 without this handler.
+  const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+    const text = decodeOsc52Write(data);
+    if (text) {
+      void window.anchor.clipboard.writeText(text).catch(() =>
+        navigator.clipboard.writeText(text).catch(() => undefined),
+      );
+    }
+    return true;
+  });
+
   const disposeAgentDragSelection =
     kind === "agent" ? installAgentDragSelection(term, hostEl) : () => undefined;
 
@@ -493,6 +554,7 @@ export function acquireXtermSession(
       fileLinks.dispose();
       ansiModeQueryDisposable.dispose();
       decModeQueryDisposable.dispose();
+      osc52Disposable.dispose();
       for (const d of agentWheelDisposables) d.dispose();
       disposeAgentDragSelection();
     };

@@ -3,6 +3,8 @@ import {
   isAgentTaskSubmitKey,
   shouldDeferAgentCtrlKey,
   shouldForceAgentSelection,
+  shouldHoldAgentSelection,
+  decodeOsc52Write,
   shouldForwardAgentImagePaste,
   terminalClipboardAction,
   terminalKeySequence,
@@ -136,5 +138,25 @@ describe("agent terminal copy", () => {
     expect(shouldForceAgentSelection("shell", "any", down)).toBe(false);
     expect(shouldForceAgentSelection("agent", "any", { ...down, button: 2 })).toBe(false);
     expect(shouldForceAgentSelection("agent", "any", { ...down, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("agent selection hold", () => {
+  it("swallows hover motion and mouseup only while a selection exists", () => {
+    expect(shouldHoldAgentSelection("any", true, { type: "mousemove", buttons: 0 })).toBe(true);
+    expect(shouldHoldAgentSelection("any", true, { type: "mouseup", buttons: 0 })).toBe(true);
+    expect(shouldHoldAgentSelection("any", true, { type: "mousemove", buttons: 1 })).toBe(false);
+    expect(shouldHoldAgentSelection("any", false, { type: "mousemove", buttons: 0 })).toBe(false);
+    expect(shouldHoldAgentSelection("none", true, { type: "mousemove", buttons: 0 })).toBe(false);
+  });
+});
+
+describe("decodeOsc52Write", () => {
+  it("decodes UTF-8 clipboard writes and ignores reads", () => {
+    expect(decodeOsc52Write("c;IH4vdw==")).toBe(" ~/w");
+    expect(decodeOsc52Write(";5aSN5Yi2")).toBe("复制");
+    expect(decodeOsc52Write("c;?")).toBeNull();
+    expect(decodeOsc52Write("c;")).toBeNull();
+    expect(decodeOsc52Write("nope")).toBeNull();
   });
 });

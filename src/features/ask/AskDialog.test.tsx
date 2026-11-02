@@ -102,3 +102,51 @@ describe("AskDialog popover", () => {
     );
   });
 });
+
+describe("AskDialog read-only toggle", () => {
+  beforeEach(() => {
+    useAskStore.setState({ context: null, drafts: {} });
+  });
+  afterEach(() => cleanup());
+
+  const setup = (calls: unknown[]) => {
+    useTerminalStore.setState({
+      tabs: [],
+      agentProfiles: [{ id: "claude", name: "Claude", enabled: true }] as never,
+      defaultAgentId: "claude",
+      loadAgentProfiles: async () => {},
+      createAgentTab: async (_p: unknown, o: unknown) => {
+        calls.push(o);
+        return true;
+      },
+    } as never);
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+  };
+
+  it("defaults checked and launches read-only", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    setup(calls);
+    const box = screen.getByRole("checkbox", { name: /Read-only/ }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(false);
+    await userEvent.type(screen.getByRole("textbox"), "why?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(calls[0].permissionMode).toBe("read-only");
+    expect(calls[0].readOnly).toBe(true);
+    expect(String(calls[0].prompt)).toContain("Read-only");
+  });
+
+  it("can be unchecked and then launches without read-only", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    setup(calls);
+    const box = screen.getByRole("checkbox", { name: /Read-only/ }) as HTMLInputElement;
+    await userEvent.click(box);
+    expect(box.checked).toBe(false);
+    await userEvent.type(screen.getByRole("textbox"), "why?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(calls[0].permissionMode).toBeUndefined();
+    expect(calls[0].readOnly).toBe(false);
+    expect(String(calls[0].prompt)).not.toContain("Read-only");
+  });
+});

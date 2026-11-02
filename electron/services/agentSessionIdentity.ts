@@ -5,6 +5,12 @@ import { resolveHostHome } from "./skillInstall.js";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 export const AGENT_SESSION_CAPTURE_TIMEOUT_MS = 5 * 60_000;
+/**
+ * Capture window while the agent tab stays open. Codex / Claude only write
+ * the transcript on the first prompt, which can come long after launch; the
+ * old 5-minute cap left such tabs "not resumable".
+ */
+export const AGENT_SESSION_LIVE_CAPTURE_TIMEOUT_MS = 24 * 60 * 60_000;
 export const AGENT_SESSION_SCAN_TIMEOUT_MS = 8_000;
 
 export function sessionIdPattern(profileId: string): RegExp | null {
@@ -203,6 +209,25 @@ function firstUserTitle(record: Record<string, unknown>): string | null {
   return text;
 }
 
+/**
+ * Records whose `name` / `title` can be the conversation title. Tool calls
+ * (Codex `{"type":"response_item","payload":{"type":"function_call","name":"exec"}}`)
+ * also carry `name`; reading those named resumed tabs "exec".
+ */
+function isTitleMetadataRecord(
+  record: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): boolean {
+  const recordType = typeof record.type === "string" ? record.type : "";
+  const payloadType = payload !== record && typeof payload.type === "string" ? payload.type : "";
+  if (recordType === "response_item" || recordType === "turn_context" || recordType === "compacted") return false;
+  if (recordType === "event_msg") return /name|title/i.test(payloadType);
+  for (const type of [recordType, payloadType]) {
+    if (/call|tool|function|output|reasoning|message|assistant|user/i.test(type)) return false;
+  }
+  return true;
+}
+
 export function parseAgentSessionTitle(profileId: string, text: string): string | null {
   const id = profileId.trim().toLowerCase();
   let fallback: string | null = null;
@@ -217,7 +242,11 @@ export function parseAgentSessionTitle(profileId: string, text: string): string 
       const payload = record.payload && typeof record.payload === "object"
         ? record.payload as Record<string, unknown>
         : record;
-      for (const key of ["customTitle", "sessionName", "session_name", "title", "name"] as const) {
+      if (!isTitleMetadataRecord(record, payload)) {
+        fallback ??= firstUserTitle(record);
+        continue;
+      }
+      for (const key of ["customTitle", "sessionName", "session_name", "thread_name", "title", "name"] as const) {
         const title = cleanTitle(payload[key]);
         if (title) return title;
       }
@@ -513,6 +542,86 @@ export function claimCreatedAgentSession(
   return null;
 }
 
+export interface CodexSessionMeta {
+  cwd: string | null;
+  /** `cli` / `vscode` for interactive TUI threads; `exec`, `{subagent:…}` otherwise. */
+  source: unknown;
+  threadSource: unknown;
+}
+
+export function parseCodexSessionMeta(text: string): CodexSessionMeta | null {
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.includes("session_meta")) continue;
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      if (record.type !== "session_meta" || !record.payload || typeof record.payload !== "object") continue;
+      const payload = record.payload as Record<string, unknown>;
+      return {
+        cwd: typeof payload.cwd === "string" ? payload.cwd : null,
+        source: payload.source,
+        threadSource: payload.thread_source,
+      };
+    } catch {
+      // partial line
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a freshly created transcript belongs to the interactive agent we
+ * launched in `root`. Codex 0.16x writes extra rollouts (sub-agents, `codex
+ * exec` helpers, other terminals) that must not be claimed: resuming one of
+ * those hangs at "Resuming session…" or opens the wrong conversation.
+ */
+export function createdSessionMatches(
+  profileId: string,
+  transcript: string,
+  filter: SessionWorkspaceFilter | null,
+): boolean {
+  const id = profileId.trim().toLowerCase();
+  if (id === "codex") {
+    const meta = parseCodexSessionMeta(transcript);
+    if (!meta) return true; // unknown layout: don't block capture
+    if (meta.source !== undefined && meta.source !== null) {
+      if (typeof meta.source !== "string") return false; // {subagent: …}
+      if (meta.source === "exec" || meta.source === "mcp") return false;
+    }
+    if (typeof meta.threadSource === "string" && meta.threadSource !== "user") return false;
+    if (filter && meta.cwd) return isPathWithin(meta.cwd, filter.root, filter.caseInsensitive);
+    return true;
+  }
+  if (filter) {
+    const cwd = parseAgentSessionCwd(transcript);
+    if (cwd) return isPathWithin(cwd, filter.root, filter.caseInsensitive);
+  }
+  return true;
+}
+
+export async function readAgentSessionHead(
+  host: HostSession,
+  profileId: string,
+  sessionId: string,
+): Promise<string> {
+  const home = await resolveHostHome(host);
+  const root = sessionRoot(home, profileId);
+  return root ? runSessionScan(host, root, sessionId) : "";
+}
+
+export interface CreatedSessionWaitOptions {
+  /** Keep polling while this returns true (e.g. the agent tab is running). */
+  isAlive?: () => boolean;
+  /** Extra async check on a candidate id before it is claimed. */
+  accept?: (sessionId: string) => Promise<boolean>;
+}
+
+/** Poll interval: fast at first, slower once the CLI has been idle a while. */
+export function createdSessionPollDelay(elapsedMs: number): number {
+  if (elapsedMs < 60_000) return 2_000;
+  if (elapsedMs < 10 * 60_000) return 5_000;
+  return 15_000;
+}
+
 export async function waitForCreatedAgentSession(
   host: HostSession,
   profileId: string,
@@ -521,9 +630,26 @@ export async function waitForCreatedAgentSession(
   claim?: (sessionId: string) => boolean,
   /** Launch time; only transcripts written after it count (claude / codex). */
   sinceMs?: number,
+  options: CreatedSessionWaitOptions = {},
 ): Promise<string | null> {
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
+  const rejected = new Set<string>();
+  const accepted = async (id: string): Promise<boolean> => {
+    if (rejected.has(id)) return false;
+    if (options.accept && !(await options.accept(id).catch(() => true))) {
+      rejected.add(id);
+      return false;
+    }
+    return !claim || claim(id);
+  };
+  const pick = async (current: ReadonlySet<string>): Promise<string | null> => {
+    for (const id of current) {
+      if (before.has(id)) continue;
+      if (await accepted(id)) return id;
+    }
+    return null;
+  };
   do {
     // Scan failures / timeouts (big transcript trees, slow SSH) are retried,
     // never fatal: a missed id means the session can't be resumed later.
@@ -531,17 +657,19 @@ export async function waitForCreatedAgentSession(
       // Prefer transcripts created after launch (file name = id): immune to
       // first-line formats (plan mode, long prompts) and to a failed `before`.
       const recent = await listRecentSessionFileIds(host, profileId, sinceMs ?? startedAt);
-      const fromFiles = recent ? claimCreatedAgentSession(recent, before, claim) : null;
+      const fromFiles = recent ? await pick(recent) : null;
       if (fromFiles) return fromFiles;
       if (!recent || recent.size === 0) {
         const current = await listAgentSessionIds(host, profileId);
-        const created = claimCreatedAgentSession(current, before, claim);
+        const created = await pick(current);
         if (created) return created;
       }
     } catch {
       // retry
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    if (options.isAlive && !options.isAlive()) return null;
+    await new Promise((resolve) => setTimeout(resolve, createdSessionPollDelay(Date.now() - startedAt)));
+    if (options.isAlive && !options.isAlive()) return null;
   } while (Date.now() < deadline);
   return null;
 }

@@ -9,6 +9,9 @@ import {
   parseAgentSessionCwd,
   sessionScanNeedles,
   parseAgentSessionTitle,
+  createdSessionMatches,
+  createdSessionPollDelay,
+  parseCodexSessionMeta,
   listAgentSessions,
   parseAgentSessionList,
   sessionIdsFromPaths,
@@ -238,5 +241,41 @@ describe("workspace-scoped session history", () => {
     expect(script).toContain(`head -n ${AGENT_SESSION_WORKSPACE_SCAN_WINDOW}`);
     expect(script).toContain("grep -qF -e '/home/u/repo'");
     expect(sessionScanNeedles("omp", "/home/u/repo/")).toEqual(["/home/u/repo"]);
+  });
+});
+
+describe("codex 0.166 sessions", () => {
+  const id = "01a19c3d-cd0e-70e2-b138-13a98ca2a825";
+  const meta = (extra: Record<string, unknown>) =>
+    JSON.stringify({ type: "session_meta", payload: { session_id: id, id, cwd: "/data/miles/pyoneer2", ...extra } });
+
+  it("does not take a tool call name as the title", () => {
+    const text = [
+      meta({ source: "cli", thread_source: "user" }),
+      JSON.stringify({ type: "response_item", payload: { type: "function_call", name: "exec", arguments: "{}" } }),
+      JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Fix restore" }] } }),
+    ].join("\n");
+    expect(parseAgentSessionTitle("codex", text)).toBe("Fix restore");
+  });
+
+  it("uses a codex thread rename event", () => {
+    const text = [meta({}), JSON.stringify({ type: "event_msg", payload: { type: "thread_name_updated", thread_name: "Restore fix" } })].join("\n");
+    expect(parseAgentSessionTitle("codex", text)).toBe("Restore fix");
+  });
+
+  it("only claims interactive rollouts in the workspace", () => {
+    const filter = { root: "/data/miles/pyoneer2" };
+    expect(createdSessionMatches("codex", meta({ source: "cli", thread_source: "user" }), filter)).toBe(true);
+    expect(createdSessionMatches("codex", meta({ source: "exec" }), filter)).toBe(false);
+    expect(createdSessionMatches("codex", meta({ source: { subagent: "review" } }), filter)).toBe(false);
+    expect(createdSessionMatches("codex", meta({ source: "cli", cwd: "/data/miles/other" }), filter)).toBe(false);
+    expect(createdSessionMatches("codex", "", filter)).toBe(true);
+    expect(parseCodexSessionMeta(meta({ source: "cli" }))?.cwd).toBe("/data/miles/pyoneer2");
+  });
+
+  it("slows polling but keeps going", () => {
+    expect(createdSessionPollDelay(0)).toBe(2_000);
+    expect(createdSessionPollDelay(2 * 60_000)).toBe(5_000);
+    expect(createdSessionPollDelay(60 * 60_000)).toBe(15_000);
   });
 });

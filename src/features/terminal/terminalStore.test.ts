@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTabInfo } from "@/shared/anchor-api";
 import {
+  agentsToAutoRestore,
+  autoRestoreWorkspaceAgents,
   markAgentActive,
+  reopenUnresumableAgent,
   mostRecentParkedAgent,
   restoreParkedWorkspaceAgents,
   resumeMostRecentParkedAgent,
@@ -147,7 +150,7 @@ describe("workspace agent persistence", () => {
     restoreParkedWorkspaceAgents("/workspace", "local-default");
     expect(createSession).not.toHaveBeenCalled();
     expect(useTerminalStore.getState().parkedAgents).toEqual([
-      { profileId: "codex", sessionId: "codex-session", title: "Auth", groupId: "default" },
+      { profileId: "codex", sessionId: "codex-session", title: "Auth", wasOpen: true, groupId: "default" },
     ]);
 
     await useTerminalStore.getState().resumeParkedAgent("codex-session");
@@ -620,5 +623,87 @@ describe("saved conversations: recency, lazy resume, unresumable", () => {
   it("returns false when nothing is saved (caller opens the new-session dialog)", async () => {
     stub();
     expect(await resumeMostRecentParkedAgent()).toBe(false);
+  });
+});
+
+describe("auto-restore open agents after relaunch", () => {
+  function stub() {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const createSession = vi.fn(async (args: { sessionId?: string; resume?: boolean }) => ({
+      id: `t-${args.sessionId ?? "fresh"}`,
+      title: "x",
+      cwd: "/workspace",
+      status: "running" as const,
+      kind: "agent" as const,
+      agentId: "codex",
+      ...(args.sessionId ? { agentSessionId: args.sessionId } : {}),
+    }));
+    vi.stubGlobal("window", {
+      anchor: {
+        agent: {
+          listProfiles: vi.fn(async () => [{ id: "codex", name: "Codex", command: "codex" }]),
+          createSession,
+          setDefaultId: vi.fn(),
+        },
+        terminal: {},
+      },
+    });
+    return createSession;
+  }
+
+  beforeEach(() => {
+    useTerminalStore.setState({
+      tabs: [],
+      parkedAgents: [],
+      activeByMode: { terminal: null, agent: null },
+      tabWorkgroupById: {},
+      workspaceCwd: "/workspace",
+      workspaceHostProfileId: "ssh-1",
+      error: null,
+    });
+  });
+
+  it("keeps exited-but-identified tabs and reopens previously open ones", async () => {
+    const createSession = stub();
+    const agent = (id: string, status: "running" | "exited", sid?: string): TerminalTabInfo => ({
+      id, title: id, cwd: "/workspace", status, kind: "agent", agentId: "codex",
+      ...(sid ? { agentSessionId: sid } : {}),
+    });
+    useTerminalStore.setState({
+      tabs: [agent("a", "exited", "s-a"), agent("b", "running", "s-b"), agent("dead", "exited")],
+    });
+    markAgentActive("a", 100);
+    markAgentActive("b", 200);
+    saveWorkspaceAgents("/workspace", "ssh-1");
+    useTerminalStore.setState({ tabs: [], parkedAgents: [] });
+    restoreParkedWorkspaceAgents("/workspace", "ssh-1");
+    expect(useTerminalStore.getState().parkedAgents.map((p) => p.sessionId)).toEqual(["s-b", "s-a"]);
+    expect(agentsToAutoRestore(useTerminalStore.getState().parkedAgents).map((p) => p.sessionId)).toEqual(["s-a", "s-b"]);
+    expect(await autoRestoreWorkspaceAgents()).toBe(2);
+    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(createSession).toHaveBeenLastCalledWith(expect.objectContaining({ resume: true, sessionId: "s-b" }));
+    expect(useTerminalStore.getState().parkedAgents).toEqual([]);
+  });
+
+  it("does not auto-open conversations that were already closed", () => {
+    useTerminalStore.setState({ parkedAgents: [] });
+    expect(agentsToAutoRestore([
+      { profileId: "codex", sessionId: "s-closed", title: "c", groupId: DEFAULT_WORKGROUP_ID },
+      { profileId: "codex", sessionId: "unresumable:x", title: "u", groupId: DEFAULT_WORKGROUP_ID, resumable: false, wasOpen: true },
+    ])).toEqual([]);
+  });
+
+  it("starts a fresh agent from a not-resumable row", async () => {
+    const createSession = stub();
+    useTerminalStore.setState({
+      parkedAgents: [{ profileId: "codex", sessionId: "unresumable:1", title: "Codex · 15:02", groupId: DEFAULT_WORKGROUP_ID, resumable: false }],
+    });
+    expect(await reopenUnresumableAgent("unresumable:1")).toBe(true);
+    expect(createSession).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
+    expect(useTerminalStore.getState().parkedAgents).toEqual([]);
   });
 });

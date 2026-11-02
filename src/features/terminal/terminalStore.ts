@@ -78,6 +78,8 @@ type PersistedAgent = {
   readOnly?: boolean;
   /** Permission mode used when the session was launched. */
   permissionMode?: AgentPermissionMode;
+  /** Tab was open when the workspace was saved: reopened automatically. */
+  open?: boolean;
 };
 
 export type ParkedAgent = {
@@ -92,6 +94,8 @@ export type ParkedAgent = {
   resumable?: boolean;
   /** Last resume failure (shown in the sidebar). */
   error?: string;
+  /** Was an open tab when last saved (auto-resumed on workspace restore). */
+  wasOpen?: boolean;
   /** @deprecated Migrated to permissionMode. */
   readOnly?: boolean;
   /** Permission mode used when the session was launched. */
@@ -274,6 +278,7 @@ function parkedFromPersisted(
       ...(saved.lastActiveAt ? { lastActiveAt: saved.lastActiveAt } : {}),
       ...(saved.titlePinned ? { titlePinned: true } : {}),
       ...(resumable ? {} : { resumable: false }),
+      ...(saved.open ? { wasOpen: true } : {}),
       ...(() => {
         const mode = normalizePersistedPermissionMode(saved);
         return mode ? { permissionMode: mode } : {};
@@ -439,10 +444,12 @@ export function saveWorkspaceAgents(
     const now = Date.now();
     const live: PersistedAgent[] = state.tabs
       .filter(
+        // Exited tabs too: on quit / update the PTYs can die before this
+        // final save, which used to drop every open conversation.
         (tab): tab is TerminalTabInfo & { agentId: string } =>
           tab.kind === "agent" &&
-          tab.status === "running" &&
-          typeof tab.agentId === "string",
+          typeof tab.agentId === "string" &&
+          (tab.status === "running" || Boolean(tab.agentSessionId?.trim())),
       )
       .map((tab) => {
         const sessionId = tab.agentSessionId?.trim() ?? "";
@@ -456,6 +463,7 @@ export function saveWorkspaceAgents(
             agentLastActiveAt.get(tab.id) ??
             (state.activeByMode.agent === tab.id ? now : undefined),
           ...(sessionId ? {} : { resumable: false }),
+          open: true,
           ...(tab.titleSource === "user" ? { titlePinned: true } : {}),
           ...(() => {
             const mode =
@@ -521,6 +529,64 @@ export function restoreParkedWorkspaceAgents(
       liveSessionIds,
     ),
   }));
+}
+
+/** Most open tabs reopened automatically per workspace restore. */
+export const AUTO_RESTORE_AGENT_LIMIT = 4;
+
+/** Parked conversations that were open tabs last time, oldest first. */
+export function agentsToAutoRestore(parked: ParkedAgent[]): ParkedAgent[] {
+  return byRecency(
+    parked.filter((item) => item.wasOpen && item.resumable !== false),
+  )
+    .slice(0, AUTO_RESTORE_AGENT_LIMIT)
+    .reverse();
+}
+
+/**
+ * After relaunch / update: reopen the agent tabs that were open last time
+ * (most recent ends up focused). Runs once the workspace (incl. SSH) has
+ * connected; earlier only a top-bar click resumed a single conversation.
+ */
+export async function autoRestoreWorkspaceAgents(isCurrent: () => boolean = () => true): Promise<number> {
+  const hasLiveAgent = () =>
+    useTerminalStore.getState().tabs.some((tab) => (tab.kind ?? "shell") === "agent");
+  if (hasLiveAgent()) return 0;
+  const targets = agentsToAutoRestore(useTerminalStore.getState().parkedAgents);
+  let restored = 0;
+  for (const item of targets) {
+    if (!isCurrent()) break;
+    if (await resumeParkedAgent(item.sessionId)) restored += 1;
+  }
+  return restored;
+}
+
+/**
+ * Not-resumable row: its CLI session id was never captured, so start a fresh
+ * conversation with the same agent / group / permission instead of a dead row.
+ */
+export async function reopenUnresumableAgent(sessionId: string): Promise<boolean> {
+  const parked = useTerminalStore
+    .getState()
+    .parkedAgents.find((item) => item.sessionId === sessionId);
+  if (!parked) return false;
+  const profiles = await window.anchor.agent.listProfiles();
+  const profile = profiles.find((item) => item.id === parked.profileId);
+  if (!profile || profile.enabled === false) {
+    setParkedError(sessionId, `Agent profile unavailable: ${parked.profileId}`);
+    return false;
+  }
+  useTerminalStore.getState().setActiveWorkgroup(parked.groupId);
+  const ok = await useTerminalStore.getState().createAgentTab(profile, {
+    permissionMode: parked.permissionMode ?? (parked.readOnly ? "read-only" : undefined),
+    readOnly: parked.readOnly,
+  });
+  if (ok) {
+    useTerminalStore.setState((state) => ({
+      parkedAgents: state.parkedAgents.filter((item) => item.sessionId !== sessionId),
+    }));
+  }
+  return ok;
 }
 
 export async function resumeParkedAgent(sessionId: string): Promise<boolean> {
@@ -856,6 +922,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
         restoreParkedWorkspaceAgents(cwd, hostProfileId ?? null);
         persistCurrentWorkgroups(hostProfileId ?? null);
+        if (!existing.some((tab) => modeOf(tab) === "agent")) {
+          void autoRestoreWorkspaceAgents(isCurrent).catch(() => undefined);
+        }
         void get().loadAgentProfiles();
         void get().detectAgents();
       } catch (err) {

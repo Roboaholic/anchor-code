@@ -23,6 +23,9 @@ import {
   listAgentSessions,
   readAgentSessionTitle,
   waitForCreatedAgentSession,
+  AGENT_SESSION_LIVE_CAPTURE_TIMEOUT_MS,
+  createdSessionMatches,
+  readAgentSessionHead,
 } from "../services/agentSessionIdentity.js";
 import type { TerminalService } from "../services/terminalService.js";
 import type { CreateAgentSessionInput } from "../../contracts/remote-api/v1/index.js";
@@ -174,11 +177,19 @@ export class AgentFacade {
       agentSessionId: input.sessionId,
     });
     if (!input.resume) {
+      const workspaceRoot = this.workspace.root();
+      const filter = workspaceRoot
+        ? {
+            root: workspaceRoot,
+            caseInsensitive:
+              host.kind === "local" && (process.platform === "win32" || process.platform === "darwin"),
+          }
+        : null;
       void waitForCreatedAgentSession(
         host,
         profile.id,
         previousSessionIds,
-        undefined,
+        AGENT_SESSION_LIVE_CAPTURE_TIMEOUT_MS,
         (sessionId) => {
           const key = `${host.id}:${profile.id}:${sessionId}`;
           if (this.claimedSessions.has(key)) return false;
@@ -186,6 +197,16 @@ export class AgentFacade {
           return true;
         },
         launchedAt,
+        {
+          isAlive: () =>
+            this.terminal.list().some((tab) => tab.id === session.id && tab.status === "running"),
+          accept: async (sessionId) =>
+            createdSessionMatches(
+              profile.id,
+              await readAgentSessionHead(host, profile.id, sessionId),
+              filter,
+            ),
+        },
       ).then((sessionId) => {
         if (sessionId) {
           this.terminal.setAgentSessionId(session.id, sessionId);

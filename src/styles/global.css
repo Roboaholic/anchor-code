@@ -8714,8 +8714,8 @@ input[type="radio"] {
 }
 
 .agent-sidebar__row--parked.is-unresumable {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.6;
+  cursor: pointer;
 }
 
 /* ── Themed dropdown (shared/Dropdown.tsx) ─────────────────────────── */

@@ -7,6 +7,7 @@ import type {
 import { Icon } from "@/shared/Icon";
 import {
   agentTabsInWorkgroup,
+  reopenUnresumableAgent,
   useTerminalStore,
   type AgentActivityState,
 } from "./terminalStore";
@@ -527,10 +528,13 @@ export function AgentSidebar() {
                       <button
                         type="button"
                         className={`agent-sidebar__row agent-sidebar__row--parked${item.resumable === false ? " is-unresumable" : ""}`}
-                        disabled={resumingId === item.sessionId || item.resumable === false}
+                        disabled={resumingId === item.sessionId}
                         onClick={() => {
                           setResumingId(item.sessionId);
-                          void resumeParkedAgent(item.sessionId).finally(() => {
+                          const run = item.resumable === false
+                            ? reopenUnresumableAgent(item.sessionId)
+                            : resumeParkedAgent(item.sessionId);
+                          void run.finally(() => {
                             setResumingId((current) =>
                               current === item.sessionId ? null : current,
                             );
@@ -538,7 +542,7 @@ export function AgentSidebar() {
                         }}
                         title={
                           item.resumable === false
-                            ? "Can't resume: the CLI session id was never captured"
+                            ? "The CLI session id was never captured, so this conversation can't be resumed. Click to start a new one with the same agent."
                             : item.error
                               ? `Resume failed: ${item.error}`
                               : "Click title to resume"

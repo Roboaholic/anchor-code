@@ -17,6 +17,7 @@ import type { CodiconName } from "@/shared/Icon";
 const CodeViewer = lazy(() =>
   import("./CodeViewer").then((m) => ({ default: m.CodeViewer })),
 );
+import { SnapshotDiffView } from "@/features/history/SnapshotDiffView";
 const DiffViewer = lazy(() =>
   import("./DiffViewer").then((m) => ({ default: m.DiffViewer })),
 );
@@ -464,6 +465,10 @@ function ActiveView({
     );
   }
 
+  if (item.kind === "snapshot-diff") {
+    return <SnapshotDiffView item={item} />;
+  }
+
   if (item.error) {
     return (
       <div className="empty-center">
@@ -594,6 +599,7 @@ function WelcomeView() {
 function tabIcon(item: OpenItem): CodiconName {
   if (item.kind === "welcome") return "home";
   if (item.kind === "diff") return "diff";
+  if (item.kind === "snapshot-diff") return "history";
   if (item.kind === "file" && item.isMarkdown) return "markdown";
   if (item.kind === "file" && isPreviewableImagePath(item.path)) return "file-media";
   if (item.kind === "file") {

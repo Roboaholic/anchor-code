@@ -11,7 +11,7 @@ import type {
   RunResult,
   StatResult,
 } from "./types.js";
-import { HostError } from "./types.js";
+import { HostError, withEnvPrefix } from "./types.js";
 import { binaryReadLimit, fileReadLimit, readFilePrefix, tooLargeError } from "./fileRead.js";
 import { hostNormalize } from "./paths.js";
 import { verifySshHostKey } from "./sshKnownHosts.js";
@@ -201,7 +201,8 @@ export class SshHostSession implements HostSession {
   ): Promise<RunResult> {
     const client = await this.ensureConnected();
     const safeCwd = hostNormalize("ssh", cwd || "/");
-    const quoted = [command, ...args]
+    const prefixed = withEnvPrefix(command, args, opts?.env);
+    const quoted = [prefixed.command, ...prefixed.args]
       .map((a) => shellQuote(a))
       .join(" ");
     const remote = `cd ${shellQuote(safeCwd)} && ${quoted}`;

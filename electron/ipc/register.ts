@@ -42,6 +42,8 @@ import {
 } from "../services/appUpdate.js";
 import {
   getHistoryRecentCompares,
+  getAutoSnapshots,
+  setAutoSnapshots,
   getFontSize,
   getEditorFontFamily,
   getLineHeight,
@@ -1085,6 +1087,67 @@ export function registerIpc(opts: {
         rethrowIpc(err);
       }
     },
+  );
+
+  // ── snapshots ──────────────────────────────────────
+  const snapshots = () => {
+    if (!application.snapshots) throw new Error("Snapshots are not available");
+    return application.snapshots;
+  };
+  ipcMain.handle("snapshot:list", async () => {
+    try {
+      return await snapshots().list();
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle(
+    "snapshot:create",
+    async (
+      _evt,
+      args: {
+        name?: string;
+        source: "manual" | "auto" | "agent";
+        agentTabId?: string;
+        agentLabel?: string;
+        turn?: { index: number; phase: "start" | "end" };
+        pairWithId?: string;
+      },
+    ) => {
+      try {
+        return await snapshots().create(args);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+  ipcMain.handle("snapshot:rename", async (_evt, args: { id: string; name: string }) => {
+    try {
+      await snapshots().rename(args.id, args.name);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle("snapshot:remove", async (_evt, args: { ids: string[] }) => {
+    try {
+      await snapshots().remove(args.ids);
+    } catch (err) {
+      rethrowIpc(err);
+    }
+  });
+  ipcMain.handle(
+    "snapshot:compare",
+    async (_evt, args: { baseId: string; targetId: string | "worktree" }) => {
+      try {
+        return await snapshots().compare(args.baseId, args.targetId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+  ipcMain.handle("snapshot:getAuto", async () => getAutoSnapshots());
+  ipcMain.handle("snapshot:setAuto", async (_evt, enabled: boolean) =>
+    setAutoSnapshots(enabled === true),
   );
 
   // ── history ────────────────────────────────────────

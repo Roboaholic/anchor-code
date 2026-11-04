@@ -5,7 +5,7 @@ import {
   languageFromPath,
   relativeToRoot,
 } from "@/core/workspace/paths";
-import type { DiffFile, DiffOpenPayload } from "@/shared/anchor-api";
+import type { DiffFile, DiffOpenPayload, SnapshotDiffPayload } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { isRasterImagePath } from "@/core/workspace/markdownLinks";
 import { invalidateWorktreeDiffCache } from "./fileDiffCache";
@@ -35,7 +35,19 @@ export type PersistedOpenItem =
       activeFilePath: string | null;
       branch?: string | null;
       hideFileList?: boolean;
+    }
+  | {
+      kind: "snapshot-diff";
+      payload: SnapshotDiffPayload;
+      active: SnapshotDiffActive | null;
     };
+
+/** Selected entry inside a multi-repo snapshot diff tab. */
+export interface SnapshotDiffActive {
+  repoRoot: string;
+  path: string;
+  large?: boolean;
+}
 
 export interface PersistedDocumentState {
   openItems: PersistedOpenItem[];
@@ -103,6 +115,9 @@ function persistedItem(item: OpenItem): PersistedOpenItem {
   if (item.kind === "welcome") return { kind: "welcome" };
   if (item.kind === "file") {
     return { kind: "file", path: item.path, mdViewMode: item.mdViewMode };
+  }
+  if (item.kind === "snapshot-diff") {
+    return { kind: "snapshot-diff", payload: item.payload, active: item.active };
   }
   return {
     kind: "diff",
@@ -228,6 +243,12 @@ function restoreSavedDocuments(
     ) {
       if (item.head === "worktree") invalidateWorktreeDiffCache(item.repoRoot, item.base);
       restored = diffItem(item);
+    } else if (
+      item?.kind === "snapshot-diff" &&
+      item.payload &&
+      Array.isArray(item.payload.repos)
+    ) {
+      restored = snapshotDiffItem(item.payload, item.active ?? null);
     }
     restoredIds.push(restored?.id);
     if (restored && !openItems.some((existing) => existing.id === restored.id)) {
@@ -291,6 +312,15 @@ export type OpenItem =
       branch?: string | null;
       /** Hide left file list (single-file focus from Changes). */
       hideFileList?: boolean;
+      /** Toolbar range text for focus mode (defaults to "HEAD → worktree"). */
+      focusRangeLabel?: string;
+    }
+  | {
+      id: string;
+      kind: "snapshot-diff";
+      title: string;
+      payload: SnapshotDiffPayload;
+      active: SnapshotDiffActive | null;
     };
 
 export interface DocumentState {
@@ -309,6 +339,9 @@ export interface DocumentState {
   }) => Promise<void>;
   openDiff: (payload: DiffOpenPayload, opts?: { activate?: boolean }) => void;
   setDiffActiveFile: (id: string, filePath: string) => void;
+  /** Open (or replace) a read-only multi-repo snapshot diff tab. */
+  openSnapshotDiff: (payload: SnapshotDiffPayload) => void;
+  setSnapshotDiffActive: (id: string, active: SnapshotDiffActive) => void;
   closeItem: (id: string) => void;
   /** Keep only the tab with `id` (activate it). */
   closeOtherItems: (id: string) => void;
@@ -363,6 +396,32 @@ function diffItemId(payload: DiffOpenPayload): string {
     return `${base}:${payload.activeFilePath}`;
   }
   return base;
+}
+
+export function snapshotDiffItemId(payload: Pick<SnapshotDiffPayload, "workspaceRoot" | "baseId" | "targetId">): string {
+  return `snapshot-diff:${payload.workspaceRoot}:${payload.baseId}:${payload.targetId}`;
+}
+
+function firstSnapshotEntry(payload: SnapshotDiffPayload): SnapshotDiffActive | null {
+  for (const repo of payload.repos) {
+    if (repo.state === "unchanged" || repo.state === "removed") continue;
+    if (repo.files[0]) return { repoRoot: repo.root, path: repo.files[0].path };
+    if (repo.largeFiles[0]) return { repoRoot: repo.root, path: repo.largeFiles[0].path, large: true };
+  }
+  return null;
+}
+
+function snapshotDiffItem(
+  payload: SnapshotDiffPayload,
+  active: SnapshotDiffActive | null,
+): Extract<OpenItem, { kind: "snapshot-diff" }> {
+  return {
+    id: snapshotDiffItemId(payload),
+    kind: "snapshot-diff",
+    title: payload.title,
+    payload,
+    active: active ?? firstSnapshotEntry(payload),
+  };
 }
 
 function fileItem(path: string, workspaceRoot: string | null): Extract<OpenItem, { kind: "file" }> {
@@ -601,6 +660,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         activeId: opts?.activate === false ? s.activeId : id,
       };
     });
+  },
+
+  openSnapshotDiff: (payload) => {
+    const item = snapshotDiffItem(payload, null);
+    for (const repo of payload.repos) {
+      if (repo.head === "worktree") invalidateWorktreeDiffCache(repo.root, repo.base);
+    }
+    set((s) => ({
+      openItems: [...s.openItems.filter((i) => i.id !== item.id), item],
+      activeId: item.id,
+    }));
+  },
+
+  setSnapshotDiffActive: (id, active) => {
+    set((s) => ({
+      openItems: s.openItems.map((item) =>
+        item.id === id && item.kind === "snapshot-diff" ? { ...item, active } : item,
+      ),
+    }));
   },
 
   setDiffActiveFile: (id, filePath) => {

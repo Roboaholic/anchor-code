@@ -6,6 +6,7 @@ import { HostManager } from "./host/hostManager.js";
 import { registerIpc } from "./ipc/register.js";
 import { TerminalService } from "./services/terminalService.js";
 import { FileWatcherService } from "./services/fileWatcherService.js";
+import { SnapshotService, createFileIndexStore } from "./services/snapshotService.js";
 import { getRemoteRelayIdentity, getUiTheme, type UiTheme } from "./settings.js";
 import { initAppUpdater } from "./services/appUpdate.js";
 import { AnchorApplication } from "./application/anchorApplication.js";
@@ -47,6 +48,10 @@ const fileWatcher = new FileWatcherService(
 const application = new AnchorApplication({
   hosts,
   terminal,
+  snapshots: new SnapshotService({
+    index: createFileIndexStore(path.join(app.getPath("userData"), "snapshots", "index")),
+    localStoreBase: path.join(app.getPath("userData"), "snapshots", "stores"),
+  }),
 });
 application.subscribe((event) => {
   if (event.type === "workspace") {

@@ -1176,7 +1176,7 @@ export function DiffViewer({ item }: { item: DiffItem }) {
                 {activePath}
                 <span className="diff-viewer__focus-range">
                   {" "}
-                  · HEAD → worktree
+                  · {item.focusRangeLabel ?? "HEAD → worktree"}
                 </span>
               </span>
             ) : null}

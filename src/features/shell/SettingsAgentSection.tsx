@@ -12,6 +12,7 @@ import { Checkbox } from "@/shared/Checkbox";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useShellStore } from "./shellStore";
+import { useSnapshotStore } from "@/features/history/snapshotStore";
 
 function argsSummary(args: string[] | undefined): string {
   if (!args?.length) return "";
@@ -34,6 +35,12 @@ export function SettingsAgentSection() {
     (s) => s.defaultAgentPermissionMode,
   );
   const loadAgentProfiles = useTerminalStore((s) => s.loadAgentProfiles);
+  const autoSnapshots = useSnapshotStore((s) => s.autoEnabled);
+  const setAutoSnapshots = useSnapshotStore((s) => s.setAuto);
+  const loadAutoSnapshots = useSnapshotStore((s) => s.loadAuto);
+  useEffect(() => {
+    void loadAutoSnapshots();
+  }, [loadAutoSnapshots]);
   const detectAgents = useTerminalStore((s) => s.detectAgents);
   const addCustomAgent = useTerminalStore((s) => s.addCustomAgent);
 
@@ -283,6 +290,24 @@ export function SettingsAgentSection() {
           className="settings-dropdown"
           minMenuWidth={240}
         />
+      </div>
+
+      <h3 className="settings-section__title settings-section__title--spaced">
+        自动快照 Auto snapshots
+      </h3>
+      <p className="settings-section__desc muted">
+        每轮 agent 开始和结束时，给工作区内所有 git 仓自动打一个快照（HISTORY → 快照）。
+      </p>
+      <div className="settings-field-row">
+        <label className="settings-agent-row__enable">
+          <Switch
+            checked={autoSnapshots}
+            aria-label="Auto snapshots"
+            data-testid="settings-auto-snapshots"
+            onChange={(next) => void setAutoSnapshots(next)}
+          />
+          <span>{autoSnapshots ? "已开启" : "已关闭"}</span>
+        </label>
       </div>
 
       <h3 className="settings-section__title settings-section__title--spaced">

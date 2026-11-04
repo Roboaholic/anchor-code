@@ -32,6 +32,13 @@ import {
 import type { WorkspaceFacade } from "./workspaceFacade.js";
 import { hostNormalize } from "../host/paths.js";
 import { imageMimeType } from "./imageMime.js";
+import { snapshotFileDiffWithAlternates } from "../services/snapshotService.js";
+
+/** Returns an external snapshot store objects dir when base/head live there. */
+export type SnapshotAlternatesResolver = (
+  repoRoot: string,
+  revs: string[],
+) => Promise<string | null>;
 
 const MAX_READ_BYTES = 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -204,9 +211,29 @@ export class ReviewFacade {
       ? compareToWorktree(this.hosts.session, root, base)
       : compareCommits(this.hosts.session, root, base, head);
   }
+  private snapshotAlternates: SnapshotAlternatesResolver | null = null;
+
+  setSnapshotAlternatesResolver(fn: SnapshotAlternatesResolver | null): void {
+    this.snapshotAlternates = fn;
+  }
+
   async fileDiff(input: { repoRoot: string; base: string; head: string | "worktree"; path: string; status: string }) {
     const repoRoot = await this.approvedRepoRoot(input.repoRoot);
     const filePath = this.relativeRepoPath(repoRoot, input.path);
+    const alternates = this.snapshotAlternates
+      ? await this.snapshotAlternates(repoRoot, [input.base, input.head]).catch(() => null)
+      : null;
+    if (alternates) {
+      return snapshotFileDiffWithAlternates(
+        this.hosts.session,
+        repoRoot,
+        input.base,
+        input.head,
+        filePath,
+        input.status,
+        alternates,
+      );
+    }
     return getFileDiff(
       this.hosts.session,
       repoRoot,

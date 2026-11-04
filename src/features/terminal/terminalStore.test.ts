@@ -3,6 +3,7 @@ import type { TerminalTabInfo } from "@/shared/anchor-api";
 import {
   agentsToAutoRestore,
   autoRestoreWorkspaceAgents,
+  resetAutoRestoreForTests,
   markAgentActive,
   reopenUnresumableAgent,
   mostRecentParkedAgent,
@@ -145,7 +146,8 @@ describe("workspace agent persistence", () => {
       ],
     });
     saveWorkspaceAgents("/workspace", "local-default");
-    useTerminalStore.setState({ tabs: [], parkedAgents: [] });
+    // Terminal store not on this workspace yet: only the parked list loads.
+    useTerminalStore.setState({ tabs: [], parkedAgents: [], workspaceCwd: null });
 
     restoreParkedWorkspaceAgents("/workspace", "local-default");
     expect(createSession).not.toHaveBeenCalled();
@@ -679,7 +681,7 @@ describe("auto-restore open agents after relaunch", () => {
     markAgentActive("a", 100);
     markAgentActive("b", 200);
     saveWorkspaceAgents("/workspace", "ssh-1");
-    useTerminalStore.setState({ tabs: [], parkedAgents: [] });
+    useTerminalStore.setState({ tabs: [], parkedAgents: [], workspaceCwd: null });
     restoreParkedWorkspaceAgents("/workspace", "ssh-1");
     expect(useTerminalStore.getState().parkedAgents.map((p) => p.sessionId)).toEqual(["s-b", "s-a"]);
     expect(agentsToAutoRestore(useTerminalStore.getState().parkedAgents).map((p) => p.sessionId)).toEqual(["s-a", "s-b"]);
@@ -705,5 +707,90 @@ describe("auto-restore open agents after relaunch", () => {
     expect(await reopenUnresumableAgent("unresumable:1")).toBe(true);
     expect(createSession).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
     expect(useTerminalStore.getState().parkedAgents).toEqual([]);
+  });
+});
+
+describe("auto-restore survives the relaunch races", () => {
+  beforeEach(() => resetAutoRestoreForTests());
+  function stubAll() {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const createSession = vi.fn(async (args: { sessionId?: string; resume?: boolean }) => ({
+      id: `t-${args.sessionId ?? "fresh"}`,
+      title: "x",
+      cwd: "/workspace",
+      status: "running" as const,
+      kind: "agent" as const,
+      agentId: "codex",
+      ...(args.sessionId ? { agentSessionId: args.sessionId } : {}),
+    }));
+    const create = vi.fn(async () => ({
+      id: "sh-1", title: "sh", cwd: "/workspace", status: "running" as const, kind: "shell" as const,
+    }));
+    vi.stubGlobal("window", {
+      setTimeout,
+      clearTimeout,
+      anchor: {
+        agent: {
+          listProfiles: vi.fn(async () => [{ id: "codex", name: "Codex", command: "codex" }]),
+          createSession,
+          setDefaultId: vi.fn(),
+          detect: vi.fn(async () => []),
+        },
+        terminal: { list: vi.fn(async () => []), create },
+      },
+    });
+    return createSession;
+  }
+
+  function seedOpenAgents() {
+    const agent = (id: string, sid: string): TerminalTabInfo => ({
+      id, title: id, cwd: "/workspace", status: "running", kind: "agent", agentId: "codex", agentSessionId: sid,
+    });
+    useTerminalStore.setState({
+      tabs: [agent("a", "s-a"), agent("b", "s-b")],
+      parkedAgents: [],
+      activeByMode: { terminal: null, agent: "b" },
+      tabWorkgroupById: {},
+      workspaceCwd: "/workspace",
+      workspaceHostProfileId: "ssh-1",
+      error: null,
+    });
+    markAgentActive("a", 100);
+    markAgentActive("b", 200);
+    saveWorkspaceAgents("/workspace", "ssh-1");
+    // Relaunch: fresh renderer state.
+    useTerminalStore.setState({ tabs: [], parkedAgents: [], workspaceCwd: null, activeByMode: { terminal: null, agent: null } });
+  }
+
+  it("keeps the open flag when the parked list is saved before auto-restore ran", () => {
+    stubAll();
+    seedOpenAgents();
+    restoreParkedWorkspaceAgents("/workspace", "ssh-1");
+    // e.g. pagehide / workspace switch save before the reopen finished.
+    useTerminalStore.setState({ workspaceCwd: "/workspace" });
+    saveWorkspaceAgents("/workspace", "ssh-1");
+    useTerminalStore.setState({ parkedAgents: [] });
+    restoreParkedWorkspaceAgents("/workspace", "ssh-1");
+    expect(agentsToAutoRestore(useTerminalStore.getState().parkedAgents).map((p) => p.sessionId)).toEqual(["s-a", "s-b"]);
+  });
+
+  it("reopens every open tab even when the first reset's caller goes stale (startup panel reset)", async () => {
+    const createSession = stubAll();
+    seedOpenAgents();
+    let panelCurrent = true;
+    // TerminalPanel's startup reset: its effect is cleaned up once tabs appear.
+    const first = useTerminalStore.getState().resetForWorkspace("/workspace", "ssh-1", () => panelCurrent);
+    const unsub = useTerminalStore.subscribe(() => { panelCurrent = false; });
+    await first;
+    unsub();
+    // Orchestrator's reset for the same workspace, then its parked restore.
+    await useTerminalStore.getState().resetForWorkspace("/workspace", "ssh-1", () => true);
+    restoreParkedWorkspaceAgents("/workspace", "ssh-1");
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(2));
+    expect(createSession).toHaveBeenLastCalledWith(expect.objectContaining({ resume: true, sessionId: "s-b" }));
   });
 });

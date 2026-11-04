@@ -482,6 +482,8 @@ export function saveWorkspaceAgents(
         groupId: item.groupId,
         lastActiveAt: item.lastActiveAt,
         ...(item.resumable === false ? { resumable: false } : {}),
+        // Not reopened yet (save before / during auto-restore): keep the flag.
+        ...(item.wasOpen ? { open: true } : {}),
         ...(item.titlePinned ? { titlePinned: true } : {}),
         ...(() => {
           const mode =
@@ -529,6 +531,43 @@ export function restoreParkedWorkspaceAgents(
       liveSessionIds,
     ),
   }));
+  maybeAutoRestoreWorkspaceAgents(cwd, hostProfileId);
+}
+
+/** Workspaces whose open tabs were already reopened during this app launch. */
+const autoRestoredWorkspaces = new Set<string>();
+
+/** Test hook: forget which workspaces were auto-restored. */
+export function resetAutoRestoreForTests(): void {
+  autoRestoredWorkspaces.clear();
+}
+
+/**
+ * Reopen last launch's open agent tabs once per workspace per app launch.
+ * Called whenever the parked list is (re)loaded, so every open path
+ * (startup panel reset, orchestrator, workspace switch) reaches it. Its
+ * staleness check is the terminal store's workspace, not a caller's reset
+ * token: the startup TerminalPanel reset token goes stale as soon as its
+ * first tab renders, which used to abort the restore before it started.
+ */
+function maybeAutoRestoreWorkspaceAgents(cwd: string, hostProfileId: string | null): void {
+  const key = workspaceAgentKey(cwd, hostProfileId);
+  if (autoRestoredWorkspaces.has(key)) return;
+  const isCurrent = () => {
+    const state = useTerminalStore.getState();
+    return (
+      Boolean(state.workspaceCwd) &&
+      normalizedCwd(state.workspaceCwd!) === normalizedCwd(cwd) &&
+      (hostProfileId == null || state.workspaceHostProfileId === hostProfileId)
+    );
+  };
+  if (!isCurrent()) return;
+  const state = useTerminalStore.getState();
+  const hasLiveAgent = state.tabs.some((tab) => (tab.kind ?? "shell") === "agent");
+  if (!hasLiveAgent && agentsToAutoRestore(state.parkedAgents).length === 0) return;
+  autoRestoredWorkspaces.add(key);
+  if (hasLiveAgent) return;
+  void autoRestoreWorkspaceAgents(isCurrent).catch(() => undefined);
 }
 
 /** Most open tabs reopened automatically per workspace restore. */
@@ -558,6 +597,10 @@ export async function autoRestoreWorkspaceAgents(isCurrent: () => boolean = () =
     if (!isCurrent()) break;
     if (await resumeParkedAgent(item.sessionId)) restored += 1;
   }
+  // One shot: whatever is still parked (over the limit, failed) stays closed.
+  useTerminalStore.setState((state) => ({
+    parkedAgents: state.parkedAgents.map(({ wasOpen: _wasOpen, ...item }) => item),
+  }));
   return restored;
 }
 
@@ -922,9 +965,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
         restoreParkedWorkspaceAgents(cwd, hostProfileId ?? null);
         persistCurrentWorkgroups(hostProfileId ?? null);
-        if (!existing.some((tab) => modeOf(tab) === "agent")) {
-          void autoRestoreWorkspaceAgents(isCurrent).catch(() => undefined);
-        }
         void get().loadAgentProfiles();
         void get().detectAgents();
       } catch (err) {

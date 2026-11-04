@@ -3,16 +3,27 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
     branches: [main]
+    # Only run when a PR is opened/reopened or marked ready; follow-up pushes
+    # (synchronize) do not trigger CI. Re-run manually via workflow_dispatch.
+    types: [opened, reopened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
     name: Typecheck & test
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -42,6 +53,7 @@ jobs:
 
   mobile:
     name: Mobile baseline & APK
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

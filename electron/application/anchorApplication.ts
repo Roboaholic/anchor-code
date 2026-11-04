@@ -3,6 +3,8 @@ import type { TerminalService } from "../services/terminalService.js";
 import { AgentFacade } from "./agentFacade.js";
 import { CommentFacade } from "./commentFacade.js";
 import { ReviewFacade } from "./reviewFacade.js";
+import { SnapshotFacade } from "./snapshotFacade.js";
+import type { SnapshotService } from "../services/snapshotService.js";
 import { TerminalFacade } from "./terminalFacade.js";
 import { WorkspaceFacade, type WorkspaceRegistry } from "./workspaceFacade.js";
 import {
@@ -14,12 +16,14 @@ export interface AnchorApplicationOptions {
   hosts: HostManager;
   terminal: TerminalService;
   workspaceRegistry?: WorkspaceRegistry;
+  snapshots?: SnapshotService;
 }
 
 export class AnchorApplication {
   readonly workspace: WorkspaceFacade;
   readonly agent: AgentFacade;
   readonly review: ReviewFacade;
+  readonly snapshots: SnapshotFacade | null;
   readonly comments: CommentFacade;
   readonly terminal: TerminalFacade;
   private readonly events = new ApplicationEvents();
@@ -33,6 +37,9 @@ export class AnchorApplication {
     );
     this.agent = new AgentFacade(options.hosts, options.terminal, this.workspace);
     this.review = new ReviewFacade(options.hosts, this.workspace);
+    this.snapshots = options.snapshots
+      ? new SnapshotFacade(options.hosts, this.workspace, this.review, options.snapshots)
+      : null;
     this.comments = new CommentFacade(options.hosts, this.workspace);
     this.terminal = new TerminalFacade(options.terminal, this.workspace);
     options.terminal.subscribe((event) => {

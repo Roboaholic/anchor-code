@@ -78,6 +78,8 @@ export interface AppSettings {
    * Key: `${hostKind}:${hostProfileId}:${agentId}`
    */
   agentLaunchCache?: Record<string, unknown>;
+  /** Auto snapshot at each agent turn start/end (default on). */
+  autoSnapshots?: boolean;
   /**
    * Recent compares per workspace root → list of entries (each entry has repoRoot).
    * Key: workspace absolute path.
@@ -346,6 +348,18 @@ export async function upsertHostProfile(
 }
 
 const MAX_RECENT_COMPARES_PER_REPO = 15;
+
+export async function getAutoSnapshots(): Promise<boolean> {
+  const settings = await loadSettings();
+  return settings.autoSnapshots !== false;
+}
+
+export async function setAutoSnapshots(enabled: boolean): Promise<boolean> {
+  const settings = await loadSettings();
+  settings.autoSnapshots = enabled;
+  await saveSettings(settings);
+  return enabled;
+}
 
 export async function getHistoryRecentCompares(
   workspaceRoot: string,

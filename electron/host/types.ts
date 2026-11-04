@@ -63,6 +63,25 @@ export interface RunOptions {
    * `aborted: true` and whatever output arrived so far.
    */
   signal?: AbortSignal;
+  /**
+   * Extra environment variables for this command only (e.g. GIT_INDEX_FILE).
+   * Local hosts merge into process.env; WSL/SSH prefix the command with `env K=V`.
+   */
+  env?: Record<string, string>;
+}
+
+/** Rewrite command/args so a POSIX remote applies `env` (WSL/SSH hosts). */
+export function withEnvPrefix(
+  command: string,
+  args: string[],
+  env: Record<string, string> | undefined,
+): { command: string; args: string[] } {
+  const entries = Object.entries(env ?? {});
+  if (entries.length === 0) return { command, args };
+  return {
+    command: "env",
+    args: [...entries.map(([k, v]) => `${k}=${v}`), command, ...args],
+  };
 }
 
 export interface DirEntry {

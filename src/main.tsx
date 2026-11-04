@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import "@/features/shell/smoothScrollStore";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
+import { installAutoSnapshots } from "./features/history/autoSnapshots";
 import {
   applyDocumentTheme,
   resolveInitialTheme,
@@ -24,6 +25,8 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Root element #root not found");
 }
+
+installAutoSnapshots();
 
 createRoot(root).render(
   <StrictMode>

@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { SnapshotsSection } from "./SnapshotsSection";
 import { Icon } from "@/shared/Icon";
 import {
   openHistoryCompare,
@@ -196,6 +197,8 @@ export function HistoryPane() {
           </li>
         ))}
       </ul>
+
+      <SnapshotsSection workspaceRoot={workspaceRoot} />
     </div>
   );
 }

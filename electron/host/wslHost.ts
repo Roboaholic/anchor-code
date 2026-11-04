@@ -13,7 +13,7 @@ import type {
   RunResult,
   StatResult,
 } from "./types.js";
-import { HostError } from "./types.js";
+import { HostError, withEnvPrefix } from "./types.js";
 import {
   binaryReadLimit,
   boundedReadCommand,
@@ -222,7 +222,8 @@ export class WslHostSession implements HostSession {
   ): Promise<RunResult> {
     const wsl = this.resolveWslExe();
     const safeCwd = hostNormalize("wsl", cwd || "/");
-    const cmdline = posixShellCommand(command, args);
+    const prefixed = withEnvPrefix(command, args, opts?.env);
+    const cmdline = posixShellCommand(prefixed.command, prefixed.args);
     const wslArgs = [
       ...this.wslBaseArgs(),
       "--cd",

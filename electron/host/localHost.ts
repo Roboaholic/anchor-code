@@ -58,7 +58,7 @@ export class LocalHostSession implements HostSession {
       const child = spawn(command, args, {
         cwd,
         shell: false,
-        env: process.env,
+        env: opts?.env ? { ...process.env, ...opts.env } : process.env,
         windowsHide: true,
       });
       let stdout = "";

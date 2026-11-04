@@ -10261,3 +10261,246 @@ body:has(.comments-pane) .skill-install-toast {
   border-radius: var(--radius);
   background: var(--bg);
 }
+
+
+/* ── HISTORY → Snapshots: layout only; visuals come from shared
+   .history-pane__toolbar, .icon-btn, .commit-row, .pill, .field__input. */
+.snapshots-section__head {
+  border-top: 1px solid var(--border);
+}
+.snapshots-section__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.snapshots-section__toggle .files-pane__title {
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snapshots-section__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.snapshots-section__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.snapshots-section__bar .field__input {
+  flex: 1;
+  min-width: 0;
+}
+.snapshots-section__grow {
+  flex: 1;
+  min-width: 0;
+}
+.snapshots-section__warn {
+  margin: 4px 8px;
+}
+.snapshot-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 4px 6px;
+}
+.snapshot-row {
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  min-height: 26px;
+  padding: 2px 4px;
+}
+.snapshot-row__main,
+.snapshot-row__edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.snapshot-row__main .commit-row__subject {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.snapshot-row__edit .field__input {
+  flex: 1;
+  height: 22px;
+}
+.snapshot-row__end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.snapshot-row__time {
+  min-width: 34px;
+  text-align: right;
+}
+/* Owner tags: one fixed width (fits "Claude"), centered; longer names ellipsize. */
+.repo-row__badge.repo-row__badge--text.snapshot-owner-tag {
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
+  justify-content: center;
+}
+.snapshot-owner-tag > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.snapshot-row__actions {
+  display: none;
+  align-items: center;
+}
+.snapshot-row:hover .snapshot-row__actions,
+.snapshot-row:focus-within .snapshot-row__actions {
+  display: inline-flex;
+}
+.snapshot-row:hover .snapshot-row__time,
+.snapshot-row:focus-within .snapshot-row__time {
+  display: none;
+}
+.snapshots-section__count {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Snapshot diff tab (layout) ── */
+.snapshot-diff__files {
+  width: 300px;
+  overflow-y: auto;
+}
+.snapshot-diff__repos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.snapshot-diff__repo-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.snapshot-diff__repo-head:hover:not(:disabled) {
+  background: var(--row-hover-bg);
+}
+.snapshot-diff__repo-head:disabled {
+  cursor: default;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.snapshot-diff__repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snapshot-diff__repo-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.diff-file-list__row .snapshot-large-badge {
+  margin-left: auto;
+}
+.snapshot-diff__warn {
+  margin: 4px 8px;
+}
+.snapshot-large-info {
+  margin: auto;
+  max-width: 460px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text);
+}
+.snapshot-large-info > .codicon {
+  font-size: 48px !important;
+  color: var(--text-muted);
+}
+.snapshot-large-info h3 {
+  margin: 12px 0 14px;
+  font-size: 14px;
+  word-break: break-all;
+}
+.snapshot-large-info dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  margin: 0 auto 14px;
+  width: fit-content;
+  text-align: left;
+  font-size: 12.5px;
+}
+.snapshot-large-info dt {
+  color: var(--text-muted);
+}
+.snapshot-large-info dd {
+  margin: 0;
+}
+.snapshots-section__bar .field__input {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* Owner tag: same tile as the Git changes "M" badge (.repo-row__badge), widened for text. */
+.repo-row__badge.repo-row__badge--text {
+  width: auto;
+  min-width: 40px;
+  padding: 0 5px;
+  font-family: var(--font);
+  white-space: nowrap;
+}
+.repo-row__badge--accent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.repo-row__badge--ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.repo-row__badge--warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.repo-row__badge--neutral {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+.repo-row__badge--danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}

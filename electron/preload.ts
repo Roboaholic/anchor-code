@@ -483,6 +483,15 @@ const anchor = {
     ): Promise<{ ok: boolean; path?: string }> =>
       ipcRenderer.invoke("workspace:newEntry", { parentDir, name, type }),
   },
+  snapshot: {
+    list: () => ipcRenderer.invoke("snapshot:list"),
+    create: (args: unknown) => ipcRenderer.invoke("snapshot:create", args),
+    rename: (args: { id: string; name: string }) => ipcRenderer.invoke("snapshot:rename", args),
+    remove: (args: { ids: string[] }) => ipcRenderer.invoke("snapshot:remove", args),
+    compare: (args: { baseId: string; targetId: string }) => ipcRenderer.invoke("snapshot:compare", args),
+    getAuto: () => ipcRenderer.invoke("snapshot:getAuto"),
+    setAuto: (enabled: boolean) => ipcRenderer.invoke("snapshot:setAuto", enabled),
+  },
   history: {
     discover: (workspaceRoot: string, opts?: { force?: boolean }): Promise<RepoInfo[]> =>
       ipcRenderer.invoke("history:discover", workspaceRoot, opts ?? {}),

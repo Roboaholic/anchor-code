@@ -7,7 +7,7 @@ import { HELPER_SCRIPT, OpenSshHelperClient } from "./openSshHelper.js";
 import { scheduleSshCommand } from "./openSshScheduler.js";
 import { OpenSshSearchRunner } from "./sshSearchRunner.js";
 import { WSL_SEARCH_HELPER_PY } from "./wslSearchTools.js";
-import { HostError } from "./types.js";
+import { HostError, withEnvPrefix } from "./types.js";
 import { binaryReadLimit, boundedReadCommand, decodeBoundedBase64, decodeFilePrefix, fileReadLimit } from "./fileRead.js";
 import type {
   DirEntry,
@@ -109,7 +109,8 @@ export class OpenSshHostSession implements HostSession {
   async run(cwd: string, command: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
     this.assertActive();
     if (opts.signal?.aborted) return { stdout: "", stderr: "", code: 0, aborted: true };
-    const script = `cd -- ${remotePath(cwd || "/")} && exec ${[command, ...args].map(shellQuote).join(" ")}`;
+    const prefixed = withEnvPrefix(command, args, opts.env);
+    const script = `cd -- ${remotePath(cwd || "/")} && exec ${[prefixed.command, ...prefixed.args].map(shellQuote).join(" ")}`;
     const sshArgs = this.sshArgs(false, `bash -c ${shellQuote(script)}`);
 
     return new Promise<RunResult>((resolve, reject) => {

@@ -1,3 +1,18 @@
+import type {
+  SnapshotDiffPayload,
+  SnapshotMeta,
+  SnapshotSource,
+  SnapshotTurn,
+} from "@/core/snapshots/model";
+export type {
+  SnapshotDiffPayload,
+  SnapshotDiffRepo,
+  SnapshotLargeFileChange,
+  SnapshotMeta,
+  SnapshotSource,
+  SnapshotTurn,
+} from "@/core/snapshots/model";
+
 /** Mirror of preload bridge types for the renderer (no Electron imports). */
 
 export type HostKind = "local" | "wsl" | "ssh";
@@ -613,6 +628,22 @@ export interface AnchorApi {
       name: string,
       type: "file" | "dir",
     ) => Promise<{ ok: boolean; path?: string }>;
+  };
+  snapshot: {
+    list: () => Promise<SnapshotMeta[]>;
+    create: (args: {
+      name?: string;
+      source: SnapshotSource;
+      agentTabId?: string;
+      agentLabel?: string;
+      turn?: SnapshotTurn;
+      pairWithId?: string;
+    }) => Promise<SnapshotMeta>;
+    rename: (args: { id: string; name: string }) => Promise<void>;
+    remove: (args: { ids: string[] }) => Promise<void>;
+    compare: (args: { baseId: string; targetId: string | "worktree" }) => Promise<SnapshotDiffPayload>;
+    getAuto: () => Promise<boolean>;
+    setAuto: (enabled: boolean) => Promise<boolean>;
   };
   history: {
     /** Cached per workspace in main; `force` = Rescan. */

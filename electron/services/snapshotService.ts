@@ -268,6 +268,33 @@ export function parseRemoteResults(stdout: string): Map<number, RemoteResult> {
   return out;
 }
 
+/**
+ * Stable across app launches / reconnects (session ids are random per session):
+ * the index file and external-store paths are keyed by this.
+ */
+function stableHostKey(host: HostSession): string {
+  return `${host.kind}:${host.profileId}`;
+}
+
+const REF_REC = "@@ANCHOR-REF@@ ";
+
+export function parseRefDump(stdout: string): { idx: number; kind: "repo" | "store"; dir: string; commit: string; contents: string }[] {
+  const out: { idx: number; kind: "repo" | "store"; dir: string; commit: string; contents: string }[] = [];
+  const sections = stdout.split(/\n@@ANCHOR@@ D (\d+) (repo|store) ([^\n]*)\n/);
+  for (let i = 1; i + 3 < sections.length; i += 4) {
+    const idx = Number(sections[i]);
+    const kind = sections[i + 1] as "repo" | "store";
+    const dir = sections[i + 2]!;
+    const body = sections[i + 3] ?? "";
+    for (const rec of body.split(REF_REC).slice(1)) {
+      const nl = rec.indexOf("\n");
+      if (nl < 0) continue;
+      out.push({ idx, kind, dir, commit: rec.slice(0, nl).trim(), contents: rec.slice(nl + 1) });
+    }
+  }
+  return out;
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -296,7 +323,7 @@ export class SnapshotService {
   }
 
   private key(host: HostSession, workspaceRoot: string): string {
-    return `${host.id}\0${hostNormalize(host.kind, workspaceRoot)}`;
+    return `${stableHostKey(host)}\0${hostNormalize(host.kind, workspaceRoot)}`;
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -327,43 +354,65 @@ export class SnapshotService {
    * Reconstruct snapshot metadata from `refs/anchor/snapshots/*` in each repo and in its
    * external store. Each snapshot commit message carries the meta + that repo's entry as JSON.
    * Names revert to the name at creation time (renames live only in the index).
+   * One host command for all repos: `for-each-ref %(contents)` reads every message
+   * without a `cat-file` per snapshot (each run is a fresh ssh handshake remotely).
    */
   async rebuildIndex(host: HostSession, workspaceRoot: string, repoRoots: string[]): Promise<SnapshotMeta[]> {
     const wsNorm = hostNormalize(host.kind, workspaceRoot);
     const byId = new Map<string, SnapshotMeta>();
-    const perRepo = await mapLimit(repoRoots, 6, async (root) => {
-      const found: Array<{ meta: SnapshotMeta; entry: SnapshotRepoEntry }> = [];
-      const dirs: string[] = [root];
-      const storeDir = await this.storeDirFor(host, root);
-      if (await host.exists(hostJoin(host.kind, storeDir, "HEAD")).catch(() => false)) dirs.push(storeDir);
-      for (const dir of dirs) {
-        const refs = await host.run(dir, "git", ["for-each-ref", "--format=%(objectname)", SNAPSHOT_REF_PREFIX], { timeoutMs: 30_000 });
-        if (refs.code !== 0) continue;
-        for (const commit of refs.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
-          const body = await host.run(dir, "git", ["cat-file", "commit", commit], { timeoutMs: 20_000 });
-          if (body.code !== 0) continue;
-          const msg = body.stdout.slice(body.stdout.indexOf("\n\n") + 2);
-          const jsonStart = msg.indexOf("\n\n{");
-          if (jsonStart < 0) continue;
-          try {
-            const parsed = JSON.parse(msg.slice(jsonStart + 2).trim()) as SnapshotMeta & { repo?: SnapshotRepoEntry };
-            if (!parsed?.id || !parsed.repo || hostNormalize(host.kind, parsed.workspaceRoot ?? "") !== wsNorm) continue;
-            const { repo, ...rest } = parsed;
-            const entry: SnapshotRepoEntry = { ...repo, root, commit };
-            if (dir !== root) Object.assign(entry, { storage: "external", storeDir: dir });
-            found.push({ meta: { ...rest, repos: [] } as SnapshotMeta, entry });
-          } catch {
-            /* not a snapshot commit we understand */
-          }
+    if (repoRoots.length === 0) return [];
+    const storeRef = host.kind === "local"
+      ? (root: string) => hostJoin(host.kind, this.opts.localStoreBase, `${this.storeHash(host, root)}.git`)
+      : (root: string) => `$HOME/.anchor/snapshots/${this.storeHash(host, root)}.git`;
+    const lines = repoRoots.map((root, i) => {
+      const store = storeRef(root);
+      const storeArg = host.kind === "local" ? sq(store) : `"${store}"`;
+      return `dump ${i} repo ${sq(root)}; [ -f ${storeArg}/HEAD ] && dump ${i} store ${storeArg}`;
+    });
+    const script = [
+      "dump() {",
+      `  printf '\\n${FRAME} D %s %s %s\\n' "$1" "$2" "$3"`,
+      `  git -C "$3" for-each-ref --format='${REF_REC}%(objectname)%0a%(contents)' ${SNAPSHOT_REF_PREFIX} 2>/dev/null`,
+      "}",
+      ...lines,
+      "",
+    ].join("\n");
+    let dump: string;
+    if (host.kind === "local") {
+      // No POSIX shell guaranteed locally (Windows); local git calls are cheap anyway.
+      const parts = await mapLimit(repoRoots, 6, async (root) => {
+        const i = repoRoots.indexOf(root);
+        const dirs: Array<["repo" | "store", string]> = [["repo", root]];
+        const store = storeRef(root);
+        if (await host.exists(hostJoin(host.kind, store, "HEAD")).catch(() => false)) dirs.push(["store", store]);
+        let text = "";
+        for (const [kind, dir] of dirs) {
+          const r = await host.run(dir, "git", ["for-each-ref", `--format=${REF_REC}%(objectname)%0a%(contents)`, SNAPSHOT_REF_PREFIX], { timeoutMs: 30_000 });
+          text += `\n${FRAME} D ${i} ${kind} ${dir}\n${r.code === 0 ? r.stdout : ""}`;
         }
-      }
-      return found;
-    }).catch(() => []);
-    for (const items of perRepo) {
-      for (const { meta, entry } of items) {
-        const cur = byId.get(meta.id) ?? { ...meta, repos: [] };
+        return text;
+      });
+      dump = parts.join("");
+    } else {
+      dump = (await host.run("/", "sh", ["-s"], { stdin: script, timeoutMs: 120_000 })).stdout;
+    }
+    for (const found of parseRefDump(dump)) {
+      const root = repoRoots[found.idx];
+      if (root === undefined) continue;
+      const msg = found.contents;
+      const jsonStart = msg.indexOf("\n\n{");
+      if (jsonStart < 0) continue;
+      try {
+        const parsed = JSON.parse(msg.slice(jsonStart + 2).trim()) as SnapshotMeta & { repo?: SnapshotRepoEntry };
+        if (!parsed?.id || !parsed.repo || hostNormalize(host.kind, parsed.workspaceRoot ?? "") !== wsNorm) continue;
+        const { repo, ...rest } = parsed;
+        const entry: SnapshotRepoEntry = { ...repo, root, commit: found.commit };
+        if (found.kind === "store") Object.assign(entry, { storage: "external", storeDir: found.dir });
+        const cur = byId.get(parsed.id) ?? ({ ...rest, repos: [] } as SnapshotMeta);
         cur.repos.push(entry);
-        byId.set(meta.id, cur);
+        byId.set(parsed.id, cur);
+      } catch {
+        /* not a snapshot commit we understand */
       }
     }
     return [...byId.values()];
@@ -378,7 +427,7 @@ export class SnapshotService {
   }
 
   private storeHash(host: HostSession, root: string): string {
-    return createHash("sha1").update(`${host.id}\0${hostNormalize(host.kind, root)}`).digest("hex").slice(0, 16);
+    return createHash("sha1").update(`${stableHostKey(host)}\0${hostNormalize(host.kind, root)}`).digest("hex").slice(0, 16);
   }
 
   async create(

@@ -182,6 +182,29 @@ describe("SnapshotDiffView", () => {
   });
 });
 
+describe("snapshot list loading", () => {
+  it("dedupes concurrent loads and drops a stale workspace's result after reset", async () => {
+    const st = useSnapshotStore.getState();
+    st.reset();
+    let release!: (v: unknown) => void;
+    api.list!.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const p1 = st.load();
+    const p2 = st.load();
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(useSnapshotStore.getState().loading).toBe(true);
+    useSnapshotStore.getState().reset(); // workspace switched while the old list was in flight
+    const p3 = useSnapshotStore.getState().load();
+    expect(api.list).toHaveBeenCalledTimes(2);
+    await p3;
+    release([meta({ id: "old", name: "旧工作区" })]);
+    await Promise.all([p1, p2]);
+    const s = useSnapshotStore.getState();
+    expect(s.snapshots.map((x) => x.id)).toEqual(["s2", "s1"]);
+    expect(s.loaded).toBe(true);
+    expect(s.loading).toBe(false);
+  });
+});
+
 describe("auto snapshots", () => {
   it("derives turn start/end from agent activity, including exit", () => {
     const tab = { id: "t1", title: "Codex", cwd: "/ws", status: "running" as const, kind: "agent" as const };

@@ -1,6 +1,7 @@
 import type {
   SnapshotDiffPayload,
   SnapshotMeta,
+  SnapshotProgress,
   SnapshotSource,
   SnapshotTurn,
 } from "@/core/snapshots/model";
@@ -9,6 +10,7 @@ export type {
   SnapshotDiffRepo,
   SnapshotLargeFileChange,
   SnapshotMeta,
+  SnapshotProgress,
   SnapshotSource,
   SnapshotTurn,
 } from "@/core/snapshots/model";
@@ -643,6 +645,8 @@ export interface AnchorApi {
     remove: (args: { ids: string[] }) => Promise<void>;
     compare: (args: { baseId: string; targetId: string | "worktree" }) => Promise<SnapshotDiffPayload>;
     getAuto: () => Promise<boolean>;
+    /** Per-repo progress while a snapshot is being created. Returns unsubscribe. */
+    onProgress?: (cb: (p: SnapshotProgress) => void) => () => void;
     setAuto: (enabled: boolean) => Promise<boolean>;
   };
   history: {

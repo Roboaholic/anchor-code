@@ -1104,7 +1104,7 @@ export function registerIpc(opts: {
   ipcMain.handle(
     "snapshot:create",
     async (
-      _evt,
+      evt,
       args: {
         name?: string;
         source: "manual" | "auto" | "agent";
@@ -1115,7 +1115,10 @@ export function registerIpc(opts: {
       },
     ) => {
       try {
-        return await snapshots().create(args);
+        // Stream per-repo progress to the window that asked (one event per repo done).
+        return await snapshots().create(args, (p) => {
+          if (!evt.sender.isDestroyed()) evt.sender.send("snapshot:progress", p);
+        });
       } catch (err) {
         rethrowIpc(err);
       }

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SnapshotDiffPayload, SnapshotMeta } from "@/shared/anchor-api";
 import { SnapshotsSection } from "./SnapshotsSection";
 import { SnapshotDiffView } from "./SnapshotDiffView";
-import { useSnapshotStore } from "./snapshotStore";
+import { applySnapshotProgress, useSnapshotStore } from "./snapshotStore";
 import { agentTurnEvents } from "./autoSnapshots";
 import { useDocumentStore } from "@/features/document/documentStore";
 
@@ -62,12 +62,44 @@ beforeEach(() => {
     setAuto: vi.fn(async (v: boolean) => v),
   };
   (window as unknown as { anchor: unknown }).anchor = { snapshot: api };
-  useSnapshotStore.setState({ snapshots: [], loaded: false, selected: [], filter: "all", turns: {}, autoEnabled: true, error: null });
+  useSnapshotStore.setState({ snapshots: [], loaded: false, selected: [], filter: "all", turns: {}, autoEnabled: true, error: null, progress: {} });
   useDocumentStore.setState({ openItems: [], activeId: null });
 });
 afterEach(() => cleanup());
 
 describe("SnapshotsSection", () => {
+  it("shows per-repo progress for a manual 打点 and a quiet counter for auto snapshots", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<SnapshotsSection workspaceRoot="/ws" />);
+      await act(async () => undefined);
+      const repos = ["device", "ffmpeg", "hal"].map((name) => ({ name, state: "pending" as const }));
+      act(() => applySnapshotProgress({ id: "m1", source: "manual", total: 3, done: 0, failed: 0, largeFiles: 0, repos }));
+      expect(screen.getByTestId("snapshot-progress").textContent).toContain("0/3");
+      act(() =>
+        applySnapshotProgress({
+          id: "m1", source: "manual", total: 3, done: 2, failed: 1, largeFiles: 0,
+          repos: [{ name: "device", state: "ok" }, { name: "ffmpeg", state: "pending" }, { name: "hal", state: "error" }],
+        }),
+      );
+      const bar = screen.getByTestId("snapshot-progress");
+      expect(bar.textContent).toContain("2/3");
+      expect(bar.textContent).toContain("失败 1");
+      expect(bar.getAttribute("title")).toContain("✓ device");
+      expect(bar.getAttribute("title")).toContain("… ffmpeg");
+      expect(bar.getAttribute("title")).toContain("✗ hal");
+      // Auto snapshots never add a bar, only a small counter in the header.
+      act(() => applySnapshotProgress({ id: "a1", source: "auto", agentTabId: "t", total: 3, done: 1, failed: 0, largeFiles: 0, repos }));
+      expect(screen.getAllByTestId("snapshot-progress")).toHaveLength(1);
+      expect(screen.getByTestId("snapshot-auto-progress").textContent).toContain("1/3");
+      act(() => applySnapshotProgress({ id: "m1", source: "manual", total: 3, done: 3, failed: 1, largeFiles: 0, repos }));
+      act(() => void vi.advanceTimersByTime(1000));
+      expect(screen.queryByTestId("snapshot-progress")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lists newest first with source badges and creates a snapshot", async () => {
     render(<SnapshotsSection workspaceRoot="/ws" />);
     await act(async () => undefined);

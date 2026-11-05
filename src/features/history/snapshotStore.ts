@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SnapshotMeta, SnapshotSource } from "@/shared/anchor-api";
+import type { SnapshotMeta, SnapshotProgress, SnapshotSource } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { MERGE_START_WINDOW_MS } from "@/core/snapshots/model";
 import { useDocumentStore } from "@/features/document/documentStore";
@@ -19,6 +19,8 @@ export interface SnapshotState {
   loaded: boolean;
   loading: boolean;
   creating: boolean;
+  /** In-flight snapshots by id, fed by per-repo progress events. */
+  progress: Record<string, SnapshotProgress>;
   comparing: boolean;
   error: string | null;
   filter: SnapshotFilter;
@@ -57,6 +59,7 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   loaded: false,
   loading: false,
   creating: false,
+  progress: {},
   comparing: false,
   error: null,
   filter: "all",
@@ -212,3 +215,21 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
 export function filterSnapshots(list: SnapshotMeta[], filter: SnapshotFilter): SnapshotMeta[] {
   return filter === "all" ? list : list.filter((s) => s.source === filter);
 }
+
+/** Keep a finished snapshot's bar briefly so the last step is visible. */
+const PROGRESS_LINGER_MS = 600;
+
+export function applySnapshotProgress(p: SnapshotProgress): void {
+  useSnapshotStore.setState((s) => ({ progress: { ...s.progress, [p.id]: p } }));
+  if (p.done >= p.total) {
+    setTimeout(() => {
+      useSnapshotStore.setState((s) => {
+        if (!(p.id in s.progress)) return s;
+        const { [p.id]: _gone, ...rest } = s.progress;
+        return { progress: rest };
+      });
+    }, PROGRESS_LINGER_MS);
+  }
+}
+
+api()?.onProgress?.(applySnapshotProgress);

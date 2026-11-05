@@ -340,9 +340,23 @@ describe("SnapshotService.create on a remote host (batched)", () => {
     expect(events.at(-1)!.repos.map((r) => r.state)).toEqual(["ok", "error", "ok"]);
     // done is monotonic and every repo is reported exactly once
     expect(events.map((e) => e.done)).toEqual([...events.map((e) => e.done)].sort((x, y) => x - y));
-    const listed = (await svc.list(host, ws, [a, b])).find((s) => s.id === meta.id)!;
+    const listed = (await svc.list(remote, ws, [a, b])).find((s) => s.id === meta.id)!;
     expect(listed.name).toBe("批量");
     expect(listed.repos.find((r) => r.root === b)!.largeFiles).toMatchObject([{ path: "big.bin", size: 4096 }]);
+  });
+
+  it("keeps the index and rebuilds it in one host command across new sessions", async () => {
+    const { host: remote } = asRemote(host);
+    const meta = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a, b], source: "manual", name: "持久" });
+    // A reconnect / relaunch gets a fresh random session id but the same profile.
+    const { host: next, calls } = asRemote(new LocalHostSession(undefined, host.profileId));
+    expect((await svc.list(next, ws, [a, b])).map((s) => s.id)).toContain(meta.id);
+    expect(calls).toEqual([]);
+    // Index lost: rebuild reads every repo (and external store) in a single run.
+    const fresh = new SnapshotService({ index: { load: async () => null, save: async () => {} }, localStoreBase: storeBase, largeFileBytes: 1024, now: () => clock });
+    const rebuilt = await fresh.list(next, ws, [a, b]);
+    expect(calls.filter((c) => c === "run")).toHaveLength(1);
+    expect(rebuilt.find((s) => s.id === meta.id)!.repos.map((r) => r.root).sort()).toEqual([a, b].sort());
   });
 });
 

@@ -54,6 +54,9 @@ function upsert(list: SnapshotMeta[], meta: SnapshotMeta): SnapshotMeta[] {
   );
 }
 
+let inflightLoad: Promise<void> | null = null;
+let loadGen = 0;
+
 export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   snapshots: [],
   loaded: false,
@@ -70,17 +73,32 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   load: async () => {
     const a = api();
     if (!a) return;
+    // Dedupe: panel mount, workspace switch and auto-snapshot hooks can all ask at once;
+    // each extra list() is another queued host round trip.
+    if (inflightLoad) return inflightLoad;
+    const gen = loadGen;
     set({ loading: true });
-    try {
-      const snapshots = await a.list();
-      set({ snapshots, loaded: true, loading: false, error: null });
-    } catch (err) {
-      set({ loading: false, loaded: true, error: formatError(err) });
-    }
+    inflightLoad = (async () => {
+      try {
+        const snapshots = await a.list();
+        if (gen === loadGen) set({ snapshots, loaded: true, error: null });
+      } catch (err) {
+        if (gen === loadGen) set({ loaded: true, error: formatError(err) });
+      } finally {
+        if (gen === loadGen) {
+          inflightLoad = null;
+          set({ loading: false });
+        }
+      }
+    })();
+    return inflightLoad;
   },
-
-  reset: () => set({ snapshots: [], loaded: false, selected: [], turns: {}, error: null }),
-
+  reset: () => {
+    // Drop results of a list still running for the previous workspace.
+    loadGen++;
+    inflightLoad = null;
+    set({ snapshots: [], loaded: false, loading: false, selected: [], turns: {}, error: null });
+  },
   create: async (name) => {
     const a = api();
     if (!a) return null;

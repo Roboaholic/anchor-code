@@ -3,6 +3,7 @@ import type {
   CreateSnapshotInput,
   SnapshotService,
 } from "../services/snapshotService.js";
+import type { SnapshotProgress } from "../../src/core/snapshots/model.js";
 import type { ReviewFacade } from "./reviewFacade.js";
 import type { WorkspaceFacade } from "./workspaceFacade.js";
 
@@ -29,12 +30,12 @@ export class SnapshotFacade {
     return this.service.list(this.hosts.session, this.workspace.root(), await this.repoRoots());
   }
 
-  async create(args: CreateArgs) {
-    return this.service.create(this.hosts.session, {
-      ...args,
-      workspaceRoot: this.workspace.root(),
-      repoRoots: await this.repoRoots(),
-    });
+  async create(args: CreateArgs, onProgress?: (p: SnapshotProgress) => void) {
+    return this.service.create(
+      this.hosts.session,
+      { ...args, workspaceRoot: this.workspace.root(), repoRoots: await this.repoRoots() },
+      onProgress,
+    );
   }
 
   async rename(id: string, name: string) {

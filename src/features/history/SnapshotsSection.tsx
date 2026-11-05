@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SnapshotMeta } from "@/shared/anchor-api";
+import type { SnapshotMeta, SnapshotProgress } from "@/shared/anchor-api";
 import { Icon } from "@/shared/Icon";
 import { SegmentedControl } from "@/shared/SegmentedControl";
 import { StatusTag, ownerTag } from "./StatusTag";
@@ -111,6 +111,33 @@ function SnapshotRow({ s }: { s: SnapshotMeta }) {
   );
 }
 
+function progressTooltip(p: SnapshotProgress): string {
+  const head = `${p.source === "manual" ? "打点" : "自动快照"}：已完成 ${p.done}/${p.total} 个仓${p.failed ? `，失败 ${p.failed}` : ""}`;
+  const lines = p.repos.map((r) => `${r.state === "ok" ? "✓" : r.state === "error" ? "✗" : "…"} ${r.name}`);
+  return [head, ...lines].join("\n");
+}
+
+/** Compact per-repo progress for a manual 打点 (bar + n/total, failures as a tag). */
+function SnapshotProgressBar({ p }: { p: SnapshotProgress }) {
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 100;
+  return (
+    <div className="snapshots-section__bar snapshot-progress" role="status" aria-live="polite" title={progressTooltip(p)} data-testid="snapshot-progress">
+      <Icon name="loading" className="codicon-modifier-spin snapshot-progress__icon" />
+      <span className="snapshot-progress__track" aria-hidden>
+        <span className="snapshot-progress__fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="commit-row__meta snapshot-progress__count">
+        {p.done}/{p.total}
+      </span>
+      {p.failed ? (
+        <StatusTag tone="danger" title={`${p.failed} 个仓打点失败，悬浮查看`}>
+          <span>失败 {p.failed}</span>
+        </StatusTag>
+      ) : null}
+    </div>
+  );
+}
+
 /** HISTORY → Snapshots: workspace-wide 打点 across every repo. */
 export function SnapshotsSection({ workspaceRoot }: { workspaceRoot: string }) {
   const snapshots = useSnapshotStore((s) => s.snapshots);
@@ -118,6 +145,10 @@ export function SnapshotsSection({ workspaceRoot }: { workspaceRoot: string }) {
   const creating = useSnapshotStore((s) => s.creating);
   const comparing = useSnapshotStore((s) => s.comparing);
   const error = useSnapshotStore((s) => s.error);
+  const progress = useSnapshotStore((s) => s.progress);
+  const running = useMemo(() => Object.values(progress), [progress]);
+  const manualRun = running.find((p) => p.source === "manual");
+  const autoRun = running.find((p) => p.source !== "manual");
   const filter = useSnapshotStore((s) => s.filter);
   const selected = useSnapshotStore((s) => s.selected);
   const load = useSnapshotStore((s) => s.load);
@@ -170,6 +201,12 @@ export function SnapshotsSection({ workspaceRoot }: { workspaceRoot: string }) {
               {snapshots.length}
             </span>
           ) : null}
+          {autoRun ? (
+            <span className="snapshots-section__count snapshot-progress__auto" title={progressTooltip(autoRun)} data-testid="snapshot-auto-progress">
+              <Icon name="sync" className="codicon-modifier-spin" />
+              {autoRun.done}/{autoRun.total}
+            </span>
+          ) : null}
         </button>
         <span className="snapshots-section__actions">
           <button
@@ -198,7 +235,7 @@ export function SnapshotsSection({ workspaceRoot }: { workspaceRoot: string }) {
             type="button"
             className="icon-btn"
             aria-label="打点"
-            title={creating ? "打点中…" : "打点：记录工作区内所有仓的当前状态"}
+            title={creating ? (manualRun ? `打点中… ${manualRun.done}/${manualRun.total}` : "打点中…") : "打点：记录工作区内所有仓的当前状态"}
             disabled={creating}
             onClick={() => void create()}
             data-testid="snapshot-create"
@@ -235,6 +272,7 @@ export function SnapshotsSection({ workspaceRoot }: { workspaceRoot: string }) {
               </button>
             </form>
           ) : null}
+          {manualRun ? <SnapshotProgressBar p={manualRun} /> : null}
           {error ? <p className="pane-hint pane-hint--error">{error}</p> : null}
           {selected.length > 0 ? (
             <div className="snapshots-section__bar">

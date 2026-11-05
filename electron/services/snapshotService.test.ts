@@ -3,10 +3,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { LocalHostSession } from "../host/localHost.js";
 import type { SnapshotMeta } from "../../src/core/snapshots/model.js";
-import { SnapshotService, createFileIndexStore, type SnapshotIndexStore } from "./snapshotService.js";
+import { SnapshotService, buildRemoteScript, createFileIndexStore, parseProgressLines, parseRemoteResults, type SnapshotIndexStore } from "./snapshotService.js";
+import type { SnapshotProgress } from "../../src/core/snapshots/model.js";
 
 const ENV = {
   ...process.env,
@@ -253,3 +254,112 @@ describe("SnapshotService index rebuild", () => {
   });
 });
 
+
+/** Remote hosts take the batched one-script path; exercise it on a local repo. */
+function asRemote(h: LocalHostSession) {
+  const calls: string[] = [];
+  const p = new Proxy(h, {
+    get(t, k) {
+      if (k === "kind") return "ssh";
+      const v = Reflect.get(t, k) as unknown;
+      if (typeof v !== "function") return v;
+      return (...args: unknown[]) => {
+        calls.push(String(k));
+        return (v as (...a: unknown[]) => unknown).apply(t, args);
+      };
+    },
+  });
+  return { host: p as unknown as LocalHostSession, calls };
+}
+
+describe("SnapshotService.create on a remote host (batched)", () => {
+  it("captures every repo in ONE remote command without touching the index", async () => {
+    const { host: remote, calls } = asRemote(host);
+    await write(path.join(a, "staged.txt"), "s\n");
+    git(a, ["add", "staged.txt"]);
+    await write(path.join(a, "keep.txt"), "changed\n");
+    await write(path.join(a, "new.txt"), "untracked\n");
+    await write(path.join(a, "ignored.log"), "nope\n");
+    await write(path.join(a, "big.bin"), Buffer.alloc(4096, 1));
+    const indexBefore = await sha(path.join(a, ".git/index"));
+    const statusBefore = git(a, ["status", "--porcelain"]);
+
+    const meta = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a], source: "manual" });
+    const ra = meta.repos[0]!;
+    expect(ra.status).toBe("ok");
+    expect(calls.filter((c) => c === "run")).toHaveLength(1);
+    expect(calls).not.toContain("stat");
+    expect(lsTree(a, ra.commit)).toEqual([".gitignore", "keep.txt", "new.txt", "staged.txt"]);
+    expect(ra.largeFiles).toHaveLength(1);
+    expect(ra.largeFiles[0]).toMatchObject({ path: "big.bin", size: 4096 });
+    expect(git(a, ["rev-parse", `refs/anchor/snapshots/${meta.id}`]).trim()).toBe(ra.commit);
+    expect(git(a, ["rev-parse", `${ra.commit}^`]).trim()).toBe(ra.head);
+    expect(ra.branch).toBe("main");
+    expect(await sha(path.join(a, ".git/index"))).toBe(indexBefore);
+    expect(git(a, ["status", "--porcelain"])).toBe(statusBefore);
+  });
+
+  it("keeps the cached scratch index correct across snapshots (deletes, growth past the limit)", async () => {
+    const { host: remote } = asRemote(host);
+    await write(path.join(a, "grow.bin"), "small\n");
+    await write(path.join(a, "tmp.txt"), "x\n");
+    const s1 = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a], source: "manual" });
+    expect(lsTree(a, s1.repos[0]!.commit)).toEqual([".gitignore", "grow.bin", "keep.txt", "tmp.txt"]);
+    await fs.rm(path.join(a, "tmp.txt"));
+    await write(path.join(a, "grow.bin"), Buffer.alloc(4096, 3));
+    await write(path.join(a, "keep.txt"), "v2\n");
+    const s2 = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a], source: "manual" });
+    const r2 = s2.repos[0]!;
+    expect(lsTree(a, r2.commit)).toEqual([".gitignore", "keep.txt"]);
+    expect(git(a, ["show", `${r2.commit}:keep.txt`])).toBe("v2\n");
+    expect(r2.largeFiles.map((f) => f.path)).toEqual(["grow.bin"]);
+  });
+
+  it("falls back to the external store when a remote pushes refs/*", async () => {
+    const { host: remote } = asRemote(host);
+    const realHome = process.env.HOME;
+    process.env.HOME = ws;
+    onTestFinished(() => void (process.env.HOME = realHome));
+    git(a, ["remote", "add", "--mirror=push", "bk", path.join(ws, "bk.git")]);
+    const meta = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a], source: "manual" });
+    expect(meta.repos[0]!.storage).toBe("external");
+    expect(git(a, ["for-each-ref", "refs/anchor"])).toBe("");
+  });
+
+  it("isolates per-repo failures, streams progress and lists the result back", async () => {
+    const { host: remote, calls } = asRemote(host);
+    const missing = path.join(ws, "gone");
+    await write(path.join(b, "big.bin"), Buffer.alloc(4096, 1));
+    const events: SnapshotProgress[] = [];
+    const meta = await svc.create(remote, { workspaceRoot: ws, repoRoots: [a, missing, b], source: "manual", name: "批量" }, (p) => events.push(p));
+    expect(calls.filter((c) => c === "run")).toHaveLength(1);
+    expect(meta.repos.map((r) => r.status)).toEqual(["ok", "error", "ok"]);
+    expect(meta.repos[1]!.note).toMatch(/gone|No such file|cannot/i);
+    expect(events[0]).toMatchObject({ total: 3, done: 0, failed: 0 });
+    expect(events.at(-1)).toMatchObject({ total: 3, done: 3, failed: 1, largeFiles: 1 });
+    expect(events.at(-1)!.repos.map((r) => r.state)).toEqual(["ok", "error", "ok"]);
+    // done is monotonic and every repo is reported exactly once
+    expect(events.map((e) => e.done)).toEqual([...events.map((e) => e.done)].sort((x, y) => x - y));
+    const listed = (await svc.list(host, ws, [a, b])).find((s) => s.id === meta.id)!;
+    expect(listed.name).toBe("批量");
+    expect(listed.repos.find((r) => r.root === b)!.largeFiles).toMatchObject([{ path: "big.bin", size: 4096 }]);
+  });
+});
+
+describe("remote script helpers", () => {
+  it("parses progress lines and framed results", () => {
+    expect(parseProgressLines("x\n@@ANCHOR@@ P 2 ok 3\n@@ANCHOR@@ P 0 error 0\n")).toEqual([
+      { idx: 2, ok: true, large: 3 },
+      { idx: 0, ok: false, large: 0 },
+    ]);
+    const res = parseRemoteResults('@@ANCHOR@@ P 0 ok 0\n\n@@ANCHOR@@ R 0\nok abc\n{"tree":"t","largeFiles":[]}\n\n@@ANCHOR@@ R 1\nerror\nfatal: boom\n');
+    expect(res.get(0)).toMatchObject({ ok: true, commit: "abc", fields: { tree: "t" } });
+    expect(res.get(1)).toMatchObject({ ok: false, error: "fatal: boom" });
+  });
+
+  it("shell-quotes hostile paths and names in the script", () => {
+    const script = buildRemoteScript([{ root: "/w/it's $(rm -rf ~)", ref: "r", storeRel: "s", msgPrefix: "a'b" }], 10, 6);
+    expect(script).toContain(`'/w/it'\\''s $(rm -rf ~)'`);
+    expect(script).not.toMatch(/\$\\\{/);
+  });
+});

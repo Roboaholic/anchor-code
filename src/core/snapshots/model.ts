@@ -252,3 +252,18 @@ export function formatBytes(n: number): string {
   if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${n} B`;
 }
+
+export type SnapshotRepoProgressState = "pending" | "ok" | "error";
+
+/** Streamed while a snapshot is being created (main → renderer). */
+export interface SnapshotProgress {
+  id: string;
+  source: SnapshotSource;
+  agentTabId?: string;
+  total: number;
+  done: number;
+  failed: number;
+  /** Large untracked files recorded by path only so far. */
+  largeFiles: number;
+  repos: { name: string; state: SnapshotRepoProgressState }[];
+}

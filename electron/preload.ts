@@ -491,6 +491,11 @@ const anchor = {
     compare: (args: { baseId: string; targetId: string }) => ipcRenderer.invoke("snapshot:compare", args),
     getAuto: () => ipcRenderer.invoke("snapshot:getAuto"),
     setAuto: (enabled: boolean) => ipcRenderer.invoke("snapshot:setAuto", enabled),
+    onProgress: (cb: (p: unknown) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, p: unknown) => cb(p);
+      ipcRenderer.on("snapshot:progress", listener);
+      return () => ipcRenderer.removeListener("snapshot:progress", listener);
+    },
   },
   history: {
     discover: (workspaceRoot: string, opts?: { force?: boolean }): Promise<RepoInfo[]> =>

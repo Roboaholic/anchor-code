@@ -20,6 +20,7 @@ import {
   type SnapshotDiffPayload,
   type SnapshotDiffRepo,
   type SnapshotLargeFile,
+  type SnapshotProgress,
   type SnapshotMeta,
   type SnapshotRepoEntry,
   type SnapshotSource,
@@ -72,6 +73,8 @@ export interface SnapshotServiceOptions {
   /** Where external stores live for local hosts (app data dir). Remote hosts use ~/.anchor/snapshots. */
   localStoreBase: string;
   largeFileBytes?: number;
+  /** Repos snapshotted concurrently inside the remote script. */
+  remoteParallel?: number;
   now?: () => number;
 }
 
@@ -105,6 +108,166 @@ async function git(
   return r.stdout;
 }
 
+const FRAME = "@@ANCHOR@@";
+
+function sq(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Remote snapshot worker, one invocation per repo (run by xargs -P).
+ * Args: tmpdir idx root ref storeRelToHome msgPrefix; $ANCHOR_BIG = large-file bytes.
+ * Writes $T/idx.res ("ok <commit>\n{json fields}" or "error\n<stderr>")
+ * and prints one progress line as soon as the repo is done.
+ */
+const SNAPSHOT_WORKER = String.raw`
+exec </dev/null
+T=$1 idx=$2 root=$3 ref=$4 srel=$5 pre=$6
+err="$T/$idx.err"; lst="$T/$idx.large"
+jesc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037'; }
+exposes() {
+  git config --get-regexp '^remote\..*\.(mirror|push)$' 2>/dev/null | while read -r k v; do
+    k=$(printf '%s' "$k" | tr 'A-Z' 'a-z'); [ -n "$v" ] || v=true
+    case "$k" in
+      *.mirror) case "$v" in [Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]|1) echo 1; return;; esac;;
+      *.push) src=$\{v#+}; src=$\{src%%:*}
+        [ -n "$src" ] || continue
+        case "refs/anchor/snapshots/x" in $src) echo 1; return;; esac
+        case "$src" in refs/anchor/*) echo 1; return;; esac;;
+    esac
+  done
+}
+work() {
+  cd "$root" || return 1
+  gd=$(git rev-parse --absolute-git-dir) || return 1
+  cdir=$(git rev-parse --git-common-dir) || return 1
+  od=$(cd "$cdir" && pwd)/objects
+  head=$(git rev-parse -q --verify HEAD 2>/dev/null) || head=
+  branch=$(git symbolic-ref --short -q HEAD 2>/dev/null) || branch=
+  scratch=$gd store=
+  if [ -n "$(exposes)" ]; then
+    store="$HOME/$srel"
+    [ -f "$store/HEAD" ] || { mkdir -p "$store" && git init --bare -q "$store"; } || return 1
+    mkdir -p "$store/objects/info" && printf '%s\n' "$od" > "$store/objects/info/alternates" || return 1
+    export GIT_OBJECT_DIRECTORY="$store/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$od"
+    scratch=$store
+  fi
+  git ls-files --others --exclude-standard -z | if command -v perl >/dev/null 2>&1; then
+    perl -0ne 'chomp; my @s = lstat($_) or next; print "$s[7]|$s[9]|$_\0" if -f _ && $s[7] > $ENV{ANCHOR_BIG}'
+  else xargs -0 sh -c '
+    for f do [ -f "$f" ] && [ ! -L "$f" ] || continue
+      sz=$(wc -c <"$f" 2>/dev/null) || continue
+      if [ "$sz" -gt "$ANCHOR_BIG" ] 2>/dev/null; then
+        mt=$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+        printf "%s|%s|%s\0" "$sz" "$mt" "$f"
+      fi
+    done' sh; fi > "$lst" || return 1
+  cache="$scratch/anchor-snapshot.index"; ix="$scratch/anchor-snapshot.$$.index"
+  if [ -f "$cache" ]; then cp "$cache" "$ix"; elif [ -f "$gd/index" ]; then cp "$gd/index" "$ix"; fi
+  { printf '.\0'; tr '\0' '\n' < "$lst" | while IFS='|' read -r a b p; do [ -n "$p" ] && printf ':(exclude,literal)%s\0' "$p"; done; } > "$lst.ps"
+  GIT_INDEX_FILE="$ix" git -c core.autocrlf=false add -A --pathspec-from-file="$lst.ps" --pathspec-file-nul || { rm -f "$ix"; return 1; }
+  tr '\0' '\n' < "$lst" | while IFS='|' read -r a b p; do [ -n "$p" ] && printf '%s\0' "$p"; done |
+    GIT_INDEX_FILE="$ix" git update-index -z --force-remove --stdin || { rm -f "$ix"; return 1; }
+  t=$(GIT_INDEX_FILE="$ix" git write-tree) || { rm -f "$ix"; return 1; }
+  mv -f "$ix" "$cache"
+  lf=; n=0
+  tr '\0' '\n' < "$lst" > "$lst.nl"
+  while IFS='|' read -r sz mt p; do
+    [ -n "$p" ] || continue
+    [ $n -gt 0 ] && lf="$lf,"; n=$((n + 1))
+    lf="$lf{\"path\":\"$(jesc "$p")\",\"size\":$sz,\"mtimeMs\":$\{mt}000}"
+  done < "$lst.nl"
+  if [ -n "$head" ]; then hj="\"$head\""; else hj=null; fi
+  if [ -n "$branch" ]; then bj="\"$(jesc "$branch")\""; else bj=null; fi
+  if [ -n "$store" ]; then sj="\"storage\":\"external\",\"storeDir\":\"$(jesc "$store")\""; else sj="\"storage\":\"repo\""; fi
+  fields="\"head\":$hj,\"branch\":$bj,\"tree\":\"$t\",$sj,\"largeFiles\":[$lf],\"status\":\"ok\""
+  if [ -n "$head" ]; then
+    c=$(printf '%s%s}}\n' "$pre" "$fields" | git commit-tree "$t" -p "$head") || return 1
+  else
+    c=$(printf '%s%s}}\n' "$pre" "$fields" | git commit-tree "$t") || return 1
+  fi
+  if [ -n "$store" ]; then
+    (unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; git --git-dir="$store" update-ref "$ref" "$c") || return 1
+  else git update-ref "$ref" "$c" || return 1; fi
+  printf 'ok %s\n{%s}\n' "$c" "$fields" > "$T/$idx.res"
+  echo "$n" > "$T/$idx.n"
+}
+export LC_ALL=C
+if (work) 2>"$err"; then
+  printf '@@ANCHOR@@ P %s ok %s\n' "$idx" "$(cat "$T/$idx.n" 2>/dev/null || echo 0)"
+else
+  { echo error; tail -c 2000 "$err"; } > "$T/$idx.res"
+  printf '@@ANCHOR@@ P %s error 0\n' "$idx"
+fi
+`.replace(/\$\\\{/g, "${");
+
+export interface RemoteJob {
+  root: string;
+  ref: string;
+  /** External store path relative to $HOME (used only if a remote pushes refs/*). */
+  storeRel: string;
+  /** Commit message up to and including `"repo":{"root":…,"name":…,`. */
+  msgPrefix: string;
+}
+
+/** One `sh -s` script that snapshots every repo with bounded parallelism. */
+export function buildRemoteScript(jobs: RemoteJob[], largeBytes: number, parallel: number): string {
+  const args = jobs
+    .map((j, i) => [String(i), j.root, j.ref, j.storeRel, j.msgPrefix].map(sq).join(" "))
+    .join(" \\\n  ");
+  return [
+    "T=$(mktemp -d 2>/dev/null || mktemp -d -t anchorsnap) || exit 90",
+    "trap 'rm -rf \"$T\"' EXIT",
+    "cat > \"$T/w.sh\" <<'ANCHOR_WORKER_EOF'",
+    SNAPSHOT_WORKER.trim(),
+    "ANCHOR_WORKER_EOF",
+    `printf '%s\\0' ${args} > "$T/args"`,
+    `export ANCHOR_BIG=${largeBytes}`,
+    `xargs -0 -n 5 -P ${parallel} sh "$T/w.sh" "$T" < "$T/args"`,
+    `i=0; while [ $i -lt ${jobs.length} ]; do printf '\\n${FRAME} R %s\\n' $i; cat "$T/$i.res" 2>/dev/null || echo error; i=$((i + 1)); done`,
+    "",
+  ].join("\n");
+}
+
+export interface RemoteResult {
+  idx: number;
+  ok: boolean;
+  commit?: string;
+  fields?: Record<string, unknown>;
+  error?: string;
+}
+
+export function parseProgressLines(chunk: string): { idx: number; ok: boolean; large: number }[] {
+  const out: { idx: number; ok: boolean; large: number }[] = [];
+  for (const m of chunk.matchAll(/^@@ANCHOR@@ P (\d+) (ok|error) (\d+)$/gm)) {
+    out.push({ idx: Number(m[1]), ok: m[2] === "ok", large: Number(m[3]) });
+  }
+  return out;
+}
+
+export function parseRemoteResults(stdout: string): Map<number, RemoteResult> {
+  const out = new Map<number, RemoteResult>();
+  const parts = stdout.split(/\n@@ANCHOR@@ R (\d+)\n/);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    const idx = Number(parts[i]);
+    const body = parts[i + 1]!;
+    const nl = body.indexOf("\n");
+    const first = nl < 0 ? body : body.slice(0, nl);
+    const rest = nl < 0 ? "" : body.slice(nl + 1);
+    if (first.startsWith("ok ")) {
+      try {
+        const jsonLine = rest.split("\n")[0] ?? "";
+        out.set(idx, { idx, ok: true, commit: first.slice(3).trim(), fields: JSON.parse(jsonLine) as Record<string, unknown> });
+      } catch {
+        out.set(idx, { idx, ok: false, error: "unreadable snapshot result" });
+      }
+    } else {
+      out.set(idx, { idx, ok: false, error: rest.replace(/\n@@ANCHOR@@ P[^\n]*/g, "").trim() });
+    }
+  }
+  return out;
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -120,6 +283,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 
 export class SnapshotService {
   private readonly largeBytes: number;
+  private readonly remoteParallel: number;
   private readonly now: () => number;
   private readonly homeCache = new Map<string, Promise<string>>();
   /** Serialize index read-modify-write per workspace. */
@@ -127,6 +291,7 @@ export class SnapshotService {
 
   constructor(private readonly opts: SnapshotServiceOptions) {
     this.largeBytes = opts.largeFileBytes ?? LARGE_FILE_BYTES;
+    this.remoteParallel = opts.remoteParallel ?? 6;
     this.now = opts.now ?? Date.now;
   }
 
@@ -209,11 +374,18 @@ export class SnapshotService {
       host.kind === "local"
         ? this.opts.localStoreBase
         : hostJoin(host.kind, await this.home(host), ".anchor", "snapshots");
-    const hash = createHash("sha1").update(`${host.id}\0${hostNormalize(host.kind, root)}`).digest("hex").slice(0, 16);
-    return hostJoin(host.kind, baseDir, `${hash}.git`);
+    return hostJoin(host.kind, baseDir, `${this.storeHash(host, root)}.git`);
   }
 
-  async create(host: HostSession, input: CreateSnapshotInput): Promise<SnapshotMeta> {
+  private storeHash(host: HostSession, root: string): string {
+    return createHash("sha1").update(`${host.id}\0${hostNormalize(host.kind, root)}`).digest("hex").slice(0, 16);
+  }
+
+  async create(
+    host: HostSession,
+    input: CreateSnapshotInput,
+    onProgress?: (p: SnapshotProgress) => void,
+  ): Promise<SnapshotMeta> {
     const nowMs = this.now();
     const id = newSnapshotId(nowMs);
     const createdAt = new Date(nowMs).toISOString();
@@ -229,7 +401,43 @@ export class SnapshotService {
       ...(input.turn ? { turn: input.turn } : {}),
       createdAt,
     };
-    const repos = await mapLimit(input.repoRoots, 6, (root) =>
+    const progress: SnapshotProgress = {
+      id,
+      source: input.source,
+      ...(input.agentTabId ? { agentTabId: input.agentTabId } : {}),
+      total: input.repoRoots.length,
+      done: 0,
+      failed: 0,
+      largeFiles: 0,
+      repos: input.repoRoots.map((root) => ({ name: hostBasename(host.kind, root) || root, state: "pending" as const })),
+    };
+    const emit = () => onProgress?.(structuredClone(progress));
+    const mark = (i: number, ok: boolean, large: number) => {
+      const r = progress.repos[i];
+      if (!r || r.state !== "pending") return;
+      r.state = ok ? "ok" : "error";
+      progress.done++;
+      if (!ok) progress.failed++;
+      progress.largeFiles += large;
+      emit();
+    };
+    emit();
+    const repos =
+      host.kind !== "local" && input.repoRoots.length > 0
+        ? await this.createRemote(host, input.repoRoots, base, mark)
+        : await this.createLocal(host, input.repoRoots, base, mark);
+    repos.forEach((r, i) => mark(i, r.status === "ok", r.largeFiles.length));
+    const meta: SnapshotMeta = { ...base, repos };
+    return this.finishCreate(host, input, meta, nowMs);
+  }
+
+  private createLocal(
+    host: HostSession,
+    roots: string[],
+    base: Omit<SnapshotMeta, "repos">,
+    mark: (i: number, ok: boolean, large: number) => void,
+  ): Promise<SnapshotRepoEntry[]> {
+    return mapLimit(roots, 6, (root) =>
       this.snapshotRepo(host, root, base).catch(
         (err): SnapshotRepoEntry => ({
           root,
@@ -243,9 +451,14 @@ export class SnapshotService {
           status: "error",
           note: err instanceof Error ? err.message + (err instanceof HostError && err.causeDetail ? `: ${err.causeDetail}` : "") : String(err),
         }),
-      ),
+      ).then((entry) => {
+        mark(roots.indexOf(root), entry.status === "ok", entry.largeFiles.length);
+        return entry;
+      }),
     );
-    const meta: SnapshotMeta = { ...base, repos };
+  }
+
+  private finishCreate(host: HostSession, input: CreateSnapshotInput, meta: SnapshotMeta, nowMs: number): Promise<SnapshotMeta> {
     const key = this.key(host, input.workspaceRoot);
     return this.serial(key, async () => {
       const list = await this.loadIndex(host, input.workspaceRoot, input.repoRoots);
@@ -426,6 +639,76 @@ export class SnapshotService {
     } finally {
       await host.remove(idx).catch(() => undefined);
     }
+  }
+
+  /**
+   * Remote hosts: every host.run is a fresh ssh handshake (OpenSSH allows 2 per
+   * alias), so the whole snapshot runs as ONE script over ONE connection.
+   * Repos run in parallel remotely; each prints a progress line when done and
+   * failures are reported per repo.
+   */
+  private async createRemote(
+    host: HostSession,
+    roots: string[],
+    meta: Omit<SnapshotMeta, "repos">,
+    onRepo: (i: number, ok: boolean, large: number) => void,
+  ): Promise<SnapshotRepoEntry[]> {
+    const jobs: RemoteJob[] = roots.map((root) => {
+      const name = hostBasename(host.kind, root) || root;
+      const head = JSON.stringify({ ...meta, repo: { root, name } });
+      return {
+        root,
+        ref: `${SNAPSHOT_REF_PREFIX}${meta.id}`,
+        storeRel: `.anchor/snapshots/${this.storeHash(host, root)}.git`,
+        msgPrefix: `anchor snapshot: ${meta.name}\n\n${head.slice(0, -2)},`,
+      };
+    });
+    const failed = (root: string, note: string): SnapshotRepoEntry => ({
+      root,
+      name: hostBasename(host.kind, root) || root,
+      head: null,
+      branch: null,
+      commit: "",
+      tree: "",
+      storage: "repo",
+      largeFiles: [],
+      status: "error",
+      note,
+    });
+    let seen = "";
+    const r = await host.run("/", "sh", ["-s"], {
+      stdin: buildRemoteScript(jobs, this.largeBytes, this.remoteParallel),
+      env: GIT_IDENT,
+      timeoutMs: 600_000,
+      onStdoutChunk: (_chunk, stdout) => {
+        const lineEnd = stdout.lastIndexOf("\n");
+        const fresh = stdout.slice(seen.length, lineEnd + 1);
+        seen = stdout.slice(0, lineEnd + 1);
+        for (const p of parseProgressLines(fresh)) {
+          if (roots[p.idx] !== undefined) onRepo(p.idx, p.ok, p.large);
+        }
+      },
+    });
+    const results = parseRemoteResults(r.stdout);
+    const whole = (r.stderr || `exit ${r.code}`).trim();
+    return roots.map((root, i) => {
+      const res = results.get(i);
+      if (!res) return failed(root, `snapshot script failed: ${whole}`);
+      if (!res.ok) return failed(root, res.error || "snapshot failed");
+      const f = res.fields as Partial<SnapshotRepoEntry>;
+      return {
+        root,
+        name: hostBasename(host.kind, root) || root,
+        head: f.head ?? null,
+        branch: f.branch ?? null,
+        commit: res.commit!,
+        tree: f.tree ?? "",
+        storage: f.storage === "external" ? "external" : "repo",
+        ...(f.storeDir ? { storeDir: f.storeDir } : {}),
+        largeFiles: f.largeFiles ?? [],
+        status: "ok",
+      };
+    });
   }
 
   private async snapshotRepo(

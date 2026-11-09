@@ -27,6 +27,11 @@ export type RepoStatusState = "idle" | "loading" | "error";
 export interface RepoCardState {
   root: string;
   name: string;
+  /**
+   * Branch from discovery (HEAD file read in the same scan), shown until the
+   * first status pass lands so rows never sit on "…" waiting for git status.
+   */
+  headBranch?: string;
   /** Whole repo row expanded. */
   expanded: boolean;
   /** Sections inside the repo (Changes default open). */
@@ -166,6 +171,7 @@ function emptyCard(repo: RepoInfo): RepoCardState {
   return {
     root: repo.root,
     name: repo.name,
+    ...(repo.branch ? { headBranch: repo.branch } : {}),
     expanded: false,
     changesOpen: true,
     historyOpen: false,
@@ -320,6 +326,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
             ...prev,
             root: info.root,
             name: info.name,
+            headBranch: info.branch ?? prev.headBranch,
           };
         }
         return emptyCard(info);

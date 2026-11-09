@@ -84,6 +84,24 @@ describe("HistoryPane repo rows", () => {
   });
   afterEach(() => cleanup());
 
+  it("shows the discovery branch before the first status, then lets status decide", () => {
+    setRepos([
+      card({ root: `${ROOT}/ffmpeg`, name: "ffmpeg", headBranch: "release/7.1" }),
+      card({ root: `${ROOT}/hal`, name: "hal" }),
+    ]);
+    render(<HistoryPane />);
+    const labels = () => [...document.querySelectorAll(".repo-branch__label")].map((b) => b.textContent?.trim());
+    expect(labels()).toEqual(["release/7.1", "…"]);
+    act(() => {
+      useHistoryStore.setState((s) => ({
+        repos: s.repos.map((r) =>
+          r.name === "ffmpeg" ? { ...r, status: { ...dirtyStatus, repoRoot: r.root, branch: null } } : r,
+        ),
+      }));
+    });
+    expect(labels()).toEqual(["detached", "…"]);
+  });
+
   it("shows a single M badge with the change breakdown in the tooltip", () => {
     setRepos([card({ root: `${ROOT}/embedded_bmad_engineering`, name: "embedded_bmad_engineering", status: dirtyStatus })]);
     render(<HistoryPane />);

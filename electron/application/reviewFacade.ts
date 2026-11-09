@@ -263,26 +263,77 @@ export class ReviewFacade {
 
   private async approvedRepoRoots(inputs: string[]): Promise<string[]> {
     const candidates = inputs.map((input) => this.workspace.safePath(input));
-    await Promise.all(candidates.map((candidate) => this.approveRepoRoot(candidate)));
+    const host = this.hosts.session;
+    const workspaceKey = this.pathKey(this.workspace.root());
+    const cacheKey = (candidate: string) => `${host.id}\0${workspaceKey}\0${this.pathKey(candidate)}`;
+    let pending = [...new Set(candidates)].filter((c) => !this.approvedRepoCache.has(cacheKey(c)));
+    if (pending.length === 0) return candidates;
+
+    // Roots that this session's discovery pass already found (and validated
+    // on the host) in this workspace need no extra round trip. Over SSH each
+    // `git rev-parse` was a fresh handshake, 2 at a time per alias: ~20 of
+    // them queued ahead of the first Repos status on every new workspace.
+    const discovered = await this.discoveredRootKeys(host);
+    if (discovered) {
+      pending = pending.filter((c) => {
+        if (!discovered.has(this.pathKey(c))) return true;
+        this.approvedRepoCache.add(cacheKey(c));
+        return false;
+      });
+    }
+    if (pending.length === 0) return candidates;
+
+    const tops = host.kind === "local" || pending.length === 1
+      ? await Promise.all(pending.map((c) => this.showToplevel(c)))
+      : await this.showToplevels(pending);
+    pending.forEach((candidate, i) => {
+      const actualRoot = tops[i];
+      if (!actualRoot || this.pathKey(actualRoot) !== this.pathKey(candidate)) {
+        throw new HostError(
+          "permission",
+          "Repository is not an approved Git repository in the active workspace",
+        );
+      }
+      this.approvedRepoCache.add(cacheKey(candidate));
+    });
     return candidates;
   }
 
-  private async approveRepoRoot(candidate: string): Promise<void> {
-    const cacheKey = `${this.hosts.session.id}\0${this.pathKey(this.workspace.root())}\0${this.pathKey(candidate)}`;
-    if (this.approvedRepoCache.has(cacheKey)) return;
-
-    const result = await readRun(this.hosts.session, candidate, "git", [
-      "rev-parse",
-      "--show-toplevel",
-    ], { timeoutMs: 10_000 });
-    const actualRoot = result.stdout.trim();
-    if (result.code !== 0 || !actualRoot || this.pathKey(actualRoot) !== this.pathKey(candidate)) {
-      throw new HostError(
-        "permission",
-        "Repository is not an approved Git repository in the active workspace",
-      );
+  /** Path keys of the cached discovery result for the active workspace (never starts a scan). */
+  private async discoveredRootKeys(host: HostManager["session"]): Promise<Set<string> | null> {
+    const hit = this.repoCache.get(`${host.id}\0${this.pathKey(this.workspace.root())}`);
+    if (!hit) return null;
+    try {
+      return new Set((await hit).map((r) => this.pathKey(r.root)));
+    } catch {
+      return null;
     }
-    this.approvedRepoCache.add(cacheKey);
+  }
+
+  private async showToplevel(candidate: string): Promise<string | null> {
+    const result = await readRun(this.hosts.session, candidate, "git", ["rev-parse", "--show-toplevel"], { timeoutMs: 10_000 });
+    return result.code === 0 ? result.stdout.trim() || null : null;
+  }
+
+  /** One remote command for many candidates (WSL/SSH): one line per candidate, in order. */
+  private async showToplevels(candidates: string[]): Promise<(string | null)[]> {
+    const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+    const script = candidates
+      .map((c, i) => `printf '%s\\t%s\\n' ${i} "$(cd -- ${q(c)} 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"`)
+      .join("\n");
+    const result = await readRun(this.hosts.session, this.workspace.root(), "bash", ["-s"], {
+      stdin: script + "\n",
+      timeoutMs: Math.max(10_000, candidates.length * 1_000),
+    });
+    const out: (string | null)[] = candidates.map(() => null);
+    for (const line of result.stdout.split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab < 0) continue;
+      const i = Number(line.slice(0, tab));
+      const top = line.slice(tab + 1).trim();
+      if (Number.isInteger(i) && i >= 0 && i < out.length && top) out[i] = top;
+    }
+    return out;
   }
 
   private pathKey(input: string): string {

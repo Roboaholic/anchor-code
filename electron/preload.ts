@@ -178,6 +178,8 @@ export interface ReadImageResult {
 export interface RepoInfo {
   root: string;
   name: string;
+  /** Branch read from HEAD at discovery (WSL/SSH); status stays authoritative. */
+  branch?: string;
 }
 
 export interface CommitRow {

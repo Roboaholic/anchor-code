@@ -43,6 +43,12 @@ const WALK_CONCURRENCY = 6;
 export interface RepoInfo {
   root: string;
   name: string;
+  /**
+   * Branch read from HEAD during discovery (WSL/SSH; no extra command), so the
+   * Repos row can show it before the first status pass returns. Undefined when
+   * unknown or detached — status remains the source of truth.
+   */
+  branch?: string;
 }
 
 export interface CommitRow {
@@ -168,6 +174,7 @@ type StatLike = { isFile: boolean; isDir: boolean };
 async function discoverViaFind(
   host: HostSession,
   workspaceRoot: string,
+  branches?: Map<string, string>,
 ): Promise<string[] | null> {
   if (host.kind !== "wsl" && host.kind !== "ssh") return null;
 
@@ -190,7 +197,13 @@ async function discoverViaFind(
     `  d=$(dirname "$g")`,
     // Valid when: real `.git/HEAD` (normal repo or repo-manifest symlink that
     // resolves to a dir with HEAD), or `.git` is a gitfile (worktree/submodule).
-    `  if [ -f "$g/HEAD" ] || [ -f "$g" ]; then echo "$d"; fi`,
+    // The HEAD line rides along (tab-separated) so rows get a branch at once.
+    `  if [ -f "$g/HEAD" ]; then h=$(head -n 1 "$g/HEAD" 2>/dev/null)`,
+    `  elif [ -f "$g" ]; then gd=$(sed -n 's/^gitdir: //p' "$g" 2>/dev/null | head -n 1)`,
+    `    case "$gd" in /*) ;; ?*) gd="$d/$gd" ;; esac`,
+    `    h=$( [ -n "$gd" ] && head -n 1 "$gd/HEAD" 2>/dev/null)`,
+    `  else continue; fi`,
+    `  printf '%s\\t%s\\n' "$d" "$h"`,
     `done`,
   ].join("\n");
 
@@ -202,11 +215,21 @@ async function discoverViaFind(
 
   const roots: string[] = [];
   for (const line of result.stdout.split("\n")) {
-    const p = line.trim().replace(/\\/g, "/");
+    const tab = line.lastIndexOf("\t");
+    const p = (tab >= 0 ? line.slice(0, tab) : line).trim().replace(/\\/g, "/");
     if (!p) continue;
-    roots.push(hostNormalize(host.kind, p));
+    const root = hostNormalize(host.kind, p);
+    roots.push(root);
+    const branch = tab >= 0 ? branchFromHeadLine(line.slice(tab + 1)) : null;
+    if (branch) branches?.set(root, branch);
   }
   return roots;
+}
+
+/** `ref: refs/heads/x` → `x`; detached / unreadable → null. */
+export function branchFromHeadLine(line: string): string | null {
+  const m = /^ref:\s*refs\/heads\/(.+)$/.exec(line.trim());
+  return m ? m[1]!.trim() || null : null;
 }
 
 async function walkDiscover(
@@ -270,9 +293,10 @@ export async function discoverRepos(
     // ignore
   }
 
+  const branches = new Map<string, string>();
   let nested: string[] | null = null;
   try {
-    nested = await discoverViaFind(host, root);
+    nested = await discoverViaFind(host, root, branches);
   } catch {
     nested = null;
   }
@@ -300,10 +324,14 @@ export async function discoverRepos(
   ];
   unique.sort((a, b) => a.length - b.length || a.localeCompare(b));
 
-  return unique.map((repoRoot) => ({
-    root: repoRoot,
-    name: hostBasename(host.kind, repoRoot) || repoRoot,
-  }));
+  return unique.map((repoRoot) => {
+    const branch = branches.get(repoRoot);
+    return {
+      root: repoRoot,
+      name: hostBasename(host.kind, repoRoot) || repoRoot,
+      ...(branch ? { branch } : {}),
+    };
+  });
 }
 
 export interface LoadLogOptions {

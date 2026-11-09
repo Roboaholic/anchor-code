@@ -166,6 +166,15 @@ describe("historyStore multi-repo", () => {
     expect(s.repos.every((r) => r.comparesOpen === false)).toBe(true);
   });
 
+  it("keeps the discovery branch on each card until status lands", async () => {
+    (window.anchor.history.discover as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { root: "/ws/repo-a", name: "repo-a", branch: "dev" },
+      { root: "/ws/repo-b", name: "repo-b" },
+    ]);
+    await useHistoryStore.getState().discover("/ws");
+    expect(useHistoryStore.getState().repos.map((r) => r.headBranch)).toEqual(["dev", undefined]);
+  });
+
   it("waits for cold host discovery to complete", async () => {
     let resolveDiscover!: (repos: Array<{ root: string; name: string }>) => void;
     const delayed = new Promise<Array<{ root: string; name: string }>>((resolve) => {

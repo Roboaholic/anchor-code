@@ -257,7 +257,9 @@ function RepoCard({
   const canCompare = card.selectedHashes.length > 0 && !card.comparing;
   const entries = statusEntries(card);
   const selectionFull = card.selectedHashes.length >= 2;
-  const branchLabel = card.status?.branch ?? null;
+  // Status is authoritative (incl. detached); before it lands, the branch read
+  // at discovery fills the row instead of "…".
+  const branchLabel = card.status ? card.status.branch ?? null : card.headBranch ?? null;
   const [commitOpen, setCommitOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   // Selected file paths for the next commit; defaults to all changed files.

@@ -64,6 +64,14 @@ describe("buildAskPrompt", () => {
   it("formats single-line labels", () => {
     expect(askLineLabel({ startLine: 7, endLine: 7 })).toBe("L7");
   });
+
+  it("still includes location and snippet when the question is empty", () => {
+    const p = buildAskPrompt({ context: ctx, question: "   ", readOnly: false });
+    expect(p).toContain("File: /repo/src/a.ts");
+    expect(p).toContain("Lines: L3-5");
+    expect(p).toContain("const a = 1;\nconst b = 2;");
+    expect(p).toMatch(/Question:\n$/);
+  });
 });
 
 describe("isAskSessionSelectable (idle gating)", () => {

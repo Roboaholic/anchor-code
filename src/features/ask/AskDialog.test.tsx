@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { AskDialog } from "./AskDialog";
+import { buildAskPrompt } from "./askPrompt";
 import { openAsk, useAskStore } from "./askStore";
 
 const ctx = {
@@ -148,5 +149,110 @@ describe("AskDialog read-only toggle", () => {
     expect(calls[0].permissionMode).toBeUndefined();
     expect(calls[0].readOnly).toBe(false);
     expect(String(calls[0].prompt)).not.toContain("Read-only");
+  });
+});
+
+describe("AskDialog copy button", () => {
+  const writes: string[] = [];
+  const createCalls: unknown[] = [];
+
+  beforeEach(() => {
+    writes.length = 0;
+    createCalls.length = 0;
+    Object.assign(window, {
+      anchor: {
+        clipboard: {
+          writeText: async (text: string) => {
+            writes.push(text);
+            return true;
+          },
+        },
+      },
+    });
+    useTerminalStore.setState({
+      tabs: [],
+      agentProfiles: [{ id: "claude", name: "Claude", enabled: true }] as never,
+      defaultAgentId: "claude",
+      loadAgentProfiles: async () => {},
+      createAgentTab: async (_p: unknown, o: unknown) => {
+        createCalls.push(o);
+        return true;
+      },
+    } as never);
+    useAskStore.setState({ context: null, drafts: {} });
+  });
+  afterEach(() => {
+    cleanup();
+    useAskStore.setState({ context: null, drafts: {} });
+    vi.useRealTimers();
+  });
+
+  it("copies the same prompt Ask would send and does not close or send", async () => {
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+    await userEvent.type(screen.getByRole("textbox"), "why this lock?");
+    const expected = buildAskPrompt({
+      context: ctx,
+      question: "why this lock?",
+      readOnly: true,
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy question with file and lines" }),
+    );
+    expect(writes).toEqual([expected]);
+    expect(createCalls).toEqual([]);
+    expect(useAskStore.getState().context).not.toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
+    expect(screen.getByRole("textbox")).toHaveProperty("value", "why this lock?");
+  });
+
+  it("copies location and snippet when the question is empty", async () => {
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy question with file and lines" }),
+    );
+    expect(writes).toEqual([
+      buildAskPrompt({ context: ctx, question: "", readOnly: true }),
+    ]);
+    expect(createCalls).toEqual([]);
+    expect(useAskStore.getState().context).not.toBeNull();
+  });
+
+  it("includes read-only instruction only when the checkbox is checked", async () => {
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+    await userEvent.click(screen.getByRole("checkbox", { name: /Read-only/ }));
+    await userEvent.type(screen.getByRole("textbox"), "what changed?");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy question with file and lines" }),
+    );
+    const expected = buildAskPrompt({
+      context: ctx,
+      question: "what changed?",
+      readOnly: false,
+    });
+    expect(writes).toEqual([expected]);
+    expect(expected).not.toContain("Read-only");
+  });
+
+  it("restores the copy tooltip after a short delay", async () => {
+    vi.useFakeTimers();
+    render(<AskDialog />);
+    act(() => openAsk(ctx));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy question with file and lines" }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(
+      screen.getByRole("button", { name: "Copy question with file and lines" }),
+    ).toBeTruthy();
   });
 });

@@ -55,6 +55,8 @@ export function AskDialog() {
   const dismissRef = useRef<() => void>(() => {});
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const enabledProfiles = useMemo(
@@ -72,11 +74,25 @@ export function AskDialog() {
   );
 
   useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current != null) {
+        window.clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!context) return;
     restoreFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setError(null);
     setSending(false);
+    setCopied(false);
+    if (copiedTimerRef.current != null) {
+      window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
     void loadAgentProfiles();
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -177,6 +193,27 @@ export function AskDialog() {
 
   dismissRef.current = dismiss;
 
+  const copyPrompt = async () => {
+    if (!context) return;
+    const prompt = buildAskPrompt({ context, question, readOnly });
+    try {
+      await window.anchor.clipboard.writeText(prompt);
+    } catch {
+      try {
+        await navigator.clipboard.writeText(prompt);
+      } catch {
+        // ignore — still show feedback only after a successful write
+        return;
+      }
+    }
+    setCopied(true);
+    if (copiedTimerRef.current != null) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      copiedTimerRef.current = null;
+    }, 1500);
+  };
+
   if (!context) return null;
 
   const isNew = target.startsWith(NEW_PREFIX);
@@ -265,6 +302,15 @@ export function AskDialog() {
           <span className="ask-pop__lines">{askLineLabel(context)}</span>
           {context.diff ? <span className="ask-pop__diff"> · diff</span> : null}
         </span>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label={copied ? "Copied" : "Copy question with file and lines"}
+          title={copied ? "Copied" : "Copy question with file and lines"}
+          onClick={() => void copyPrompt()}
+        >
+          <Icon name={copied ? "check" : "copy"} />
+        </button>
         <button
           type="button"
           className="icon-btn"

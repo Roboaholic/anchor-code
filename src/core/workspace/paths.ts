@@ -105,3 +105,35 @@ export function isMarkdownPath(filePath: string): boolean {
 export function workspaceDisplayName(root: string): string {
   return basename(root) || root;
 }
+
+/** Compare paths ignoring backslash vs slash so Local (Windows) and SSH/WSL keys match. */
+export function pathsEqual(a: string, b: string): boolean {
+  return a.replace(/\\/g, "/") === b.replace(/\\/g, "/");
+}
+
+/** True when `path` is the workspace root or a file/dir inside it. */
+export function isPathInsideRoot(root: string, path: string): boolean {
+  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const p = path.replace(/\\/g, "/");
+  return p === r || p.startsWith(r + "/");
+}
+
+/**
+ * POSIX-normalized directory keys from the workspace root down to the file's
+ * parent (excluding the root itself and the file). Empty when the file sits
+ * directly under the root, or when it is outside the workspace.
+ */
+export function ancestorDirKeys(root: string, filePath: string): string[] {
+  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const p = filePath.replace(/\\/g, "/");
+  if (p === r || !p.startsWith(r + "/")) return [];
+  const parts = p.slice(r.length + 1).split("/").filter(Boolean);
+  if (parts.length <= 1) return [];
+  const dirs: string[] = [];
+  let acc = r;
+  for (let i = 0; i < parts.length - 1; i++) {
+    acc = acc === "/" ? `/${parts[i]}` : `${acc}/${parts[i]}`;
+    dirs.push(acc);
+  }
+  return dirs;
+}

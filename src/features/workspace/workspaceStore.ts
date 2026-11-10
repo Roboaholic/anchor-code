@@ -3,7 +3,10 @@ import { create } from "zustand";
 import type { DirEntry, RecentWorkspace, WorkspaceInstance } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import {
+  ancestorDirKeys,
+  isPathInsideRoot,
   joinPath,
+  pathsEqual,
   shouldHideTreeEntry,
   shouldSkipExpand,
   workspaceDisplayName,
@@ -72,6 +75,14 @@ export interface WorkspaceState {
     type: "file" | "dir",
   ) => Promise<string | null>;
   setSelectedPath: (path: string | null) => void;
+  /**
+   * Expand ancestor folders and select `path` in the explorer.
+   * Returns false and leaves selection unchanged when the path is outside
+   * the workspace or is not present in the tree.
+   */
+  revealInExplorer: (path: string) => Promise<boolean>;
+  /** Bumps after a successful reveal so the tree can scroll the row into view. */
+  revealEpoch: number;
   resetDocumentSideEffects?: () => void;
 }
 
@@ -91,7 +102,7 @@ async function loadChildren(
 }
 function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   for (const node of nodes) {
-    if (node.path === path) return node;
+    if (pathsEqual(node.path, path)) return node;
     if (node.children?.length) {
       const hit = findNode(node.children, path);
       if (hit) return hit;
@@ -201,6 +212,124 @@ export function uniqueCopyName(parent: string, name: string): string {
   return joinPath(parent, `${stem} copy${ext}`);
 }
 
+
+const dirExpandInflight = new Map<string, Promise<boolean>>();
+
+type StoreGet = () => WorkspaceState;
+type StoreSet = (
+  partial:
+    | Partial<WorkspaceState>
+    | ((state: WorkspaceState) => Partial<WorkspaceState> | WorkspaceState),
+) => void;
+
+function pathKey(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/**
+ * Expand `dirPath` if needed, loading children on first open. Never collapses.
+ * Returns false if the directory is missing, skipped, or failed to load.
+ */
+async function ensureDirExpanded(
+  get: StoreGet,
+  set: StoreSet,
+  dirPath: string,
+  navigation: number,
+): Promise<boolean> {
+  const key = pathKey(dirPath);
+  const existing = dirExpandInflight.get(key);
+  if (existing) return existing;
+
+  const run = (async () => {
+    if (navigation !== workspaceNavigation) return false;
+    let target = findNode(get().rootEntries, dirPath);
+    if (!target || target.type !== "dir") return false;
+    if (shouldSkipExpand(target.name)) return false;
+
+    if (target.loading) {
+      target = await waitUntilDirSettled(dirPath, navigation);
+      if (navigation !== workspaceNavigation) return false;
+      if (!target || target.type !== "dir" || target.error) return false;
+      if (target.loaded && target.expanded) return true;
+    }
+
+    if (target.expanded && target.loaded) return true;
+
+    const actualPath = target.path;
+    const apply = (fn: (node: TreeNode) => TreeNode) =>
+      set((state) => {
+        if (navigation !== workspaceNavigation) return state;
+        const next = mapNode(state.rootEntries, actualPath, fn);
+        if (next === state.rootEntries) return {};
+        return {
+          rootEntries: next,
+          workspaceViews: updateActiveWorkspaceView(state, { rootEntries: next }),
+        };
+      });
+
+    if (target.loaded) {
+      apply((node) => ({ ...node, expanded: true }));
+      return true;
+    }
+
+    apply((node) => ({ ...node, expanded: true, loading: true, error: undefined }));
+    let children: TreeNode[] = [];
+    let error: string | undefined;
+    try {
+      children = await loadChildren(actualPath);
+    } catch (err) {
+      error = formatError(err);
+    }
+    if (navigation !== workspaceNavigation) return false;
+    apply((node) => ({
+      ...node,
+      loading: false,
+      loaded: true,
+      children,
+      error,
+    }));
+    return !error;
+  })();
+
+  dirExpandInflight.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (dirExpandInflight.get(key) === run) dirExpandInflight.delete(key);
+  }
+}
+
+function waitUntilDirSettled(
+  path: string,
+  navigation: number,
+): Promise<TreeNode | null> {
+  return new Promise((resolve) => {
+    const finish = (node: TreeNode | null) => resolve(node);
+    const unsub = useWorkspaceStore.subscribe((state) => {
+      if (navigation !== workspaceNavigation) {
+        unsub();
+        finish(null);
+        return;
+      }
+      const node = findNode(state.rootEntries, path);
+      if (!node || !node.loading) {
+        unsub();
+        finish(node);
+      }
+    });
+    const current = findNode(useWorkspaceStore.getState().rootEntries, path);
+    if (navigation !== workspaceNavigation) {
+      unsub();
+      finish(null);
+      return;
+    }
+    if (!current || !current.loading) {
+      unsub();
+      finish(current);
+    }
+  });
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaceRoot: null,
   workspaceName: null,
@@ -214,6 +343,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   status: "idle",
   error: null,
   selectedPath: null,
+  revealEpoch: 0,
 
   loadRecent: async () => {
     try {
@@ -580,5 +710,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       selectedPath: path,
       workspaceViews: updateActiveWorkspaceView(state, { selectedPath: path }),
     }));
+  },
+
+  revealInExplorer: async (path) => {
+    const navigation = workspaceNavigation;
+    const { workspaceRoot } = get();
+    if (!workspaceRoot || !isPathInsideRoot(workspaceRoot, path)) return false;
+
+    for (const dirKey of ancestorDirKeys(workspaceRoot, path)) {
+      if (navigation !== workspaceNavigation) return false;
+      const ok = await ensureDirExpanded(get, set, dirKey, navigation);
+      if (!ok) return false;
+    }
+    if (navigation !== workspaceNavigation) return false;
+
+    const found = findNode(get().rootEntries, path);
+    if (!found || found.type !== "file") return false;
+
+    set((state) => ({
+      selectedPath: found.path,
+      revealEpoch: state.revealEpoch + 1,
+      workspaceViews: updateActiveWorkspaceView(state, { selectedPath: found.path }),
+    }));
+    return true;
   },
 }));

@@ -4,6 +4,9 @@ import {
   isMarkdownPath,
   joinPath,
   languageFromPath,
+  ancestorDirKeys,
+  isPathInsideRoot,
+  pathsEqual,
   relativeToRoot,
   shouldHideTreeEntry,
   shouldSkipExpand,
@@ -66,3 +69,25 @@ describe("language and markdown detection", () => {
     expect(isMarkdownPath("a.ts")).toBe(false);
   });
 });
+
+describe("pathsEqual / isPathInsideRoot / ancestorDirKeys", () => {
+  it("treats slash and backslash as the same separators", () => {
+    expect(pathsEqual("C:\\proj\\src\\a.ts", "C:/proj/src/a.ts")).toBe(true);
+    expect(pathsEqual("/proj/src/a.ts", "/proj/src/b.ts")).toBe(false);
+  });
+
+  it("detects paths inside a workspace root across separators", () => {
+    expect(isPathInsideRoot("C:\\proj", "C:/proj/src/a.ts")).toBe(true);
+    expect(isPathInsideRoot("/proj", "/proj")).toBe(true);
+    expect(isPathInsideRoot("/proj", "/proj-other/a.ts")).toBe(false);
+    expect(isPathInsideRoot("/proj", "/other/a.ts")).toBe(false);
+  });
+
+  it("lists parent directories from the root down, excluding the file", () => {
+    expect(ancestorDirKeys("/ws", "/ws/a.ts")).toEqual([]);
+    expect(ancestorDirKeys("/ws", "/ws/src/lib/a.ts")).toEqual(["/ws/src", "/ws/src/lib"]);
+    expect(ancestorDirKeys("C:\\ws", "C:/ws/src/a.ts")).toEqual(["C:/ws/src"]);
+    expect(ancestorDirKeys("/ws", "/other/src/a.ts")).toEqual([]);
+  });
+});
+

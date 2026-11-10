@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import { CommentsPane } from "@/features/annotations/CommentsPane";
 import { FileTree } from "@/features/files/FileTree";
+import { useRevealActiveFileInExplorer } from "@/features/files/revealActiveFile";
 import { AgentSidebar } from "@/features/terminal/AgentSidebar";
 import { useTerminalStore } from "@/features/terminal/terminalStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
@@ -20,6 +21,9 @@ const REVIEW_MODES: { id: Exclude<LeftMode, "agent">; label: string; icon: Codic
 ];
 
 export function LeftNav() {
+  // Always subscribe, even when the Explorer pane is unmounted, so tab
+  // switches and git/snapshot clicks still expand and select the file.
+  useRevealActiveFileInExplorer();
   const leftMode = useShellStore((s) => s.leftMode);
   const setLeftMode = useShellStore((s) => s.setLeftMode);
   const enterAgentWorkbench = useShellStore((s) => s.enterAgentWorkbench);

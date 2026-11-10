@@ -22,7 +22,11 @@ import {
   visibleEntrySignature,
   type TreeNode,
 } from "@/features/workspace/workspaceStore";
-import { joinPath, relativeToRoot } from "@/core/workspace/paths";
+import { joinPath, pathsEqual, relativeToRoot } from "@/core/workspace/paths";
+import {
+  suppressExplorerRevealFor,
+  useScrollSelectedTreeRow,
+} from "@/features/files/revealActiveFile";
 import { setActiveInterval } from "@/shared/appActivity";
 import { Icon } from "@/shared/Icon";
 import { confirmDialog } from "@/shared/ConfirmDialog";
@@ -101,6 +105,8 @@ export function FileTree() {
   const createEntry = useWorkspaceStore((s) => s.createEntry);
   const hostKind = useWorkspaceStore((s) => s.hostKind);
   const hostProfileId = useWorkspaceStore((s) => s.hostProfileId);
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+  useScrollSelectedTreeRow(treeScrollRef);
 
   const [query, setQuery] = useState("");
   const [include, setInclude] = useState("");
@@ -919,7 +925,15 @@ export function FileTree() {
           <span className="files-section__label">EXPLORER</span>
         </div>
       </div>
-      <div className="files-tree-scroll">
+      <div
+        className="files-tree-scroll"
+        ref={treeScrollRef}
+        onPointerDown={(e) => {
+          const row = (e.target as HTMLElement | null)?.closest("[data-tree-path]");
+          const path = row instanceof HTMLElement ? row.dataset.treePath ?? null : null;
+          suppressExplorerRevealFor(path);
+        }}
+      >
         {rootEntries.length > 0 ? (
           <ul className="file-tree" role="tree">
             {creating && creating.parentPath === workspaceRoot ? (
@@ -1620,7 +1634,7 @@ function TreeRow({
     node: { path: string; name: string; type: "file" | "dir" },
   ) => void;
 } & TreeRowEditProps) {
-  const selected = selectedPath === node.path;
+  const selected = Boolean(selectedPath && pathsEqual(selectedPath, node.path));
   const pad = 8 + depth * 12;
   const isRenaming = renamingPath === node.path;
 
@@ -1645,6 +1659,8 @@ function TreeRow({
           type="button"
           className={`file-tree__row${selected ? " is-selected" : ""}`}
           style={{ paddingLeft: pad }}
+          data-tree-path={node.path}
+          aria-selected={selected}
           onClick={() => onToggle(node.path)}
           onContextMenu={(e) =>
             onContextMenu(e, {
@@ -1719,6 +1735,8 @@ function TreeRow({
         type="button"
         className={`file-tree__row${selected ? " is-selected" : ""}`}
         style={{ paddingLeft: pad + 14 }}
+        data-tree-path={node.path}
+        aria-selected={selected}
         onClick={() => onOpenFile(node.path)}
         onContextMenu={(e) =>
           onContextMenu(e, {

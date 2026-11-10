@@ -548,3 +548,33 @@ describe("FileTree file watcher", () => {
     expect(applyFileIndexDelta).not.toHaveBeenCalled();
   });
 });
+
+describe("FileTree selection", () => {
+  it("highlights the selected path and still opens a file on click", async () => {
+    const { openFileFromTree } = await import("@/features/shell/orchestrate");
+    vi.mocked(openFileFromTree).mockClear();
+    useWorkspaceStore.setState({
+      rootEntries: [
+        { name: "readme.md", path: "/repo/readme.md", type: "file", loaded: true },
+        {
+          name: "src",
+          path: "/repo/src",
+          type: "dir",
+          expanded: true,
+          loaded: true,
+          children: [
+            { name: "a.ts", path: "/repo/src/a.ts", type: "file", loaded: true },
+          ],
+        },
+      ],
+      selectedPath: "/repo/src/a.ts",
+    });
+    render(<FileTree />);
+    const selected = screen.getByRole("button", { name: "a.ts" });
+    expect(selected.className).toContain("is-selected");
+    expect(selected.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "readme.md" }).className).not.toContain("is-selected");
+    fireEvent.click(selected);
+    expect(openFileFromTree).toHaveBeenCalledWith("/repo/src/a.ts");
+  });
+});

@@ -269,4 +269,37 @@ describe("historyService (integration, temp git repo)", () => {
     const back = await loadRepoStatus(host, root);
     expect(back.branch).toBe(baseBranch);
   }, 20_000);
+
+  it("returns only commits after since when it is an ancestor of HEAD", async () => {
+    const result = await loadLog(host, root, { since: hashA });
+    expect(result.reset).toBeFalsy();
+    expect(result.hasMore).toBe(false);
+    expect(result.commits.map((c) => c.hash)).toEqual([hashB]);
+  });
+
+  it("signals reset and returns a fresh page when since is not an ancestor", async () => {
+    git(root, ["reset", "--hard", "HEAD"]);
+    const oldTip = hashB;
+    git(root, ["reset", "--soft", hashA]);
+    git(root, ["commit", "-m", "squashed"]);
+    const newHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
+    expect(newHead).not.toBe(oldTip);
+
+    const result = await loadLog(host, root, { since: oldTip, limit: 50 });
+    expect(result.reset).toBe(true);
+    expect(result.commits.map((c) => c.hash)).toEqual([newHead, hashA]);
+    expect(result.commits.some((c) => c.hash === oldTip)).toBe(false);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it("signals reset when since is unknown", async () => {
+    const result = await loadLog(host, root, {
+      since: "0123456789abcdef0123456789abcdef01234567",
+    });
+    expect(result.reset).toBe(true);
+    expect(result.commits.map((c) => c.hash)).toEqual([hashB, hashA]);
+  });
 });

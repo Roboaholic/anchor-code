@@ -426,3 +426,88 @@ describe("historyStore refreshRepo (header Refresh)", () => {
     expect(useHistoryStore.getState().refreshingRepos["/ws/repo-a"]).toBeUndefined();
   });
 });
+
+
+describe("historyStore refreshLog after a history rewrite", () => {
+  function commit(hash: string, subject: string) {
+    return {
+      hash,
+      shortHash: hash.slice(0, 7),
+      subject,
+      author: "t",
+      dateIso: "2026-01-01T00:00:00Z",
+    };
+  }
+
+  beforeEach(() => {
+    useHistoryStore.getState().reset();
+  });
+
+  async function openHistory(
+    log: Array<{
+      hash: string;
+      shortHash: string;
+      subject: string;
+      author: string;
+      dateIso: string;
+    }>,
+  ) {
+    const api = mockAnchor({ log });
+    await useHistoryStore.getState().discover("/ws");
+    await useHistoryStore.getState().toggleHistory("/ws/repo-a");
+    return api;
+  }
+
+  it("prepends newer commits when since is still an ancestor", async () => {
+    await openHistory([
+      commit("aaa1111", "old tip"),
+      commit("bbb2222", "older"),
+    ]);
+    (
+      window.anchor.history.loadLog as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      commits: [commit("ccc3333", "new tip")],
+      hasMore: false,
+    });
+    await useHistoryStore.getState().refreshLog("/ws/repo-a");
+    const card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.commits.map((c) => c.hash)).toEqual([
+      "ccc3333",
+      "aaa1111",
+      "bbb2222",
+    ]);
+    expect(window.anchor.history.loadLog).toHaveBeenCalledWith("/ws/repo-a", {
+      since: "aaa1111",
+      limit: 200,
+    });
+  });
+
+  it("replaces the list when loadLog signals a reset after rewrite", async () => {
+    await openHistory([
+      commit("81784e9", "pre-squash 1"),
+      commit("d6ef073", "pre-squash 2"),
+      commit("a30be34", "origin/dev"),
+    ]);
+    useHistoryStore.getState().toggleCommit("/ws/repo-a", "81784e9");
+    useHistoryStore.getState().toggleCommit("/ws/repo-a", WORKTREE_SELECTION);
+
+    (
+      window.anchor.history.loadLog as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      commits: [commit("8f55a34", "squashed"), commit("a30be34", "origin/dev")],
+      hasMore: true,
+      reset: true,
+    });
+    await useHistoryStore.getState().refreshLog("/ws/repo-a");
+    const card = useHistoryStore
+      .getState()
+      .repos.find((r) => r.root === "/ws/repo-a");
+    expect(card?.commits.map((c) => c.hash)).toEqual(["8f55a34", "a30be34"]);
+    expect(card?.commits.map((c) => c.hash)).not.toContain("81784e9");
+    expect(card?.commits.map((c) => c.hash)).not.toContain("d6ef073");
+    expect(card?.logHasMore).toBe(true);
+    expect(card?.selectedHashes).toEqual([WORKTREE_SELECTION]);
+  });
+});

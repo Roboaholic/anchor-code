@@ -657,7 +657,7 @@ export interface AnchorApi {
     loadLog: (
       repoRoot: string,
       opts?: { limit?: number; skip?: number; since?: string },
-    ) => Promise<{ commits: CommitRow[]; hasMore: boolean }>;
+    ) => Promise<{ commits: CommitRow[]; hasMore: boolean; reset?: boolean }>;
     expandBundle: (
       repoRoot: string,
       opts?: { logLimit?: number },

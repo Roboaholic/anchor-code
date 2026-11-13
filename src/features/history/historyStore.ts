@@ -746,24 +746,44 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }));
     try {
       if (since) {
-        // Incremental: only commits newer than the tip we already have.
-        const { commits: newer } = await window.anchor.history.loadLog(
+        // Incremental: only commits newer than the tip we already have,
+        // unless that tip is no longer an ancestor of HEAD (squash/rebase/reset).
+        const { commits: newer, hasMore, reset } = await window.anchor.history.loadLog(
           repoRoot,
           { since, limit: 200 },
         );
-        set((s) => {
-          const cur = findCard(s.repos, repoRoot);
-          const existing = cur?.commits ?? [];
-          const have = new Set(existing.map((c) => c.hash));
-          const prepend = newer.filter((c) => !have.has(c.hash));
-          return {
-            repos: mapCard(s.repos, repoRoot, {
-              commits: [...prepend, ...existing],
-              logStatus: "idle",
-              logError: null,
-            }),
-          };
-        });
+        if (reset) {
+          set((s) => {
+            const cur = findCard(s.repos, repoRoot);
+            const keep = new Set(newer.map((c) => c.hash));
+            const selectedHashes = (cur?.selectedHashes ?? []).filter(
+              (h) => h === WORKTREE_SELECTION || keep.has(h),
+            );
+            return {
+              repos: mapCard(s.repos, repoRoot, {
+                commits: newer,
+                logHasMore: hasMore,
+                selectedHashes,
+                logStatus: "idle",
+                logError: null,
+              }),
+            };
+          });
+        } else {
+          set((s) => {
+            const cur = findCard(s.repos, repoRoot);
+            const existing = cur?.commits ?? [];
+            const have = new Set(existing.map((c) => c.hash));
+            const prepend = newer.filter((c) => !have.has(c.hash));
+            return {
+              repos: mapCard(s.repos, repoRoot, {
+                commits: [...prepend, ...existing],
+                logStatus: "idle",
+                logError: null,
+              }),
+            };
+          });
+        }
       } else {
         const { commits, hasMore } = await window.anchor.history.loadLog(
           repoRoot,

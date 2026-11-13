@@ -277,11 +277,17 @@ export class RemoteRequestHandler {
     }
 
     if (method === "GET" && path === "/api/v1/history/log") {
+      const since = query("since")?.trim();
       const result = await this.opts.application.review.log(stringValue(query("repoRoot"), "repoRoot"), {
         limit: numberValue(query("limit"), 50),
         skip: numberValue(query("skip"), 0),
+        ...(since ? { since } : {}),
       });
-      return ok({ commits: result.commits.map(toRemoteCommit), hasMore: result.hasMore });
+      return ok({
+        commits: result.commits.map(toRemoteCommit),
+        hasMore: result.hasMore,
+        ...(result.reset ? { reset: true } : {}),
+      });
     }
 
     if (method === "GET" && path === "/api/v1/history/status") {

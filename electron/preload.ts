@@ -505,7 +505,7 @@ const anchor = {
     loadLog: (
       repoRoot: string,
       opts?: { limit?: number; skip?: number; since?: string },
-    ): Promise<{ commits: CommitRow[]; hasMore: boolean }> =>
+    ): Promise<{ commits: CommitRow[]; hasMore: boolean; reset?: boolean }> =>
       ipcRenderer.invoke("history:loadLog", repoRoot, opts ?? {}),
     expandBundle: (
       repoRoot: string,

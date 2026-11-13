@@ -350,6 +350,12 @@ export interface LoadLogResult {
   commits: CommitRow[];
   /** True when we filled the page — caller may request skip+=limit. */
   hasMore: boolean;
+  /**
+   * When `since` was given but is not an ancestor of HEAD (rewrite, squash,
+   * reset, checkout) or is missing/unknown, `commits` is a fresh first page.
+   * The caller must replace its cached list instead of prepending.
+   */
+  reset?: boolean;
 }
 
 function parseLogLines(stdout: string): CommitRow[] {
@@ -368,14 +374,18 @@ function parseLogLines(stdout: string): CommitRow[] {
     });
 }
 
-export async function loadLog(
+/** git object names we are willing to interpolate into a since..HEAD range. */
+function isObjectName(value: string): boolean {
+  return /^[0-9a-fA-F]{4,40}$/.test(value);
+}
+
+async function loadLogPage(
   host: HostSession,
   repoRoot: string,
-  opts?: LoadLogOptions,
-): Promise<LoadLogResult> {
-  const limit = Math.max(1, Math.min(opts?.limit ?? LOG_LIMIT, 500));
-  const skip = Math.max(0, opts?.skip ?? 0);
-  const since = opts?.since?.trim();
+  limit: number,
+  skip: number,
+  range?: string,
+): Promise<CommitRow[]> {
   const args = [
     "log",
     "--date-order",
@@ -383,7 +393,7 @@ export async function loadLog(
     "--format=%H%x09%h%x09%s%x09%an%x09%aI",
   ];
   if (skip > 0) args.push(`--skip=${skip}`);
-  if (since) args.push(`${since}..HEAD`);
+  if (range) args.push(range);
   const result = await readRun(host, repoRoot, "git", args);
   if (result.code !== 0) {
     throw new HostError(
@@ -392,8 +402,103 @@ export async function loadLog(
       result.stderr || result.stdout,
     );
   }
-  const commits = parseLogLines(result.stdout);
-  return { commits, hasMore: !since && commits.length >= limit };
+  return parseLogLines(result.stdout);
+}
+
+function parseSinceLogScript(stdout: string, limit: number): LoadLogResult {
+  const lines = stdout.split("\n");
+  let reset = true;
+  let logStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.startsWith("__AC_RESET__")) {
+      const flag = line.split("\t")[1]?.trim();
+      reset = flag !== "0";
+      logStart = i + 1;
+      break;
+    }
+  }
+  const commits = parseLogLines(lines.slice(logStart).join("\n"));
+  return {
+    commits,
+    hasMore: reset && commits.length >= limit,
+    ...(reset ? { reset: true } : {}),
+  };
+}
+
+/**
+ * WSL/SSH: ancestry check + log in one bash process so we don't open a
+ * second SSH/WSL connection just to run `merge-base --is-ancestor`.
+ */
+async function loadLogSinceCombined(
+  host: HostSession,
+  repoRoot: string,
+  since: string,
+  limit: number,
+): Promise<LoadLogResult> {
+  const script = [
+    `root=${shQuote(repoRoot)}`,
+    `since=${shQuote(since)}`,
+    `if git -C "$root" merge-base --is-ancestor "$since" HEAD >/dev/null 2>&1; then`,
+    `  printf '__AC_RESET__\\t0\\n'`,
+    `  git -C "$root" log --date-order -n${limit} --format=%H%x09%h%x09%s%x09%an%x09%aI "$since"..HEAD`,
+    `else`,
+    `  printf '__AC_RESET__\\t1\\n'`,
+    `  git -C "$root" log --date-order -n${limit} --format=%H%x09%h%x09%s%x09%an%x09%aI`,
+    `fi`,
+  ].join("\n");
+  const result = await readRun(host, repoRoot, "bash", ["-s"], {
+    stdin: script,
+  });
+  if (result.code !== 0) {
+    throw new HostError(
+      "failed",
+      "Failed to load git log",
+      result.stderr || result.stdout,
+    );
+  }
+  return parseSinceLogScript(result.stdout, limit);
+}
+
+export async function loadLog(
+  host: HostSession,
+  repoRoot: string,
+  opts?: LoadLogOptions,
+): Promise<LoadLogResult> {
+  const limit = Math.max(1, Math.min(opts?.limit ?? LOG_LIMIT, 500));
+  const skip = Math.max(0, opts?.skip ?? 0);
+  const since = opts?.since?.trim();
+
+  if (since) {
+    if (!isObjectName(since)) {
+      const commits = await loadLogPage(host, repoRoot, limit, 0);
+      return { commits, hasMore: commits.length >= limit, reset: true };
+    }
+    if (host.kind === "wsl" || host.kind === "ssh") {
+      return loadLogSinceCombined(host, repoRoot, since, limit);
+    }
+    const ancestor = await readRun(host, repoRoot, "git", [
+      "merge-base",
+      "--is-ancestor",
+      since,
+      "HEAD",
+    ]);
+    if (ancestor.code !== 0) {
+      const commits = await loadLogPage(host, repoRoot, limit, 0);
+      return { commits, hasMore: commits.length >= limit, reset: true };
+    }
+    const commits = await loadLogPage(
+      host,
+      repoRoot,
+      limit,
+      skip,
+      `${since}..HEAD`,
+    );
+    return { commits, hasMore: false };
+  }
+
+  const commits = await loadLogPage(host, repoRoot, limit, skip);
+  return { commits, hasMore: commits.length >= limit };
 }
 
 export interface RepoExpandBundle {

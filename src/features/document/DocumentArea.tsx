@@ -35,6 +35,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDocumentStore, type OpenItem } from "./documentStore";
 import { ExternalChangeBanner } from "./ExternalChangeBanner";
 import { startOpenFileExternalSync } from "./openFileExternalSync";
+import { startWorktreeDiffSync } from "./worktreeDiffSync";
 import { isPreviewableImagePath } from "@/core/workspace/markdownLinks";
 
 const TAB_DND_MIME = "application/x-anchor-tab-index";
@@ -73,7 +74,12 @@ export function DocumentArea() {
 
   useEffect(() => {
     if (!workspaceRoot) return;
-    return startOpenFileExternalSync();
+    const stopFiles = startOpenFileExternalSync();
+    const stopDiffs = startWorktreeDiffSync();
+    return () => {
+      stopFiles();
+      stopDiffs();
+    };
   }, [workspaceRoot]);
 
   useEffect(() => {

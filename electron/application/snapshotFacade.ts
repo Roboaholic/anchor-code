@@ -54,4 +54,12 @@ export class SnapshotFacade {
       targetId,
     });
   }
+
+  async refreshWorktree(baseId: string) {
+    return this.service.refreshWorktree(this.hosts.session, {
+      workspaceRoot: this.workspace.root(),
+      repoRoots: await this.repoRoots(),
+      baseId,
+    });
+  }
 }

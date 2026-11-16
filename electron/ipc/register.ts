@@ -1148,6 +1148,16 @@ export function registerIpc(opts: {
       }
     },
   );
+  ipcMain.handle(
+    "snapshot:refreshWorktree",
+    async (_evt, args: { baseId: string }) => {
+      try {
+        return await snapshots().refreshWorktree(args.baseId);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
   ipcMain.handle("snapshot:getAuto", async () => getAutoSnapshots());
   ipcMain.handle("snapshot:setAuto", async (_evt, enabled: boolean) =>
     setAutoSnapshots(enabled === true),
@@ -1221,6 +1231,16 @@ export function registerIpc(opts: {
     ) => {
       try {
         return await application.review.compare(args.repoRoot, args.base, args.head);
+      } catch (err) {
+        rethrowIpc(err);
+      }
+    },
+  );
+  ipcMain.handle(
+    "history:worktreeDiffState",
+    async (_evt, args: { repoRoot: string; base: string }) => {
+      try {
+        return await application.review.worktreeDiffState(args.repoRoot, args.base);
       } catch (err) {
         rethrowIpc(err);
       }

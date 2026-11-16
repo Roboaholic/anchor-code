@@ -7,6 +7,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseNameStatus } from "../../src/core/history/diffParse.js";
+import { isUntrackedDirectoryPath } from "../../src/core/history/statusParse.js";
+import {
+  fingerprintWorktreeFiles,
+  type WorktreeDiffFingerprint,
+} from "./historyService.js";
 import {
   EMPTY_TREE,
   LARGE_FILE_BYTES,
@@ -553,7 +558,14 @@ export class SnapshotService {
   /** Diff `baseId` against another snapshot or the current worktree. */
   async compare(
     host: HostSession,
-    args: { workspaceRoot: string; repoRoots: string[]; baseId: string; targetId: string | "worktree" },
+    args: {
+      workspaceRoot: string;
+      repoRoots: string[];
+      baseId: string;
+      targetId: string | "worktree";
+      /** Skip scratch-tree capture; diff the snapshot tree against the live worktree. */
+      liveWorktree?: boolean;
+    },
   ): Promise<SnapshotDiffPayload> {
     const list = await this.list(host, args.workspaceRoot, args.repoRoots);
     let base = list.find((s) => s.id === args.baseId);
@@ -570,8 +582,9 @@ export class SnapshotService {
     const find = (s: SnapshotMeta | null | undefined, root: string) =>
       s?.repos.find((r) => hostNormalize(host.kind, r.root) === root && r.status === "ok");
 
+    const liveWorktree = args.liveWorktree === true && !target;
     const repos = await mapLimit([...roots.entries()], 6, async ([key, root]) =>
-      this.compareRepo(host, root, find(b, key), target ? find(target, key) ?? null : "worktree").catch(
+      this.compareRepo(host, root, find(b, key), target ? find(target, key) ?? null : "worktree", liveWorktree).catch(
         (err): SnapshotDiffRepo => ({
           root,
           name: hostBasename(host.kind, root) || root,
@@ -595,6 +608,31 @@ export class SnapshotService {
       repos,
       ...(warn ? { overlapWarning: warn } : {}),
     };
+  }
+
+  /**
+   * Refresh a snapshot → current-worktree compare without writing a scratch tree.
+   * Used by the live worktree diff sync on already-open tabs.
+   */
+  async refreshWorktree(
+    host: HostSession,
+    args: { workspaceRoot: string; repoRoots: string[]; baseId: string },
+  ): Promise<{ payload: SnapshotDiffPayload; fingerprints: (WorktreeDiffFingerprint & { repoRoot: string })[] }> {
+    const payload = await this.compare(host, { ...args, targetId: "worktree", liveWorktree: true });
+    const fingerprints = (
+      await mapLimit(
+        payload.repos.filter((repo) => repo.head === "worktree"),
+        6,
+        async (repo) => {
+          const paths = repo.files
+            .filter((file) => !file.status.startsWith("D") && file.status !== "D")
+            .map((file) => file.path);
+          const fps = await fingerprintWorktreeFiles(host, repo.root, paths);
+          return fps.map((fp) => ({ ...fp, repoRoot: repo.root }));
+        },
+      )
+    ).flat();
+    return { payload, fingerprints };
   }
 
   /** External-store objects dir for a revision, so readers can add it as an alternate. */
@@ -807,6 +845,7 @@ export class SnapshotService {
     root: string,
     base: SnapshotRepoEntry | undefined,
     target: SnapshotRepoEntry | null | "worktree",
+    liveWorktree = false,
   ): Promise<SnapshotDiffRepo> {
     const name = hostBasename(host.kind, root) || root;
     if (target === null) {
@@ -818,6 +857,18 @@ export class SnapshotService {
     const alternates = [base?.storeDir, target !== "worktree" ? target.storeDir : undefined]
       .filter((d): d is string => !!d)
       .map((d) => hostJoin(host.kind, d, "objects"));
+    const env = alternates.length ? { GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates.join(host.kind === "local" && process.platform === "win32" ? ";" : ":") } : undefined;
+    const baseTree = base?.tree ?? EMPTY_TREE;
+    if (target === "worktree" && liveWorktree) {
+      const liveLarge = await this.largeUntracked(host, root);
+      const out = await git(host, root, ["diff", "--name-status", "-M", baseTree], { env });
+      const tracked = parseNameStatus(out);
+      const untracked = await this.untrackedOutsideTree(host, root, baseTree, env, await this.listUntracked(host, root));
+      const files = mergeNamedStatus(tracked, untracked);
+      const largeFiles = diffLargeFiles(base?.largeFiles ?? [], liveLarge);
+      const state = !base ? "added" : files.length || largeFiles.length ? "changed" : "unchanged";
+      return { root, name, state, base: base?.commit ?? EMPTY_TREE, head: "worktree", files, largeFiles };
+    }
     if (target === "worktree") {
       const info = await this.repoGit(host, root);
       headLarge = await this.largeUntracked(host, root);
@@ -829,13 +880,39 @@ export class SnapshotService {
       headLarge = target.largeFiles;
       headRev = target.commit;
     }
-    const baseTree = base?.tree ?? EMPTY_TREE;
-    const env = alternates.length ? { GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates.join(host.kind === "local" && process.platform === "win32" ? ";" : ":") } : undefined;
     const out = baseTree === headTree ? "" : await git(host, root, ["diff", "--name-status", "-M", baseTree, headTree], { env });
     const files = parseNameStatus(out);
     const largeFiles = diffLargeFiles(base?.largeFiles ?? [], headLarge);
     const state = !base ? "added" : files.length || largeFiles.length ? "changed" : "unchanged";
     return { root, name, state, base: base?.commit ?? EMPTY_TREE, head: headRev, files, largeFiles };
+  }
+
+  private async listUntracked(host: HostSession, root: string): Promise<string[]> {
+    const out = await git(host, root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    return out.split("\0").filter(Boolean);
+  }
+
+  private async untrackedOutsideTree(
+    host: HostSession,
+    root: string,
+    tree: string,
+    env: Record<string, string> | undefined,
+    paths: string[],
+  ): Promise<{ path: string; status: string }[]> {
+    const candidates = paths.filter((p) => !isUntrackedDirectoryPath(p));
+    if (candidates.length === 0) return [];
+    if (!tree || tree === EMPTY_TREE) return candidates.map((path) => ({ path, status: "?" }));
+    const inTree = new Set<string>();
+    for (let i = 0; i < candidates.length; i += 50) {
+      const chunk = candidates.slice(i, i + 50);
+      try {
+        const out = await git(host, root, ["ls-tree", "-z", "--name-only", tree, "--", ...chunk], { env });
+        for (const path of out.split("\0")) if (path) inTree.add(path);
+      } catch {
+        // If the tree cannot be read, treat the chunk as new untracked files.
+      }
+    }
+    return candidates.filter((path) => !inTree.has(path)).map((path) => ({ path, status: "?" }));
   }
 
   private async deleteRefs(host: HostSession, snaps: SnapshotMeta[]): Promise<void> {
@@ -846,6 +923,17 @@ export class SnapshotService {
     );
     await mapLimit(jobs, 6, (j) => host.run(j.cwd, "git", ["update-ref", "-d", j.ref], { timeoutMs: 20_000 }).catch(() => undefined));
   }
+}
+
+function mergeNamedStatus(
+  a: { path: string; status: string }[],
+  b: { path: string; status: string }[],
+): { path: string; status: string }[] {
+  const map = new Map(a.map((file) => [file.path, file]));
+  for (const file of b) {
+    if (!map.has(file.path)) map.set(file.path, file);
+  }
+  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function sameTrees(a: SnapshotMeta, b: SnapshotMeta): boolean {

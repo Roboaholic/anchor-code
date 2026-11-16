@@ -165,6 +165,29 @@ describe("SnapshotService.create", () => {
 });
 
 describe("SnapshotService.compare / list / rename / remove", () => {
+  it("refreshWorktree updates a snapshot → current compare without a scratch tree after edits", async () => {
+    const meta = await svc.create(host, { workspaceRoot: ws, repoRoots: [a], source: "manual" });
+    const before = await svc.refreshWorktree(host, { workspaceRoot: ws, repoRoots: [a], baseId: meta.id });
+    expect(before.payload.targetId).toBe("worktree");
+    expect(before.payload.repos[0]!.state).toBe("unchanged");
+    expect(before.payload.repos[0]!.files).toEqual([]);
+
+    await write(path.join(a, "keep.txt"), "later\n");
+    await write(path.join(a, "extra.txt"), "new\n");
+    const after = await svc.refreshWorktree(host, { workspaceRoot: ws, repoRoots: [a], baseId: meta.id });
+    expect(after.payload.repos[0]!.state).toBe("changed");
+    expect(after.payload.repos[0]!.files).toEqual([
+      { path: "extra.txt", status: "?" },
+      { path: "keep.txt", status: "M" },
+    ]);
+    expect(after.fingerprints.some((fp) => fp.path === "keep.txt" && fp.size)).toBe(true);
+
+    const full = await svc.compare(host, { workspaceRoot: ws, repoRoots: [a], baseId: meta.id, targetId: "worktree" });
+    expect(full.repos[0]!.files.map((f) => f.path).sort()).toEqual(
+      after.payload.repos[0]!.files.map((f) => f.path).sort(),
+    );
+  });
+
   it("diffs two snapshots grouped by repo, collapsing unchanged and marking added repos", async () => {
     const s1 = await svc.create(host, { workspaceRoot: ws, repoRoots: [a, b], source: "manual" });
     clock += 60_000;

@@ -130,18 +130,47 @@ export function prefetchFileDiff(args: FileDiffRequest): void {
   pumpPrefetchQueue();
 }
 
+function dropWorktreeDiffKey(key: DiffKey): void {
+  cache.delete(key);
+  inflight.delete(key);
+  const waiting = queued.get(key);
+  queued.delete(key);
+  waiting?.reject(new Error("Diff prefetch invalidated"));
+  generations.set(key, (generations.get(key) ?? 0) + 1);
+}
+
+function worktreeDiffPrefix(repoRoot: string, base: string): string {
+  return `${repoRoot}\0${base}\0worktree\0`;
+}
+
+function worktreeDiffPath(key: DiffKey): string {
+  return key.split("\0")[3] ?? "";
+}
+
 /** Drop mutable worktree snapshots before opening a newly-computed compare. */
 export function invalidateWorktreeDiffCache(repoRoot: string, base: string): void {
-  const prefix = `${repoRoot}\0${base}\0worktree\0`;
+  const prefix = worktreeDiffPrefix(repoRoot, base);
   const keys = new Set([...cache.keys(), ...inflight.keys(), ...queued.keys()]);
   for (const key of keys) {
     if (!key.startsWith(prefix)) continue;
-    cache.delete(key);
-    inflight.delete(key);
-    const waiting = queued.get(key);
-    queued.delete(key);
-    waiting?.reject(new Error("Diff prefetch invalidated"));
-    generations.set(key, (generations.get(key) ?? 0) + 1);
+    dropWorktreeDiffKey(key);
+  }
+}
+
+/** Drop cached worktree text for selected paths only (live content updates). */
+export function invalidateWorktreeDiffPaths(
+  repoRoot: string,
+  base: string,
+  paths: Iterable<string>,
+): void {
+  const wanted = new Set(paths);
+  if (wanted.size === 0) return;
+  const prefix = worktreeDiffPrefix(repoRoot, base);
+  const keys = new Set([...cache.keys(), ...inflight.keys(), ...queued.keys()]);
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    if (!wanted.has(worktreeDiffPath(key))) continue;
+    dropWorktreeDiffKey(key);
   }
 }
 

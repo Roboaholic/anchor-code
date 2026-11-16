@@ -67,6 +67,7 @@ export function SnapshotDiffView({ item }: { item: SnapshotDiffItem }) {
           branch: null,
           hideFileList: true,
           focusRangeLabel: payload.title,
+          worktreeContentEpoch: item.worktreeContentEpoch,
         }
       : null;
 

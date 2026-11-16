@@ -491,6 +491,7 @@ const anchor = {
     rename: (args: { id: string; name: string }) => ipcRenderer.invoke("snapshot:rename", args),
     remove: (args: { ids: string[] }) => ipcRenderer.invoke("snapshot:remove", args),
     compare: (args: { baseId: string; targetId: string }) => ipcRenderer.invoke("snapshot:compare", args),
+    refreshWorktree: (args: { baseId: string }) => ipcRenderer.invoke("snapshot:refreshWorktree", args),
     getAuto: () => ipcRenderer.invoke("snapshot:getAuto"),
     setAuto: (enabled: boolean) => ipcRenderer.invoke("snapshot:setAuto", enabled),
     onProgress: (cb: (p: unknown) => void): (() => void) => {
@@ -619,6 +620,10 @@ const anchor = {
       base: string;
       head: string | "worktree";
     }): Promise<DiffOpenPayload> => ipcRenderer.invoke("history:compare", args),
+    worktreeDiffState: (args: { repoRoot: string; base: string }): Promise<{
+      files: DiffFile[];
+      fingerprints: { path: string; mtimeMs: number | null; size: number | null }[];
+    }> => ipcRenderer.invoke("history:worktreeDiffState", args),
     getFileDiff: (args: {
       repoRoot: string;
       base: string;

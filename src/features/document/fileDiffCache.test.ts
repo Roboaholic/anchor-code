@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearFileDiffCache,
   invalidateWorktreeDiffCache,
+  invalidateWorktreeDiffPaths,
   loadFileDiff,
   prefetchFileDiff,
 } from "./fileDiffCache";
@@ -86,6 +87,27 @@ describe("fileDiffCache", () => {
     expect(fresh.newText).toBe("current worktree");
     expect((await loadFileDiff(worktreeRequest)).newText).toBe("current worktree");
     expect(getFileDiff).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates only the requested worktree paths", async () => {
+    const getFileDiff = vi.fn().mockImplementation(async (args: { path: string }) => ({
+      path: args.path,
+      oldText: "old",
+      newText: `current ${args.path}`,
+      status: "M",
+    }));
+    (globalThis as { window?: unknown }).window = {
+      anchor: { history: { getFileDiff } },
+    };
+    const other = { ...worktreeRequest, path: "src/b.ts" };
+    await loadFileDiff(worktreeRequest);
+    await loadFileDiff(other);
+    getFileDiff.mockClear();
+    invalidateWorktreeDiffPaths("/repo", "abc123", ["src/a.ts"]);
+    await loadFileDiff(worktreeRequest);
+    await loadFileDiff(other);
+    expect(getFileDiff).toHaveBeenCalledTimes(1);
+    expect(getFileDiff.mock.calls[0]?.[0]).toMatchObject({ path: "src/a.ts" });
   });
 
   it("keeps immutable commit comparisons cached", async () => {

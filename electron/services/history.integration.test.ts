@@ -11,6 +11,7 @@ import {
   compareToWorktree,
   discoverRepos,
   getFileDiff,
+  getWorktreeDiffState,
   loadFileBlame,
   listBranches,
   loadLog,
@@ -302,4 +303,21 @@ describe("historyService (integration, temp git repo)", () => {
     expect(result.reset).toBe(true);
     expect(result.commits.map((c) => c.hash)).toEqual([hashB, hashA]);
   });
+
+  it("reports worktree fingerprints and file list for live refresh", async () => {
+    const first = await getWorktreeDiffState(host, root, "HEAD");
+    expect(first.files.some((file) => file.path === "app.ts" && file.status.startsWith("M"))).toBe(true);
+    const app = first.fingerprints.find((fp) => fp.path === "app.ts");
+    expect(app?.size).toBeGreaterThan(0);
+    expect(app?.mtimeMs).toBeGreaterThan(0);
+
+    await fs.writeFile(path.join(root, "app.ts"), "export const n = 44\n", "utf8");
+    await fs.writeFile(path.join(root, "fresh.ts"), "export const y = 1\n", "utf8");
+    const second = await getWorktreeDiffState(host, root, "HEAD");
+    expect(second.files.some((file) => file.path === "fresh.ts")).toBe(true);
+    const again = second.fingerprints.find((fp) => fp.path === "app.ts");
+    expect(again?.mtimeMs).toBeGreaterThanOrEqual(app?.mtimeMs ?? 0);
+    expect(again?.size).not.toBe(app?.size);
+  });
+
 });

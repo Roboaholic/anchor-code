@@ -1171,6 +1171,112 @@ export async function compareToWorktree(
   };
 }
 
+export interface WorktreeDiffFingerprint {
+  path: string;
+  mtimeMs: number | null;
+  size: number | null;
+}
+
+export interface WorktreeDiffState {
+  files: DiffFile[];
+  fingerprints: WorktreeDiffFingerprint[];
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, Math.max(items.length, 0)) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      out[index] = await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+function parseFingerprintLines(stdout: string, paths: string[]): WorktreeDiffFingerprint[] {
+  const lines = stdout.split("\n");
+  return paths.map((path, index) => {
+    const line = (lines[index] ?? "").trim();
+    if (!line || line === "-") return { path, mtimeMs: null, size: null };
+    const [sizeRaw, mtimeRaw] = line.split(/\s+/);
+    const size = Number(sizeRaw);
+    const mtimeSec = Number(mtimeRaw);
+    return {
+      path,
+      size: Number.isFinite(size) ? size : null,
+      mtimeMs: Number.isFinite(mtimeSec) ? Math.round(mtimeSec * 1000) : null,
+    };
+  });
+}
+
+async function fingerprintViaStat(
+  host: HostSession,
+  repoRoot: string,
+  paths: string[],
+): Promise<WorktreeDiffFingerprint[]> {
+  return mapLimit(paths, 16, async (rel) => {
+    try {
+      const st = await host.stat(hostJoin(host.kind, repoRoot, rel));
+      if (!st.isFile) return { path: rel, mtimeMs: null, size: null };
+      return { path: rel, mtimeMs: Math.round(st.mtimeMs), size: st.size };
+    } catch {
+      return { path: rel, mtimeMs: null, size: null };
+    }
+  });
+}
+
+/** One host round-trip on Unix: size + mtime for worktree files in a compare. */
+export async function fingerprintWorktreeFiles(
+  host: HostSession,
+  repoRoot: string,
+  paths: string[],
+): Promise<WorktreeDiffFingerprint[]> {
+  if (paths.length === 0) return [];
+  if (host.kind === "local" && process.platform === "win32") {
+    return fingerprintViaStat(host, repoRoot, paths);
+  }
+  const script = [
+    'for p in "$@"; do',
+    '  if [ ! -f "$p" ]; then',
+    "    printf '%s\\n' '-'",
+    "    continue",
+    "  fi",
+    '  if out=$(stat -c \'%s %Y\' "$p" 2>/dev/null); then',
+    '    printf \'%s\\n\' "$out"',
+    '  elif out=$(stat -f \'%z %m\' "$p" 2>/dev/null); then',
+    '    printf \'%s\\n\' "$out"',
+    "  else",
+    "    printf '%s\\n' '-'",
+    "  fi",
+    "done",
+  ].join("\n");
+  try {
+    const result = await host.run(repoRoot, "sh", ["-c", script, "sh", ...paths], { timeoutMs: 20_000 });
+    if (result.code === 0) return parseFingerprintLines(result.stdout, paths);
+  } catch {
+    // fall through
+  }
+  return fingerprintViaStat(host, repoRoot, paths);
+}
+
+/** Cheap worktree compare + fingerprints for live diff refresh (no extra branch lookup beyond compare). */
+export async function getWorktreeDiffState(
+  host: HostSession,
+  repoRoot: string,
+  base: string,
+): Promise<WorktreeDiffState> {
+  const payload = await compareToWorktree(host, repoRoot, base);
+  const paths = payload.files
+    .filter((file) => !file.status.startsWith("D") && file.status !== "D")
+    .map((file) => file.path);
+  const fingerprints = await fingerprintWorktreeFiles(host, repoRoot, paths);
+  return { files: payload.files, fingerprints };
+}
+
+
 function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }

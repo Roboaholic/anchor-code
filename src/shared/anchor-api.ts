@@ -646,6 +646,10 @@ export interface AnchorApi {
     rename: (args: { id: string; name: string }) => Promise<void>;
     remove: (args: { ids: string[] }) => Promise<void>;
     compare: (args: { baseId: string; targetId: string | "worktree" }) => Promise<SnapshotDiffPayload>;
+    refreshWorktree: (args: { baseId: string }) => Promise<{
+      payload: SnapshotDiffPayload;
+      fingerprints: { repoRoot: string; path: string; mtimeMs: number | null; size: number | null }[];
+    }>;
     getAuto: () => Promise<boolean>;
     /** Per-repo progress while a snapshot is being created. Returns unsubscribe. */
     onProgress?: (cb: (p: SnapshotProgress) => void) => () => void;
@@ -699,6 +703,10 @@ export interface AnchorApi {
       base: string;
       head: string | "worktree";
     }) => Promise<DiffOpenPayload>;
+    worktreeDiffState: (args: { repoRoot: string; base: string }) => Promise<{
+      files: DiffFile[];
+      fingerprints: { path: string; mtimeMs: number | null; size: number | null }[];
+    }>;
     getFileDiff: (args: {
       repoRoot: string;
       base: string;

@@ -286,17 +286,28 @@ export function DiffViewer({ item }: { item: DiffItem }) {
   const mouseDownRef = useRef(false);
   const composerOpenRef = useRef(false);
   const filesResizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const displayedPathRef = useRef<string | null>(null);
+  const textsRef = useRef({ oldText: "", newText: "" });
+  const pendingViewStateRef = useRef<{
+    path: string;
+    original: MonacoEditor.ICodeEditorViewState | null;
+    modified: MonacoEditor.ICodeEditorViewState | null;
+  } | null>(null);
+  const prefetchedKeysRef = useRef<Set<string>>(new Set());
   bubbleRef.current = bubble;
   composerOpenRef.current = Boolean(composer);
+  textsRef.current = { oldText, newText };
 
 
 
   useEffect(() => {
     setSelToolbar(null);
+    pendingViewStateRef.current = null;
   }, [activePath]);
 
   useEffect(() => {
     if (!activePath || !activeMeta) {
+      displayedPathRef.current = null;
       setOldText("");
       setNewText("");
       setLoading(false);
@@ -312,22 +323,40 @@ export function DiffViewer({ item }: { item: DiffItem }) {
       path: activePath,
       status,
     };
+    const applyTexts = (nextOld: string, nextNew: string) => {
+      const samePath = displayedPathRef.current === activePath;
+      const current = textsRef.current;
+      if (samePath && current.oldText === nextOld && current.newText === nextNew) {
+        setLoading(false);
+        setError(null);
+        return;
+      }
+      if (samePath && diffEditorRef.current) {
+        pendingViewStateRef.current = {
+          path: activePath,
+          original: diffEditorRef.current.getOriginalEditor().saveViewState(),
+          modified: diffEditorRef.current.getModifiedEditor().saveViewState(),
+        };
+      }
+      displayedPathRef.current = activePath;
+      setOldText(nextOld);
+      setNewText(nextNew);
+    };
     const cached = peekFileDiff(req);
     if (cached) {
-      setOldText(cached.oldText);
-      setNewText(cached.newText);
+      applyTexts(cached.oldText, cached.newText);
       setLoading(false);
       setError(null);
       setComposer(null);
     } else {
-      setLoading(true);
+      const keepVisible = displayedPathRef.current === activePath;
+      if (!keepVisible) setLoading(true);
       setError(null);
-      setComposer(null);
+      if (!keepVisible) setComposer(null);
       void loadFileDiff(req)
         .then((res) => {
           if (cancelled) return;
-          setOldText(res.oldText);
-          setNewText(res.newText);
+          applyTexts(res.oldText, res.newText);
           setLoading(false);
         })
         .catch((err: unknown) => {
@@ -336,7 +365,6 @@ export function DiffViewer({ item }: { item: DiffItem }) {
           setLoading(false);
         });
     }
-
 
     return () => {
       cancelled = true;
@@ -347,11 +375,41 @@ export function DiffViewer({ item }: { item: DiffItem }) {
     item.repoRoot,
     item.base,
     item.head,
-    item.files,
+    item.worktreeContentEpoch,
   ]);
 
   useEffect(() => {
+    const pending = pendingViewStateRef.current;
+    if (!pending || pending.path !== activePath) return;
+    let cancelled = false;
+    const restore = () => {
+      if (cancelled) return;
+      const diff = diffEditorRef.current;
+      if (!diff) return;
+      if (pending.original) diff.getOriginalEditor().restoreViewState(pending.original);
+      if (pending.modified) diff.getModifiedEditor().restoreViewState(pending.modified);
+    };
+    restore();
+    const frame = requestAnimationFrame(restore);
+    const timer = window.setTimeout(restore, 0);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [oldText, newText, activePath]);
+
+  useEffect(() => {
+    const compareKey = `${item.repoRoot}\0${item.base}\0${item.head}`;
+    const marker = `__cmp__${compareKey}`;
+    if (!prefetchedKeysRef.current.has(marker)) {
+      prefetchedKeysRef.current.clear();
+      prefetchedKeysRef.current.add(marker);
+    }
     for (const file of item.files) {
+      const key = `${compareKey}\0${file.path}\0${file.status}`;
+      if (prefetchedKeysRef.current.has(key)) continue;
+      prefetchedKeysRef.current.add(key);
       prefetchFileDiff({
         repoRoot: item.repoRoot,
         base: item.base,

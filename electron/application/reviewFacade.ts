@@ -22,6 +22,7 @@ import {
   discoverRepos,
   readRun,
   getFileDiff,
+  getWorktreeDiffState,
   listBranches,
   loadFileBlame,
   loadLog,
@@ -210,6 +211,11 @@ export class ReviewFacade {
     return head === "worktree"
       ? compareToWorktree(this.hosts.session, root, base)
       : compareCommits(this.hosts.session, root, base, head);
+  }
+
+  async worktreeDiffState(repoRoot: string, base: string) {
+    const root = await this.approvedRepoRoot(repoRoot);
+    return getWorktreeDiffState(this.hosts.session, root, base);
   }
   private snapshotAlternates: SnapshotAlternatesResolver | null = null;
 

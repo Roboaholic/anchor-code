@@ -5,10 +5,14 @@ import {
   languageFromPath,
   relativeToRoot,
 } from "@/core/workspace/paths";
-import type { DiffFile, DiffOpenPayload, SnapshotDiffPayload } from "@/shared/anchor-api";
+import type { DiffFile, DiffOpenPayload, SnapshotDiffPayload, SnapshotDiffRepo } from "@/shared/anchor-api";
 import { formatError } from "@/shared/formatError";
 import { isRasterImagePath } from "@/core/workspace/markdownLinks";
 import { invalidateWorktreeDiffCache } from "./fileDiffCache";
+import {
+  applySnapshotWorktreeItems,
+  applyWorktreeDiffItems,
+} from "./worktreeDiffUpdate";
 
 export type MdViewMode = "rendered" | "raw";
 
@@ -314,6 +318,8 @@ export type OpenItem =
       hideFileList?: boolean;
       /** Toolbar range text for focus mode (defaults to "HEAD → worktree"). */
       focusRangeLabel?: string;
+      /** Bumps when worktree content for the active file should be reloaded. */
+      worktreeContentEpoch?: number;
     }
   | {
       id: string;
@@ -321,6 +327,8 @@ export type OpenItem =
       title: string;
       payload: SnapshotDiffPayload;
       active: SnapshotDiffActive | null;
+      /** Bumps when worktree content for the active snapshot file should be reloaded. */
+      worktreeContentEpoch?: number;
     };
 
 export interface DocumentState {
@@ -342,6 +350,19 @@ export interface DocumentState {
   /** Open (or replace) a read-only multi-repo snapshot diff tab. */
   openSnapshotDiff: (payload: SnapshotDiffPayload) => void;
   setSnapshotDiffActive: (id: string, active: SnapshotDiffActive) => void;
+  /** Live-update open worktree diffs after a background compare. */
+  applyWorktreeDiffUpdate: (args: {
+    repoRoot: string;
+    base: string;
+    files: DiffFile[];
+    changedPaths: Iterable<string>;
+  }) => void;
+  applySnapshotWorktreeDiffUpdate: (args: {
+    workspaceRoot: string;
+    baseId: string;
+    repos: SnapshotDiffRepo[];
+    changedPaths: Iterable<{ repoRoot: string; path: string }>;
+  }) => void;
   closeItem: (id: string) => void;
   /** Keep only the tab with `id` (activate it). */
   closeOtherItems: (id: string) => void;
@@ -679,6 +700,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         item.id === id && item.kind === "snapshot-diff" ? { ...item, active } : item,
       ),
     }));
+  },
+
+  applyWorktreeDiffUpdate: (args) => {
+    set((s) => {
+      const openItems = applyWorktreeDiffItems(s.openItems, args);
+      return openItems ? { openItems } : s;
+    });
+  },
+
+  applySnapshotWorktreeDiffUpdate: (args) => {
+    set((s) => {
+      const openItems = applySnapshotWorktreeItems(s.openItems, args);
+      return openItems ? { openItems } : s;
+    });
   },
 
   setDiffActiveFile: (id, filePath) => {
